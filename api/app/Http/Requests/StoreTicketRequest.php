@@ -23,7 +23,7 @@ class StoreTicketRequest extends FormRequest
             // Informações gerais
             'titulo' => ['required', 'string', 'max:255'],
             'descricao' => ['required', 'string'],
-            'modulo' => ['required', 'string', 'max:255'],
+            'modulo' => ['required_if:tipo,FEATURE', 'nullable', 'string', 'max:255'],
             'prioridade' => ['required', Rule::enum(Prioridade::class)],
             'impacto_negocio' => ['nullable', 'string'],
 
@@ -39,12 +39,12 @@ class StoreTicketRequest extends FormRequest
             // Campos de BUG
             'comportamento_atual' => ['required_if:tipo,BUG', 'nullable', 'string'],
             'comportamento_esperado' => ['required_if:tipo,BUG', 'nullable', 'string'],
-            'passos_reproducao' => ['required_if:tipo,BUG', 'nullable', 'string'],
+            'passos_reproducao' => ['nullable', 'string'],
             'ambiente_url' => ['nullable', 'string', 'max:255'],
             'navegador' => ['nullable', 'string', 'max:255'],
             'dispositivo' => ['nullable', 'string', 'max:255'],
             'data_hora_ocorrencia' => ['nullable', 'date'],
-            'frequencia' => ['required_if:tipo,BUG', 'nullable', Rule::enum(Frequencia::class)],
+            'frequencia' => ['nullable', Rule::enum(Frequencia::class)],
 
             // Campos de FEATURE
             'objetivo' => ['required_if:tipo,FEATURE', 'nullable', 'string'],

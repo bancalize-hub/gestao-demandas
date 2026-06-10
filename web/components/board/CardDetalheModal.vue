@@ -67,14 +67,14 @@ function formatarTamanho(bytes: number) {
                 <dt class="font-medium text-slate-500">Descrição Detalhada</dt>
                 <dd class="whitespace-pre-line text-slate-800">{{ ticket.descricao }}</dd>
               </div>
-              <div class="grid gap-3 sm:grid-cols-2">
-                <div>
+              <div v-if="ticket.modulo || ticket.impacto_negocio" class="grid gap-3 sm:grid-cols-2">
+                <div v-if="ticket.modulo">
                   <dt class="font-medium text-slate-500">Módulo/Sistema Afetado</dt>
                   <dd class="text-slate-800">{{ ticket.modulo }}</dd>
                 </div>
-                <div>
+                <div v-if="ticket.impacto_negocio">
                   <dt class="font-medium text-slate-500">Impacto no Negócio</dt>
-                  <dd class="whitespace-pre-line text-slate-800">{{ ticket.impacto_negocio || '—' }}</dd>
+                  <dd class="whitespace-pre-line text-slate-800">{{ ticket.impacto_negocio }}</dd>
                 </div>
               </div>
             </dl>
@@ -92,30 +92,30 @@ function formatarTamanho(bytes: number) {
                 <dt class="font-medium text-slate-500">Comportamento Esperado</dt>
                 <dd class="whitespace-pre-line text-slate-800">{{ ticket.comportamento_esperado || '—' }}</dd>
               </div>
-              <div>
+              <div v-if="ticket.passos_reproducao">
                 <dt class="font-medium text-slate-500">Passos para Reproduzir</dt>
-                <dd class="whitespace-pre-line rounded-lg bg-slate-50 p-2 font-mono text-xs text-slate-800">{{ ticket.passos_reproducao || '—' }}</dd>
+                <dd class="whitespace-pre-line rounded-lg bg-slate-50 p-2 font-mono text-xs text-slate-800">{{ ticket.passos_reproducao }}</dd>
               </div>
               <div class="grid gap-3 sm:grid-cols-2">
                 <div>
                   <dt class="font-medium text-slate-500">URL</dt>
                   <dd class="break-all text-slate-800">{{ ticket.ambiente_url || '—' }}</dd>
                 </div>
-                <div>
+                <div v-if="ticket.navegador">
                   <dt class="font-medium text-slate-500">Navegador</dt>
-                  <dd class="text-slate-800">{{ ticket.navegador || '—' }}</dd>
+                  <dd class="text-slate-800">{{ ticket.navegador }}</dd>
                 </div>
-                <div>
+                <div v-if="ticket.dispositivo">
                   <dt class="font-medium text-slate-500">Dispositivo</dt>
-                  <dd class="text-slate-800">{{ ticket.dispositivo || '—' }}</dd>
+                  <dd class="text-slate-800">{{ ticket.dispositivo }}</dd>
                 </div>
-                <div>
+                <div v-if="ticket.data_hora_ocorrencia">
                   <dt class="font-medium text-slate-500">Data/Hora da Ocorrência</dt>
                   <dd class="text-slate-800">{{ formatarDataHora(ticket.data_hora_ocorrencia) }}</dd>
                 </div>
-                <div>
+                <div v-if="ticket.frequencia">
                   <dt class="font-medium text-slate-500">Frequência</dt>
-                  <dd class="text-slate-800">{{ ticket.frequencia ? labelFrequencia[ticket.frequencia] : '—' }}</dd>
+                  <dd class="text-slate-800">{{ labelFrequencia[ticket.frequencia] }}</dd>
                 </div>
               </div>
             </dl>

@@ -40,7 +40,7 @@ function formatarData(iso: string) {
       <span class="rounded-full px-2 py-0.5 text-[11px] font-semibold" :class="corPrioridade[ticket.prioridade]">
         {{ labelPrioridade[ticket.prioridade] }}
       </span>
-      <span class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">{{ ticket.modulo }}</span>
+      <span v-if="ticket.modulo" class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">{{ ticket.modulo }}</span>
     </div>
 
     <div class="flex items-center justify-between text-[11px] text-slate-500">

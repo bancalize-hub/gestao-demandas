@@ -46,18 +46,11 @@ const prioridades = [
   { valor: 'CRITICA', label: 'Crítica' },
 ]
 
-const frequencias = [
-  { valor: 'SEMPRE', label: 'Sempre acontece' },
-  { valor: 'AS_VEZES', label: 'Às vezes acontece' },
-  { valor: 'UMA_VEZ', label: 'Aconteceu apenas uma vez' },
-]
-
 const obrigatorio = (msg: string) => z.string().trim().min(1, msg)
 
 const baseSchema = z.object({
   titulo: obrigatorio('Informe o título da solicitação'),
   descricao: obrigatorio('Descreva a necessidade ou problema'),
-  modulo: obrigatorio('Informe o módulo/sistema afetado'),
   prioridade: obrigatorio('Selecione a prioridade'),
   solicitante_nome: obrigatorio('Informe seu nome'),
   solicitante_empresa: obrigatorio('Informe sua empresa'),
@@ -67,11 +60,10 @@ const baseSchema = z.object({
 const bugSchema = baseSchema.extend({
   comportamento_atual: obrigatorio('Descreva o comportamento atual'),
   comportamento_esperado: obrigatorio('Descreva o comportamento esperado'),
-  passos_reproducao: obrigatorio('Informe os passos para reproduzir'),
-  frequencia: obrigatorio('Selecione a frequência'),
 })
 
 const featureSchema = baseSchema.extend({
+  modulo: obrigatorio('Informe o módulo/sistema afetado'),
   objetivo: obrigatorio('Descreva o objetivo da funcionalidade'),
   regras_negocio: obrigatorio('Descreva as regras de negócio'),
   fluxo_desejado: obrigatorio('Descreva o fluxo desejado'),
@@ -203,7 +195,7 @@ async function enviar() {
           <h2 class="text-lg font-semibold text-slate-900">Informações Gerais</h2>
           <FormCampoTexto v-model="form.titulo" label="Título da Solicitação" dica="Resumo curto da demanda" obrigatorio :erro="erros.titulo" />
           <FormCampoArea v-model="form.descricao" label="Descrição Detalhada" dica="Explique a necessidade ou problema encontrado" obrigatorio :linhas="4" :erro="erros.descricao" />
-          <FormCampoTexto v-model="form.modulo" label="Módulo/Sistema Afetado" dica="Ex.: Login, Pagamentos, Relatórios, API..." obrigatorio :erro="erros.modulo" />
+          <FormCampoTexto v-if="tipo === 'FEATURE'" v-model="form.modulo" label="Módulo/Sistema Afetado" dica="Ex.: Login, Pagamentos, Relatórios, API..." obrigatorio :erro="erros.modulo" />
 
           <div>
             <label class="mb-1 block text-sm font-medium text-slate-700">Prioridade <span class="text-red-500">*</span></label>
@@ -224,7 +216,7 @@ async function enviar() {
             <p v-if="erros.prioridade" class="mt-1 text-xs text-red-600">{{ erros.prioridade }}</p>
           </div>
 
-          <FormCampoArea v-model="form.impacto_negocio" label="Impacto no Negócio" dica="Como essa solicitação afeta a operação da empresa?" :erro="erros.impacto_negocio" />
+          <FormCampoArea v-if="tipo === 'FEATURE'" v-model="form.impacto_negocio" label="Impacto no Negócio" dica="Como essa solicitação afeta a operação da empresa?" :erro="erros.impacto_negocio" />
 
           <div>
             <label class="mb-1 block text-sm font-medium text-slate-700">Anexos</label>
@@ -249,25 +241,7 @@ async function enviar() {
           <h2 class="text-lg font-semibold text-slate-900">🐛 Detalhes do Bug</h2>
           <FormCampoArea v-model="form.comportamento_atual" label="Comportamento Atual" dica="O que está acontecendo atualmente?" obrigatorio :erro="erros.comportamento_atual" />
           <FormCampoArea v-model="form.comportamento_esperado" label="Comportamento Esperado" dica="O que deveria acontecer?" obrigatorio :erro="erros.comportamento_esperado" />
-          <FormCampoArea v-model="form.passos_reproducao" label="Passos para Reproduzir" dica="1. ...&#10;2. ...&#10;3. ..." obrigatorio :linhas="4" :erro="erros.passos_reproducao" />
-
-          <div class="grid gap-4 sm:grid-cols-2">
-            <FormCampoTexto v-model="form.ambiente_url" label="URL" dica="https://..." :erro="erros.ambiente_url" />
-            <FormCampoTexto v-model="form.navegador" label="Navegador" dica="Ex.: Chrome 126" :erro="erros.navegador" />
-            <FormCampoTexto v-model="form.dispositivo" label="Dispositivo" dica="Ex.: Desktop, iPhone 15" :erro="erros.dispositivo" />
-            <FormCampoTexto v-model="form.data_hora_ocorrencia" label="Data/Hora da ocorrência" type="datetime-local" :erro="erros.data_hora_ocorrencia" />
-          </div>
-
-          <div>
-            <label class="mb-1 block text-sm font-medium text-slate-700">Frequência <span class="text-red-500">*</span></label>
-            <div class="space-y-2">
-              <label v-for="f in frequencias" :key="f.valor" class="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
-                <input v-model="form.frequencia" type="radio" :value="f.valor" class="accent-indigo-600">
-                {{ f.label }}
-              </label>
-            </div>
-            <p v-if="erros.frequencia" class="mt-1 text-xs text-red-600">{{ erros.frequencia }}</p>
-          </div>
+          <FormCampoTexto v-model="form.ambiente_url" label="URL" dica="https://..." :erro="erros.ambiente_url" />
         </section>
 
         <!-- Campos de FEATURE -->

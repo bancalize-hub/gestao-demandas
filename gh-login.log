@@ -1,5 +1,0 @@
-
-! First copy your one-time code: 141D-E048
-Open this URL to continue in your web browser: https://github.com/login/device
-failed to authenticate via web browser: Post "https://api.github.com/graphql": dial tcp 4.228.31.149:443: connectex: A connection attempt failed because the connected party did not properly respond after a period of time, or established connection failed because connected host has failed to respond.
-EXIT: 1

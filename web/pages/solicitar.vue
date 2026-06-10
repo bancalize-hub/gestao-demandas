@@ -70,9 +70,24 @@ const featureSchema = baseSchema.extend({
   criterios_aceitacao: obrigatorio('Informe os critérios de aceitação'),
 })
 
+const LIMITE_POR_ARQUIVO = 10 * 1024 * 1024 // 10MB (mesmo limite da API)
+const erroAnexos = ref<string | null>(null)
+
 function selecionarAnexos(event: Event) {
   const input = event.target as HTMLInputElement
-  anexos.value = Array.from(input.files ?? []).slice(0, 5)
+  erroAnexos.value = null
+
+  const todos = Array.from(input.files ?? [])
+  const grandes = todos.filter(a => a.size > LIMITE_POR_ARQUIVO)
+
+  const avisos: string[] = []
+  if (grandes.length)
+    avisos.push(`Ignorado(s) por passar de 10MB: ${grandes.map(a => a.name).join(', ')}.`)
+  if (todos.length > 5)
+    avisos.push('Máximo de 5 arquivos — os excedentes foram ignorados.')
+
+  erroAnexos.value = avisos.length ? avisos.join(' ') : null
+  anexos.value = todos.filter(a => a.size <= LIMITE_POR_ARQUIVO).slice(0, 5)
 }
 
 function removerAnexo(indice: number) {
@@ -120,7 +135,10 @@ async function enviar() {
     codigoCriado.value = resposta.data.codigo
   }
   catch (e: any) {
-    if (e?.status === 422 && e?.data?.errors) {
+    if (e?.status === 413) {
+      erroGeral.value = 'Os anexos são grandes demais para o servidor. Reduza o tamanho dos arquivos ou envie menos anexos.'
+    }
+    else if (e?.status === 422 && e?.data?.errors) {
       for (const [campo, mensagens] of Object.entries(e.data.errors as Record<string, string[]>)) {
         erros.value[campo] = mensagens[0]
       }
@@ -227,6 +245,7 @@ async function enviar() {
               @change="selecionarAnexos"
             >
             <p class="mt-1 text-xs text-slate-400">Prints, vídeos ou documentos relevantes (até 5 arquivos, 10MB cada).</p>
+            <p v-if="erroAnexos" class="mt-1 text-xs text-amber-600">{{ erroAnexos }}</p>
             <ul v-if="anexos.length" class="mt-2 space-y-1">
               <li v-for="(arquivo, i) in anexos" :key="i" class="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-1.5 text-sm">
                 <span class="truncate">📎 {{ arquivo.name }}</span>

@@ -25,12 +25,6 @@ sudo apt install -y nodejs
 sudo npm install -g pm2
 pm2 startup   # siga a instrução exibida para iniciar o pm2 no boot
 
-# Limites de upload do PHP (anexos do formulário: até 5 arquivos de 10MB)
-sudo sed -i 's/^upload_max_filesize.*/upload_max_filesize = 12M/' /etc/php/8.3/fpm/php.ini
-sudo sed -i 's/^post_max_size.*/post_max_size = 64M/' /etc/php/8.3/fpm/php.ini
-sudo systemctl restart php8.3-fpm
-# (no nginx, o client_max_body_size 60M já está no deploy/nginx-api.conf)
-
 # Banco
 sudo mysql -e "CREATE DATABASE gestao_demandas CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 sudo mysql -e "CREATE USER 'gestao'@'localhost' IDENTIFIED BY 'SENHA-FORTE-AQUI';"

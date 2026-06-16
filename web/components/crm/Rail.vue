@@ -1,7 +1,13 @@
 <script setup lang="ts">
-import { useCrmStore } from '~/stores/crm'
+import { SCREEN_ROUTES, useCrmStore, type Screen } from '~/stores/crm'
 
 const crm = useCrmStore()
+const route = useRoute()
+const { user, logout } = useSanctumAuth<{ name?: string }>()
+
+function isActive(s: Screen) {
+  return route.path === SCREEN_ROUTES[s]
+}
 
 function nav(active: boolean) {
   return {
@@ -11,6 +17,12 @@ function nav(active: boolean) {
     color: active ? '#25D366' : '#8696a0',
   }
 }
+
+const initials = computed(() => {
+  const n = user.value?.name?.trim() || ''
+  const parts = n.split(/\s+/).filter(Boolean)
+  return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || 'U'
+})
 </script>
 
 <template>
@@ -19,33 +31,33 @@ function nav(active: boolean) {
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 3c-4.97 0-9 3.58-9 8 0 2.5 1.3 4.7 3.3 6.1L5.5 21l3.6-1.5c.9.25 1.9.4 2.9.4 4.97 0 9-3.58 9-8s-4.03-8.9-9-8.9Z" fill="#0a0f12" /></svg>
     </div>
 
-    <button class="navbtn" :style="nav(crm.screen === 'chat')" title="Chat" @click="crm.go('chat')">
+    <button class="navbtn" :style="nav(isActive('chat'))" title="Chat" @click="crm.go('chat')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 11.5a8.38 8.38 0 0 1-9 8.34 9 9 0 0 1-3.9-.9L3 21l1.06-4.1A8.38 8.38 0 0 1 3 11.5 8.5 8.5 0 0 1 21 11.5Z" stroke-linecap="round" stroke-linejoin="round" /></svg>
     </button>
-    <button class="navbtn" :style="nav(crm.screen === 'pipeline')" title="Funil" @click="crm.go('pipeline')">
+    <button class="navbtn" :style="nav(isActive('pipeline'))" title="Funil" @click="crm.go('pipeline')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="5" height="18" rx="1.5" /><rect x="9.5" y="3" width="5" height="12" rx="1.5" /><rect x="16" y="3" width="5" height="15" rx="1.5" /></svg>
     </button>
-    <button class="navbtn" :style="nav(crm.screen === 'tasks')" title="Tarefas" @click="crm.go('tasks')">
+    <button class="navbtn" :style="nav(isActive('tasks'))" title="Tarefas" @click="crm.go('tasks')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="3.5" /><path d="m8 12.2 2.4 2.4L16 9" stroke-linecap="round" stroke-linejoin="round" /></svg>
     </button>
-    <button class="navbtn" :style="nav(crm.screen === 'agenda')" title="Agenda" @click="crm.go('agenda')">
+    <button class="navbtn" :style="nav(isActive('agenda'))" title="Agenda" @click="crm.go('agenda')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4.5" width="18" height="16" rx="2.5" /><path d="M3 9h18M8 2.5v4M16 2.5v4" stroke-linecap="round" /></svg>
     </button>
-    <button class="navbtn" :style="nav(crm.screen === 'meeting')" title="Reunião ao vivo" @click="crm.go('meeting')">
-      <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2.5" y="6" width="13" height="12" rx="2.5" /><path d="M15.5 10l6-3.2v10.4l-6-3.2" stroke-linejoin="round" /></svg>
-    </button>
-    <button class="navbtn" :style="nav(crm.screen === 'contact')" title="Ficha do lead" @click="crm.go('contact')">
+    <button class="navbtn" :style="nav(isActive('contact'))" title="Ficha do lead" @click="crm.go('contact')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.4" /><path d="M5.5 20a6.5 6.5 0 0 1 13 0" stroke-linecap="round" /></svg>
     </button>
-    <button class="navbtn" :style="nav(crm.screen === 'form')" title="Portal de solicitações" @click="crm.go('form')">
+    <button class="navbtn" :style="nav(isActive('form'))" title="Portal de solicitações" @click="crm.go('form')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 5H6.5A1.5 1.5 0 0 0 5 6.5v13A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5v-13A1.5 1.5 0 0 0 17.5 5H16" /><rect x="8.5" y="3.2" width="7" height="3.6" rx="1.2" /><path d="M8.5 11h7M8.5 15h4.5" stroke-linecap="round" /></svg>
-    </button>
-    <button class="navbtn" :style="nav(crm.screen === 'mobile')" title="App mobile" @click="crm.go('mobile')">
-      <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="6.5" y="2.5" width="11" height="19" rx="2.5" /><path d="M10.5 18.5h3" stroke-linecap="round" /></svg>
     </button>
 
     <div style="flex:1;" />
-    <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#25D366,#0e8a4f);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:#062014;margin-top:4px;cursor:pointer;">AB</div>
+
+    <button class="navbtn" title="Sair" :style="nav(false)" @click="logout()">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 12H4m0 0 3.5-3.5M4 12l3.5 3.5M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4" stroke-linecap="round" stroke-linejoin="round" /></svg>
+    </button>
+    <div :title="user?.name || ''" style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#25D366,#0e8a4f);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:#062014;margin-top:4px;">
+      {{ initials }}
+    </div>
   </nav>
 </template>
 

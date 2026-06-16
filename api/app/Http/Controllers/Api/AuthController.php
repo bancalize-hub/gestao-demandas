@@ -39,10 +39,10 @@ class AuthController extends Controller
         return response()->json(['message' => 'ok']);
     }
 
-    /** Usuário autenticado atual. */
+    /** Usuário autenticado atual (objeto puro — consumido pelo nuxt-auth-sanctum). */
     public function me(Request $request)
     {
-        return response()->json(['user' => $request->user()]);
+        return $request->user();
     }
 
     /** Lista de usuários (somente admin). */

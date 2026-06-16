@@ -119,7 +119,23 @@ function mapTask(t: any): Task {
 }
 
 let dragRef: DragRef | null = null
-let API = 'http://localhost:8000/api'
+
+// Mapa de "tela" -> rota real (navegação por vue-router).
+export const SCREEN_ROUTES: Record<Screen, string> = {
+  chat: '/',
+  pipeline: '/funil',
+  tasks: '/tarefas',
+  agenda: '/agenda',
+  meeting: '/reuniao',
+  contact: '/contato',
+  form: '/solicitar',
+  mobile: '/mobile',
+}
+
+// Cliente HTTP autenticado (Sanctum cookie + CSRF). Caminhos relativos /api/...
+function api() {
+  return useSanctumClient()
+}
 
 export const useCrmStore = defineStore('crm', {
   state: () => ({
@@ -164,16 +180,13 @@ export const useCrmStore = defineStore('crm', {
 
   actions: {
     async init() {
-      try {
-        API = useRuntimeConfig().public.apiBase as string
-      }
-      catch { /* mantém o default */ }
       this.loading = true
       try {
+        const client = api()
         const [convs, deals, tasks] = await Promise.all([
-          $fetch<any[]>(`${API}/conversations`),
-          $fetch<any[]>(`${API}/deals`),
-          $fetch<any[]>(`${API}/tasks`),
+          client<any[]>(`/api/conversations`),
+          client<any[]>(`/api/deals`),
+          client<any[]>(`/api/tasks`),
         ])
         this.conversations = convs.map(mapConv)
         this.dealList = deals.map(mapDeal)
@@ -190,7 +203,10 @@ export const useCrmStore = defineStore('crm', {
       }
     },
 
-    go(screen: Screen) { this.screen = screen },
+    go(screen: Screen) {
+      this.screen = screen
+      return navigateTo(SCREEN_ROUTES[screen] ?? '/')
+    },
 
     selectConv(id: string) {
       this.activeId = id
@@ -199,7 +215,7 @@ export const useCrmStore = defineStore('crm', {
       const c = this.conversations.find(x => x.id === id)
       if (c && c.unread > 0) {
         c.unread = 0
-        $fetch(`${API}/conversations/${id}`, { method: 'PATCH', body: { unread: 0 } }).catch(() => {})
+        api()(`/api/conversations/${id}`, { method: 'PATCH', body: { unread: 0 } }).catch(() => {})
       }
     },
     retryThread() {
@@ -215,7 +231,7 @@ export const useCrmStore = defineStore('crm', {
       this.aiLoading = true
       this.aiSuggestion = ''
       try {
-        const r = await $fetch<{ suggestion: string }>(`${API}/conversations/${conv.id}/suggest-reply`, { method: 'POST' })
+        const r = await api()<{ suggestion: string }>(`/api/conversations/${conv.id}/suggest-reply`, { method: 'POST' })
         this.aiSuggestion = r.suggestion || ''
       }
       catch {
@@ -235,7 +251,7 @@ export const useCrmStore = defineStore('crm', {
       conv.preview = t
       conv.time = time
       conv.unread = 0
-      $fetch(`${API}/conversations/${conv.id}/messages`, { method: 'POST', body: { type: 'text', is_out: true, text: t, time } }).catch(() => {})
+      api()(`/api/conversations/${conv.id}/messages`, { method: 'POST', body: { type: 'text', is_out: true, text: t, time } }).catch(() => {})
     },
 
     // ----- Drag & drop (persistido) -----
@@ -251,14 +267,14 @@ export const useCrmStore = defineStore('crm', {
         if (!item || item.stage === targetCol) return
         item.stage = targetCol
         item.position = Math.max(0, ...this.dealList.filter(x => x.stage === targetCol).map(x => x.position)) + 1
-        $fetch(`${API}/deals/${item.id}`, { method: 'PATCH', body: { stage: targetCol } }).catch(() => {})
+        api()(`/api/deals/${item.id}`, { method: 'PATCH', body: { stage: targetCol } }).catch(() => {})
       }
       else {
         const item = this.taskList.find(x => x.id === d.id)
         if (!item || item.column === targetCol) return
         item.column = targetCol
         item.position = Math.max(0, ...this.taskList.filter(x => x.column === targetCol).map(x => x.position)) + 1
-        $fetch(`${API}/tasks/${item.id}`, { method: 'PATCH', body: { column: targetCol } }).catch(() => {})
+        api()(`/api/tasks/${item.id}`, { method: 'PATCH', body: { column: targetCol } }).catch(() => {})
       }
     },
 
@@ -278,7 +294,7 @@ export const useCrmStore = defineStore('crm', {
         column: 'todo',
       }
       try {
-        const created = await $fetch<any>(`${API}/tasks`, { method: 'POST', body })
+        const created = await api()<any>(`/api/tasks`, { method: 'POST', body })
         this.taskList.unshift(mapTask(created))
         this.formSubmitted = true
         this.formError = false

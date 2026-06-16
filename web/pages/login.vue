@@ -1,5 +1,5 @@
 <script setup lang="ts">
-definePageMeta({ layout: 'blank', middleware: ['sanctum:guest'] })
+definePageMeta({ layout: 'blank' })
 
 const { login } = useSanctumAuth()
 

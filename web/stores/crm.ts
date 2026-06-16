@@ -236,17 +236,6 @@ export const useCrmStore = defineStore('crm', {
       conv.time = time
       conv.unread = 0
       $fetch(`${API}/conversations/${conv.id}/messages`, { method: 'POST', body: { type: 'text', is_out: true, text: t, time } }).catch(() => {})
-
-      setTimeout(() => { this.typing = true }, 500)
-      setTimeout(() => {
-        this.typing = false
-        const reply = 'Recebi, muito obrigada! Vou analisar com o time e já te retorno 🙌'
-        const rtime = agora()
-        conv.thread.push({ type: 'text', isOut: false, text: reply, time: rtime })
-        conv.preview = reply
-        conv.time = rtime
-        $fetch(`${API}/conversations/${conv.id}/messages`, { method: 'POST', body: { type: 'text', is_out: false, text: reply, time: rtime } }).catch(() => {})
-      }, 2400)
     },
 
     // ----- Drag & drop (persistido) -----

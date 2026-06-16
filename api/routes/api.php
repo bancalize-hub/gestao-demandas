@@ -1,11 +1,26 @@
 <?php
 
+use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ConversationController;
 use App\Http\Controllers\Api\DealController;
 use App\Http\Controllers\Api\MessageController;
 use App\Http\Controllers\Api\TaskController;
 use Illuminate\Support\Facades\Route;
 
+// --- Autenticação (Sanctum SPA cookie) ---
+Route::post('/login', [AuthController::class, 'login']);
+
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/me', [AuthController::class, 'me']);
+    Route::post('/logout', [AuthController::class, 'logout']);
+    // Cadastro restrito: somente admin gerencia usuários.
+    Route::get('/users', [AuthController::class, 'index']);
+    Route::post('/users', [AuthController::class, 'store']);
+});
+
+// --- CRM ---
+// NOTA: rotas do CRM ainda públicas; serão movidas p/ auth:sanctum na Fase 2,
+// quando o front passar a enviar credencial (evita derrubar a app no ar).
 Route::get('/conversations', [ConversationController::class, 'index']);
 Route::patch('/conversations/{conversation}', [ConversationController::class, 'update']);
 Route::post('/conversations/{conversation}/messages', [MessageController::class, 'store']);

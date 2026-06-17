@@ -47,6 +47,21 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => { pollTimer = setInterval(() => crm.refresh(), 7000) })
 onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
 
+// Memória (aprender a conversa)
+const memoToast = ref('')
+async function doMemorize(id: string) {
+  menuFor.value = ''
+  memoToast.value = 'Aprendendo a conversa… (~30s)'
+  try {
+    await crm.memorize(id)
+    memoToast.value = 'Adicionada à memória ✓'
+  }
+  catch {
+    memoToast.value = 'Falha ao adicionar à memória'
+  }
+  setTimeout(() => { memoToast.value = '' }, 3500)
+}
+
 // Mídia (carregada sob demanda — descriptografada pelo Evolution)
 const apiClient = useApi()
 const media = reactive<Record<number, string>>({})
@@ -113,7 +128,7 @@ const active = computed(() => {
 
 const list = computed(() => crm.conversations.map(c => ({
   id: c.id, name: c.name, initials: c.initials, avatar: c.avatar, preview: c.preview, time: c.time,
-  unread: c.unread, online: c.online, hot: !!c.hot, hasUnread: c.unread > 0, archived: c.archived, tags: c.tags || [],
+  unread: c.unread, online: c.online, hot: !!c.hot, hasUnread: c.unread > 0, archived: c.archived, inMemory: c.inMemory, tags: c.tags || [],
   rowStyle: { display: 'flex', gap: '12px', padding: '11px 12px', borderRadius: '13px', cursor: 'pointer', alignItems: 'center', position: 'relative', background: c.id === crm.activeId ? '#202c33' : 'transparent' },
   avatarStyle: { width: '48px', height: '48px', borderRadius: '50%', background: c.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '16px', flexShrink: 0, position: 'relative' },
   dotStyle: { position: 'absolute', bottom: '1px', right: '1px', width: '12px', height: '12px', borderRadius: '50%', background: '#25D366', border: `2.5px solid ${c.id === crm.activeId ? '#202c33' : '#111b21'}` },
@@ -237,6 +252,7 @@ watch(() => [thread.value.length, crm.activeId, crm.typing], async () => {
             <div v-if="menuFor === c.id" style="position:absolute;top:30px;right:6px;z-index:30;background:#202c33;border:1px solid #2a3942;border-radius:10px;padding:5px;min-width:180px;box-shadow:0 10px 28px rgba(0,0,0,.45);" @click.stop>
               <button class="mitem" style="width:100%;text-align:left;background:none;border:none;color:#e9edef;font-family:inherit;font-size:13px;padding:8px 11px;border-radius:7px;cursor:pointer;" @click="crm.markUnread(c.id); menuFor = ''">Marcar como não lida</button>
               <button class="mitem" style="width:100%;text-align:left;background:none;border:none;color:#e9edef;font-family:inherit;font-size:13px;padding:8px 11px;border-radius:7px;cursor:pointer;" @click="crm.toggleArchive(c.id); menuFor = ''">{{ c.archived ? 'Desarquivar' : 'Arquivar' }}</button>
+              <button class="mitem" style="width:100%;text-align:left;background:none;border:none;color:#a89bf9;font-family:inherit;font-size:13px;padding:8px 11px;border-radius:7px;cursor:pointer;" @click="doMemorize(c.id)">{{ c.inMemory ? '✓ Na memória' : '🧠 Adicionar à memória' }}</button>
             </div>
           </div>
         </template>
@@ -416,6 +432,8 @@ watch(() => [thread.value.length, crm.activeId, crm.typing], async () => {
         <button class="wabtn" style="width:100%;background:#25D366;border:none;color:#062014;font-family:inherit;font-size:14px;font-weight:700;padding:13px;border-radius:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 6px 16px rgba(37,211,102,.28);" @click="crm.go('agenda')"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4.5" width="18" height="16" rx="2.5" /><path d="M3 9h18M8 2.5v4M16 2.5v4" stroke-linecap="round" /></svg>Agendar reunião</button>
       </div>
     </div>
+
+    <div v-if="memoToast" style="position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:60;background:#2a3942;color:#e9edef;font-size:13px;font-weight:600;padding:11px 20px;border-radius:11px;box-shadow:0 8px 24px rgba(0,0,0,.45);">{{ memoToast }}</div>
   </div>
 </template>
 

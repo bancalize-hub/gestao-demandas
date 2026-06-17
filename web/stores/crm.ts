@@ -40,6 +40,7 @@ export interface Conversation {
   time: string
   unread: number
   archived: boolean
+  inMemory: boolean
   tags: Tag[]
   phone: string
   email: string
@@ -106,7 +107,7 @@ function mapConv(c: any): Conversation {
     id: c.slug, name: c.name, initials: c.initials, color: c.color, avatar: c.avatar ?? '', online: !!c.online,
     statusText: c.status_text ?? '', role: c.role ?? '', dealValue: c.deal_value ?? '', dealUnit: c.deal_unit ?? '',
     stage: c.stage ?? '', stageColor: c.stage_color ?? '#8696a0', prob: c.prob ?? 0, hot: !!c.hot,
-    preview: c.preview ?? '', time: c.time ?? '', unread: c.unread ?? 0, archived: !!c.archived, tags: c.tags ?? [],
+    preview: c.preview ?? '', time: c.time ?? '', unread: c.unread ?? 0, archived: !!c.archived, inMemory: !!c.in_memory, tags: c.tags ?? [],
     phone: c.phone ?? '', email: c.email ?? '', company: c.company ?? '', origin: c.origin ?? '', responsible: c.responsible ?? '',
     interactions: c.interactions ?? [],
     thread: (c.messages ?? []).map(mapMsg),
@@ -254,6 +255,11 @@ export const useCrmStore = defineStore('crm', {
       if (!c) return
       c.archived = !c.archived
       api()(`/api/conversations/${id}`, { method: 'PATCH', body: { archived: c.archived } }).catch(() => {})
+    },
+    async memorize(id: string) {
+      const c = this.conversations.find(x => x.id === id)
+      await api()(`/api/conversations/${id}/memorize`, { method: 'POST' })
+      if (c) c.inMemory = true
     },
 
     // Sugestão de resposta gerada pelo Claude (assinatura) com base na conversa ativa.

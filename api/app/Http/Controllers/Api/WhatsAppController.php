@@ -223,6 +223,7 @@ class WhatsAppController extends Controller
         }
         $conv->origin = 'WhatsApp';
         $conv->phone = $conv->phone ?: ($realNumber ? '+'.$realNumber : null);
+        $conv->wa_jid = $conv->wa_jid ?: $remoteJid;
         $conv->preview = mb_substr($p['preview'], 0, 80);
         $conv->time = $this->humanDate($ts);
         if (! $isOut) {
@@ -302,6 +303,7 @@ class WhatsAppController extends Controller
             $conv->avatar = $avatar;
         }
         $conv->phone = $realNumber ? ('+'.$realNumber) : null;
+        $conv->wa_jid = $remoteJid;
         $conv->origin = 'WhatsApp';
         $conv->status_text = 'via WhatsApp';
         $conv->online = false;
@@ -402,6 +404,16 @@ class WhatsAppController extends Controller
         [$type, $label] = $map[$mt];
 
         return ['type' => $type, 'text' => $msg[$mt]['caption'] ?? null, 'preview' => $label, 'wa_id' => $waId];
+    }
+
+    /** Carrega o histórico COMPLETO da conversa (re-importa do Evolution). */
+    public function loadFull(Conversation $conversation)
+    {
+        if ($conversation->wa_jid) {
+            $this->importConversation($conversation->wa_jid, maxPages: 30);
+        }
+
+        return response()->json($conversation->fresh()->load('messages'));
     }
 
     /** Mídia descriptografada (data URI base64) de uma mensagem — sob demanda. */

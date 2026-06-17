@@ -188,11 +188,20 @@ function useAISuggestion() {
 }
 
 // Rola para o fim quando a thread cresce / troca de conversa.
-watch(() => [thread.value.length, crm.activeId, crm.typing], async () => {
-  await nextTick()
+// Rolagem: desce sozinho só quando já está embaixo; botão pra descer.
+const atBottom = ref(true)
+function onScroll() {
   const el = msgsRef.value
-  if (el) el.scrollTop = el.scrollHeight
-})
+  if (el) atBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < 90
+}
+function scrollDown() {
+  const el = msgsRef.value
+  if (el) { el.scrollTop = el.scrollHeight; atBottom.value = true }
+}
+// troca de conversa: sempre desce até o fim
+watch(() => crm.activeId, async () => { await nextTick(); scrollDown() })
+// mensagem nova: só desce se o usuário já estava no fim (não atrapalha quem lê o histórico)
+watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.value) scrollDown() })
 
 // Auto-carrega as mídias da conversa aberta (sem precisar clicar).
 watch(() => crm.activeId, () => {
@@ -267,7 +276,7 @@ watch(() => crm.activeId, () => {
     </div>
 
     <!-- thread -->
-    <div style="flex:1;display:flex;flex-direction:column;min-width:0;background:#0b141a;background-image:radial-gradient(circle at 20% 30%,rgba(37,211,102,.04),transparent 40%),radial-gradient(circle at 80% 70%,rgba(124,108,245,.04),transparent 40%);">
+    <div style="position:relative;flex:1;display:flex;flex-direction:column;min-width:0;background:#0b141a;background-image:radial-gradient(circle at 20% 30%,rgba(37,211,102,.04),transparent 40%),radial-gradient(circle at 80% 70%,rgba(124,108,245,.04),transparent 40%);">
       <div v-if="crm.isOffline" style="display:flex;align-items:center;gap:9px;background:rgba(255,180,67,.13);color:#ffce80;font-size:12.5px;font-weight:600;padding:9px 22px;border-bottom:1px solid rgba(255,180,67,.22);">
         <span style="width:8px;height:8px;border-radius:50%;background:#ffb443;animation:recpulse 1.2s infinite;" />Sem conexão — tentando reconectar…
       </div>
@@ -310,7 +319,10 @@ watch(() => crm.activeId, () => {
       </div>
 
       <!-- mensagens -->
-      <div ref="msgsRef" style="flex:1;overflow-y:auto;padding:24px 18% 18px;display:flex;flex-direction:column;gap:9px;">
+      <button v-if="!atBottom" title="Descer" style="position:absolute;bottom:120px;right:26px;z-index:15;width:42px;height:42px;border-radius:50%;border:none;background:#202c33;color:#e9edef;box-shadow:0 4px 14px rgba(0,0,0,.45);cursor:pointer;display:flex;align-items:center;justify-content:center;" @click="scrollDown">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M6 13l6 6 6-6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+      </button>
+      <div ref="msgsRef" style="flex:1;overflow-y:auto;padding:24px 18% 18px;display:flex;flex-direction:column;gap:9px;" @scroll="onScroll">
         <template v-if="crm.loading">
           <div style="align-self:center;width:70px;height:20px;border-radius:8px;background:#1c2a33;animation:pulse 1.4s infinite;margin-bottom:6px;" />
           <div style="align-self:flex-start;width:46%;height:54px;border-radius:9px;background:#1c2730;animation:pulse 1.4s infinite;" />

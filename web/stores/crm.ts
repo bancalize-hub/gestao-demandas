@@ -125,6 +125,7 @@ function mapTask(t: any): Task {
 }
 
 let dragRef: DragRef | null = null
+const fullLoaded = new Set<string>()
 
 // Mapa de "tela" -> rota real (navegação por vue-router).
 export const SCREEN_ROUTES: Record<Screen, string> = {
@@ -230,10 +231,23 @@ export const useCrmStore = defineStore('crm', {
       catch { /* silencioso */ }
     },
 
+    // Carrega o histórico completo da conversa (o sync guarda só as recentes).
+    async loadFullThread(id: string) {
+      if (fullLoaded.has(id)) return
+      fullLoaded.add(id)
+      try {
+        const c = await api()<any>(`/api/conversations/${id}/full`)
+        const conv = this.conversations.find(x => x.id === id)
+        if (conv) conv.thread = (c.messages ?? []).map(mapMsg)
+      }
+      catch { fullLoaded.delete(id) }
+    },
+
     selectConv(id: string) {
       this.activeId = id
       this.threadError = false
       this.aiSuggestion = ''
+      this.loadFullThread(id)
       const c = this.conversations.find(x => x.id === id)
       if (c && c.unread > 0) {
         c.unread = 0

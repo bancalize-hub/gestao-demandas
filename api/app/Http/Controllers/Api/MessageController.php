@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Conversation;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
 
 class MessageController extends Controller
 {
@@ -23,6 +24,22 @@ class MessageController extends Controller
 
         $data['type'] = $data['type'] ?? 'text';
         $data['position'] = ($conversation->messages()->max('position') ?? -1) + 1;
+
+        // WhatsApp: envia de verdade pelo Evolution (não-fatal se falhar).
+        if (($data['is_out'] ?? false) && $data['type'] === 'text' && ! empty($data['text'])
+            && $conversation->origin === 'WhatsApp' && $conversation->phone) {
+            try {
+                Http::baseUrl(rtrim((string) config('services.evolution.url'), '/'))
+                    ->withHeaders(['apikey' => (string) config('services.evolution.key')])
+                    ->timeout(20)
+                    ->post('/message/sendText/'.config('services.evolution.instance'), [
+                        'number' => preg_replace('/\D/', '', (string) $conversation->phone),
+                        'text' => $data['text'],
+                    ]);
+            } catch (\Throwable $e) {
+                report($e);
+            }
+        }
 
         $message = $conversation->messages()->create($data);
 

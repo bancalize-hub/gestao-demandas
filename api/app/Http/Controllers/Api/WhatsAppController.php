@@ -192,6 +192,18 @@ class WhatsAppController extends Controller
             $records = array_slice($records, -$keepLast);
         }
 
+        // Número real — inclusive p/ @lid (via key.remoteJidAlt).
+        $realNumber = $isPhone ? $local : null;
+        if (! $isPhone) {
+            foreach ($records as $r) {
+                $alt = (string) ($r['key']['remoteJidAlt'] ?? '');
+                if (str_ends_with($alt, '@s.whatsapp.net')) {
+                    $realNumber = explode('@', $alt)[0];
+                    break;
+                }
+            }
+        }
+
         if ($name === null) {
             foreach ($records as $r) {
                 if (! ($r['key']['fromMe'] ?? false) && ! empty($r['pushName'])) {
@@ -200,7 +212,7 @@ class WhatsAppController extends Controller
                 }
             }
         }
-        $name = $name ?: ($isPhone ? ('+'.$local) : 'Contato WhatsApp');
+        $name = $name ?: ($realNumber ? ('+'.$realNumber) : 'Contato WhatsApp');
 
         $conv = Conversation::firstOrNew(['slug' => $slug]);
         $conv->name = $name;
@@ -209,7 +221,7 @@ class WhatsAppController extends Controller
         if ($avatar) {
             $conv->avatar = $avatar;
         }
-        $conv->phone = $isPhone ? ('+'.$local) : null;
+        $conv->phone = $realNumber ? ('+'.$realNumber) : null;
         $conv->origin = 'WhatsApp';
         $conv->status_text = 'via WhatsApp';
         $conv->online = false;
@@ -262,10 +274,24 @@ class WhatsAppController extends Controller
         }
 
         $conv->preview = mb_substr((string) $last, 0, 80);
-        $conv->time = $lastTs ? date('H:i', $lastTs) : null;
+        $conv->time = $lastTs ? $this->humanDate($lastTs) : null;
         $conv->save();
 
         return $conv;
+    }
+
+    /** Prévia: hoje → HH:MM, ontem → "Ontem", senão → DD/MM/AAAA. */
+    private function humanDate(int $ts): string
+    {
+        $day = date('Y-m-d', $ts);
+        if ($day === date('Y-m-d')) {
+            return date('H:i', $ts);
+        }
+        if ($day === date('Y-m-d', strtotime('-1 day'))) {
+            return 'Ontem';
+        }
+
+        return date('d/m/Y', $ts);
     }
 
     private function initialsOf(string $name): string

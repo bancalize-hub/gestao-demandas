@@ -82,6 +82,12 @@ const filteredList = computed(() => {
   })
 })
 
+const counts = computed(() => ({
+  tudo: list.value.length,
+  unread: list.value.filter(c => c.hasUnread).length,
+  minhas: list.value.length,
+}))
+
 const thread = computed(() => (conv.value?.thread || []).map((m) => {
   const isOut = !!m.isOut
   const baseBg = isOut ? '#005c4b' : '#202c33'
@@ -133,9 +139,9 @@ watch(() => [thread.value.length, crm.activeId, crm.typing], async () => {
           <input v-model="search" placeholder="Buscar conversa ou contato" style="flex:1;background:transparent;border:none;outline:none;color:#e9edef;font-family:inherit;font-size:13.5px;">
         </div>
         <div style="display:flex;gap:7px;margin-top:13px;">
-          <button :style="pillStyle(filter === 'tudo')" @click="filter = 'tudo'">Tudo</button>
-          <button :style="pillStyle(filter === 'unread')" @click="filter = 'unread'">Não lidas</button>
-          <button :style="pillStyle(filter === 'minhas')" @click="filter = 'minhas'">Minhas</button>
+          <button :style="pillStyle(filter === 'tudo')" @click="filter = 'tudo'">Tudo · {{ counts.tudo }}</button>
+          <button :style="pillStyle(filter === 'unread')" @click="filter = 'unread'">Não lidas · {{ counts.unread }}</button>
+          <button :style="pillStyle(filter === 'minhas')" @click="filter = 'minhas'">Minhas · {{ counts.minhas }}</button>
         </div>
       </div>
 

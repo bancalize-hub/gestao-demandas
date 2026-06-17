@@ -319,10 +319,8 @@ watch(() => crm.activeId, () => {
       </div>
 
       <!-- mensagens -->
-      <button v-if="!atBottom" title="Descer" style="position:absolute;bottom:120px;right:26px;z-index:15;width:42px;height:42px;border-radius:50%;border:none;background:#202c33;color:#e9edef;box-shadow:0 4px 14px rgba(0,0,0,.45);cursor:pointer;display:flex;align-items:center;justify-content:center;" @click="scrollDown">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M6 13l6 6 6-6" stroke-linecap="round" stroke-linejoin="round" /></svg>
-      </button>
-      <div ref="msgsRef" style="flex:1;overflow-y:auto;padding:24px 18% 18px;display:flex;flex-direction:column;gap:9px;" @scroll="onScroll">
+      <div style="position:relative;flex:1;display:flex;flex-direction:column;min-height:0;">
+        <div ref="msgsRef" style="flex:1;overflow-y:auto;padding:24px 18% 18px;display:flex;flex-direction:column;gap:9px;" @scroll="onScroll">
         <template v-if="crm.loading">
           <div style="align-self:center;width:70px;height:20px;border-radius:8px;background:#1c2a33;animation:pulse 1.4s infinite;margin-bottom:6px;" />
           <div style="align-self:flex-start;width:46%;height:54px;border-radius:9px;background:#1c2730;animation:pulse 1.4s infinite;" />
@@ -344,7 +342,7 @@ watch(() => crm.activeId, () => {
           <template v-for="(m, i) in thread" :key="i">
             <div v-if="m.isDivider" :style="m.dividerStyle">{{ m.label }}</div>
             <div v-else-if="m.isText" :style="m.bubbleText">
-              <div style="font-size:14px;line-height:1.42;">{{ m.text }}</div>
+              <div style="font-size:14px;line-height:1.42;word-break:break-word;overflow-wrap:anywhere;">{{ m.text }}</div>
               <div style="display:flex;align-items:center;justify-content:flex-end;gap:4px;margin-top:3px;">
                 <span style="font-size:10.5px;color:#8696a0;">{{ m.time }}</span>
                 <svg v-if="m.isOut" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#53bdeb" stroke-width="2.4"><path d="m4 13 3.5 3.5L14 8M11 16l1.5 1.5L20 9" /></svg>
@@ -361,7 +359,7 @@ watch(() => crm.activeId, () => {
                 <span style="font-size:18px;">{{ m.isImage ? '📷' : m.isVoice ? '🎵' : m.isVideo ? '🎬' : '📄' }}</span>
                 <span style="flex:1;text-align:left;">{{ mediaLoading[m.id] ? 'Carregando…' : (m.isImage ? 'Ver imagem' : m.isVoice ? 'Tocar áudio' : m.isVideo ? 'Ver vídeo' : 'Baixar arquivo') }}</span>
               </button>
-              <div v-if="m.text" style="font-size:13.5px;line-height:1.4;margin-top:6px;padding:0 2px;">{{ m.text }}</div>
+              <div v-if="m.text" style="font-size:13.5px;line-height:1.4;margin-top:6px;padding:0 2px;word-break:break-word;overflow-wrap:anywhere;">{{ m.text }}</div>
               <div style="display:flex;align-items:center;justify-content:flex-end;gap:4px;margin-top:4px;padding-right:2px;">
                 <span style="font-size:10.5px;color:#8696a0;">{{ m.time }}</span>
                 <svg v-if="m.isOut" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#53bdeb" stroke-width="2.4"><path d="m4 13 3.5 3.5L14 8M11 16l1.5 1.5L20 9" /></svg>
@@ -372,6 +370,10 @@ watch(() => crm.activeId, () => {
             <span style="width:6px;height:6px;border-radius:50%;background:#8696a0;animation:typing 1.2s infinite;" /><span style="width:6px;height:6px;border-radius:50%;background:#8696a0;animation:typing 1.2s infinite .2s;" /><span style="width:6px;height:6px;border-radius:50%;background:#8696a0;animation:typing 1.2s infinite .4s;" />
           </div>
         </template>
+        </div>
+        <button v-if="!atBottom" title="Descer" style="position:absolute;bottom:14px;right:18px;z-index:15;width:42px;height:42px;border-radius:50%;border:none;background:#202c33;color:#e9edef;box-shadow:0 4px 14px rgba(0,0,0,.45);cursor:pointer;display:flex;align-items:center;justify-content:center;" @click="scrollDown">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M6 13l6 6 6-6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+        </button>
       </div>
 
       <!-- sugestão IA (Claude via assinatura) -->

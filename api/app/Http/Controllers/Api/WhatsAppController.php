@@ -88,7 +88,11 @@ class WhatsAppController extends Controller
         $this->ensureAdmin($request);
 
         $number = preg_replace('/\D/', '', $request->validate(['number' => 'required|string'])['number']);
-        $conv = $this->importConversation($number, maxPages: 30);
+
+        $pic = $this->evo()->post("/chat/fetchProfilePictureUrl/{$this->instance()}", ['number' => $number])
+            ->json('profilePictureUrl');
+
+        $conv = $this->importConversation("{$number}@s.whatsapp.net", maxPages: 30, avatar: $pic);
 
         if (! $conv) {
             return response()->json(['message' => 'Nenhuma mensagem encontrada para esse número.'], 404);
@@ -112,17 +116,43 @@ class WhatsAppController extends Controller
             Conversation::whereIn('id', $demoIds)->delete();
         }
 
-        $limit = (int) $request->input('limit', 25);
+        // Sem limit → importa TODAS as conversas individuais.
+        $limit = $request->input('limit');
 
+        // Mapa de contatos (nome + foto) — 1 chamada.
+        $contacts = collect($this->evo()->post("/chat/findContacts/{$this->instance()}", [])->json())
+            ->filter(fn ($c) => is_array($c) && ! empty($c['remoteJid']))
+            ->keyBy('remoteJid');
+
+        // Conversas individuais: exclui grupos (@g.us) e broadcast; inclui número e @lid.
         $chats = collect($this->evo()->post("/chat/findChats/{$this->instance()}", [])->json())
-            ->filter(fn ($c) => is_array($c) && str_ends_with((string) ($c['remoteJid'] ?? ''), '@s.whatsapp.net'))
-            ->sortByDesc(fn ($c) => $c['updatedAt'] ?? '')
-            ->take($limit);
+            ->filter(function ($c) {
+                $jid = is_array($c) ? (string) ($c['remoteJid'] ?? '') : '';
+
+                return (str_ends_with($jid, '@s.whatsapp.net') || str_ends_with($jid, '@lid'))
+                    && empty($c['isGroup']);
+            })
+            ->sortByDesc(fn ($c) => $c['updatedAt'] ?? '');
+
+        if ($limit !== null) {
+            $chats = $chats->take((int) $limit);
+        }
 
         $imported = 0;
+        $seen = [];
         foreach ($chats as $c) {
-            $number = explode('@', (string) $c['remoteJid'])[0];
-            if ($this->importConversation($number, maxPages: 1)) {
+            $jid = (string) $c['remoteJid'];
+            if (isset($seen[$jid])) {
+                continue; // não importa a mesma conversa 2x
+            }
+            $seen[$jid] = true;
+
+            $ct = $contacts[$jid] ?? null;
+            $name = $ct['pushName'] ?? ($c['pushName'] ?? null);
+            $avatar = $ct['profilePicUrl'] ?? ($c['profilePicUrl'] ?? null);
+
+            // No bulk: só as 30 mensagens mais recentes por conversa (peso do chat).
+            if ($this->importConversation($jid, maxPages: 1, keepLast: 30, name: $name, avatar: $avatar)) {
                 $imported++;
             }
         }
@@ -130,16 +160,18 @@ class WhatsAppController extends Controller
         return response()->json(['imported' => $imported, 'demo_removed' => $removeDemo]);
     }
 
-    /** Busca mensagens de um número no Evolution e grava como conversa+thread. */
-    private function importConversation(string $number, int $maxPages): ?Conversation
+    /** Busca mensagens de um JID no Evolution e grava como conversa+thread. */
+    private function importConversation(string $remoteJid, int $maxPages, ?int $keepLast = null, ?string $name = null, ?string $avatar = null): ?Conversation
     {
-        $jid = "{$number}@s.whatsapp.net";
+        [$local, $domain] = array_pad(explode('@', $remoteJid, 2), 2, '');
+        $isPhone = $domain === 's.whatsapp.net';
+        $slug = 'wa-'.preg_replace('/[^a-z0-9]/i', '', $local);
 
         $records = [];
         $page = 1;
         do {
             $body = $this->evo()->post("/chat/findMessages/{$this->instance()}", [
-                'where' => ['key' => ['remoteJid' => $jid]],
+                'where' => ['key' => ['remoteJid' => $remoteJid]],
                 'page' => $page,
                 'offset' => 100,
             ])->json('messages') ?? [];
@@ -156,20 +188,28 @@ class WhatsAppController extends Controller
 
         usort($records, fn ($a, $b) => ((int) ($a['messageTimestamp'] ?? 0)) <=> ((int) ($b['messageTimestamp'] ?? 0)));
 
-        $pushName = null;
-        foreach ($records as $r) {
-            if (! ($r['key']['fromMe'] ?? false) && ! empty($r['pushName'])) {
-                $pushName = $r['pushName'];
-                break;
+        if ($keepLast !== null && count($records) > $keepLast) {
+            $records = array_slice($records, -$keepLast);
+        }
+
+        if ($name === null) {
+            foreach ($records as $r) {
+                if (! ($r['key']['fromMe'] ?? false) && ! empty($r['pushName'])) {
+                    $name = $r['pushName'];
+                    break;
+                }
             }
         }
-        $name = $pushName ?: ('+'.$number);
+        $name = $name ?: ($isPhone ? ('+'.$local) : 'Contato WhatsApp');
 
-        $conv = Conversation::firstOrNew(['slug' => "wa-{$number}"]);
+        $conv = Conversation::firstOrNew(['slug' => $slug]);
         $conv->name = $name;
         $conv->initials = $this->initialsOf($name);
         $conv->color = $conv->color ?: '#6b7cff';
-        $conv->phone = '+'.$number;
+        if ($avatar) {
+            $conv->avatar = $avatar;
+        }
+        $conv->phone = $isPhone ? ('+'.$local) : null;
         $conv->origin = 'WhatsApp';
         $conv->status_text = 'via WhatsApp';
         $conv->online = false;

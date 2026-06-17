@@ -25,6 +25,7 @@ export interface Conversation {
   name: string
   initials: string
   color: string
+  avatar: string
   online: boolean
   statusText: string
   role: string
@@ -100,7 +101,7 @@ function sortByPos<T extends { position: number, id: number }>(a: T, b: T) {
 // Mapeia o snake_case da API para o domínio camelCase do frontend.
 function mapConv(c: any): Conversation {
   return {
-    id: c.slug, name: c.name, initials: c.initials, color: c.color, online: !!c.online,
+    id: c.slug, name: c.name, initials: c.initials, color: c.color, avatar: c.avatar ?? '', online: !!c.online,
     statusText: c.status_text ?? '', role: c.role ?? '', dealValue: c.deal_value ?? '', dealUnit: c.deal_unit ?? '',
     stage: c.stage ?? '', stageColor: c.stage_color ?? '#8696a0', prob: c.prob ?? 0, hot: !!c.hot,
     preview: c.preview ?? '', time: c.time ?? '', unread: c.unread ?? 0, tags: c.tags ?? [],

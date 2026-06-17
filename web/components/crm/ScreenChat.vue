@@ -39,9 +39,10 @@ async function saveQR() {
 }
 
 const conv = computed(() => crm.activeConv)
+const broken = reactive(new Set<string>())
 
 const EMPTY = {
-  name: '', initials: '', role: '', statusText: '', statusColor: '#8696a0',
+  id: '', avatar: '', name: '', initials: '', role: '', statusText: '', statusColor: '#8696a0',
   dealValue: '', dealUnit: '', stage: '', probText: '',
   stageStyle: {}, avatarHeader: { width: '42px', height: '42px', borderRadius: '50%', background: '#202c33' },
   avatarBig: { width: '74px', height: '74px', borderRadius: '50%', background: '#202c33', margin: '0 auto 11px' },
@@ -52,7 +53,7 @@ const active = computed(() => {
   const c = conv.value
   if (!c) return EMPTY
   return {
-    name: c.name, initials: c.initials, role: c.role,
+    id: c.id, name: c.name, initials: c.initials, avatar: c.avatar, role: c.role,
     statusText: c.statusText, statusColor: c.online ? '#25D366' : '#8696a0',
     dealValue: c.dealValue, dealUnit: c.dealUnit || '', stage: c.stage,
     probText: `${c.prob}% de probabilidade de fechamento`,
@@ -65,7 +66,7 @@ const active = computed(() => {
 })
 
 const list = computed(() => crm.conversations.map(c => ({
-  id: c.id, name: c.name, initials: c.initials, preview: c.preview, time: c.time,
+  id: c.id, name: c.name, initials: c.initials, avatar: c.avatar, preview: c.preview, time: c.time,
   unread: c.unread, online: c.online, hot: !!c.hot, hasUnread: c.unread > 0,
   rowStyle: { display: 'flex', gap: '12px', padding: '11px 12px', borderRadius: '13px', cursor: 'pointer', alignItems: 'center', background: c.id === crm.activeId ? '#202c33' : 'transparent' },
   avatarStyle: { width: '48px', height: '48px', borderRadius: '50%', background: c.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '16px', flexShrink: 0, position: 'relative' },
@@ -154,7 +155,9 @@ watch(() => [thread.value.length, crm.activeId, crm.typing], async () => {
           <div v-if="!filteredList.length" style="padding:30px 14px;text-align:center;color:#8696a0;font-size:13px;">Nenhuma conversa encontrada</div>
           <div v-for="c in filteredList" :key="c.id" :style="c.rowStyle" class="convrow" @click="crm.selectConv(c.id)">
             <div :style="c.avatarStyle">
-              {{ c.initials }}<span v-if="c.online" :style="c.dotStyle" />
+              <img v-if="c.avatar && !broken.has(c.id)" :src="c.avatar" referrerpolicy="no-referrer" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" @error="broken.add(c.id)">
+              <template v-else>{{ c.initials }}</template>
+              <span v-if="c.online" :style="c.dotStyle" />
             </div>
             <div style="flex:1;min-width:0;">
               <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -180,7 +183,10 @@ watch(() => [thread.value.length, crm.activeId, crm.typing], async () => {
 
       <!-- header -->
       <div style="display:flex;align-items:center;gap:13px;padding:13px 22px;background:#111b21;border-bottom:1px solid #1c2730;">
-        <div :style="active.avatarHeader">{{ active.initials }}</div>
+        <div :style="active.avatarHeader">
+          <img v-if="active.avatar && !broken.has(active.id)" :src="active.avatar" referrerpolicy="no-referrer" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" @error="broken.add(active.id)">
+          <template v-else>{{ active.initials }}</template>
+        </div>
         <div style="flex:1;min-width:0;">
           <div style="font-weight:700;font-size:15.5px;">{{ active.name }}</div>
           <div :style="{ fontSize: '12px', color: active.statusColor }">{{ active.statusText }}</div>
@@ -280,7 +286,10 @@ watch(() => [thread.value.length, crm.activeId, crm.typing], async () => {
     <!-- painel de contexto -->
     <div style="width:312px;flex-shrink:0;background:#111b21;border-left:1px solid #1c2730;display:flex;flex-direction:column;overflow-y:auto;">
       <div style="padding:24px 20px 18px;text-align:center;border-bottom:1px solid #1c2730;">
-        <div :style="active.avatarBig">{{ active.initials }}</div>
+        <div :style="active.avatarBig">
+          <img v-if="active.avatar && !broken.has(active.id)" :src="active.avatar" referrerpolicy="no-referrer" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" @error="broken.add(active.id)">
+          <template v-else>{{ active.initials }}</template>
+        </div>
         <div style="font-weight:700;font-size:17px;">{{ active.name }}</div>
         <div style="font-size:13px;color:#8696a0;margin-top:2px;">{{ active.role }}</div>
         <div style="display:flex;gap:8px;justify-content:center;margin-top:14px;">

@@ -10,25 +10,28 @@ use Illuminate\Support\Facades\Route;
 // --- Autenticação (Sanctum SPA cookie) ---
 Route::post('/login', [AuthController::class, 'login']);
 
+// --- Público: canal do cliente (portal de solicitações, sem login) ---
+Route::post('/solicitacoes', [TaskController::class, 'store']);
+
+// --- Protegido (auth:sanctum) ---
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/me', [AuthController::class, 'me']);
     Route::post('/logout', [AuthController::class, 'logout']);
+
     // Cadastro restrito: somente admin gerencia usuários.
     Route::get('/users', [AuthController::class, 'index']);
     Route::post('/users', [AuthController::class, 'store']);
+
+    // CRM
+    Route::get('/conversations', [ConversationController::class, 'index']);
+    Route::patch('/conversations/{conversation}', [ConversationController::class, 'update']);
+    Route::post('/conversations/{conversation}/messages', [MessageController::class, 'store']);
+    Route::post('/conversations/{conversation}/suggest-reply', [ConversationController::class, 'suggestReply']);
+
+    Route::get('/deals', [DealController::class, 'index']);
+    Route::patch('/deals/{deal}', [DealController::class, 'update']);
+
+    Route::get('/tasks', [TaskController::class, 'index']);
+    Route::post('/tasks', [TaskController::class, 'store']);
+    Route::patch('/tasks/{task}', [TaskController::class, 'update']);
 });
-
-// --- CRM ---
-// NOTA: rotas do CRM ainda públicas; serão movidas p/ auth:sanctum na Fase 2,
-// quando o front passar a enviar credencial (evita derrubar a app no ar).
-Route::get('/conversations', [ConversationController::class, 'index']);
-Route::patch('/conversations/{conversation}', [ConversationController::class, 'update']);
-Route::post('/conversations/{conversation}/messages', [MessageController::class, 'store']);
-Route::post('/conversations/{conversation}/suggest-reply', [ConversationController::class, 'suggestReply']);
-
-Route::get('/deals', [DealController::class, 'index']);
-Route::patch('/deals/{deal}', [DealController::class, 'update']);
-
-Route::get('/tasks', [TaskController::class, 'index']);
-Route::post('/tasks', [TaskController::class, 'store']);
-Route::patch('/tasks/{task}', [TaskController::class, 'update']);

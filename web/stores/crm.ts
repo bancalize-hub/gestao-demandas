@@ -294,7 +294,7 @@ export const useCrmStore = defineStore('crm', {
         column: 'todo',
       }
       try {
-        const created = await api()<any>(`/api/tasks`, { method: 'POST', body })
+        const created = await api()<any>(`/api/solicitacoes`, { method: 'POST', body })
         this.taskList.unshift(mapTask(created))
         this.formSubmitted = true
         this.formError = false

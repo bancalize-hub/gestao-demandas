@@ -43,8 +43,11 @@ const initials = computed(() => {
     <button class="navbtn" :style="nav(isActive('agenda'))" title="Agenda" @click="crm.go('agenda')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4.5" width="18" height="16" rx="2.5" /><path d="M3 9h18M8 2.5v4M16 2.5v4" stroke-linecap="round" /></svg>
     </button>
-    <button v-if="user?.is_admin" class="navbtn" :style="nav(route.path.startsWith('/admin'))" title="Usuários" @click="navigateTo('/admin/usuarios')">
+    <button v-if="user?.is_admin" class="navbtn" :style="nav(route.path === '/admin/usuarios')" title="Usuários" @click="navigateTo('/admin/usuarios')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.2" /><path d="M3.5 20a5.5 5.5 0 0 1 11 0M17 5.5a3 3 0 0 1 0 5.4M21 20a5.5 5.5 0 0 0-3.5-5.1" stroke-linecap="round" /></svg>
+    </button>
+    <button v-if="user?.is_admin" class="navbtn" :style="nav(route.path === '/admin/whatsapp')" title="WhatsApp" @click="navigateTo('/admin/whatsapp')">
+      <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3c-4.97 0-9 3.58-9 8 0 2.5 1.3 4.7 3.3 6.1L5.5 21l3.6-1.5c.9.25 1.9.4 2.9.4 4.97 0 9-3.58 9-8s-4.03-8.9-9-8.9Z" stroke-linecap="round" stroke-linejoin="round" /></svg>
     </button>
 
     <div style="flex:1;" />

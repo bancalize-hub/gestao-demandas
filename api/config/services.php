@@ -42,4 +42,11 @@ return [
         'bin' => env('CLAUDE_BIN', '/usr/local/bin/claude'),
     ],
 
+    // Evolution API (WhatsApp). URL no loopback; key fica server-side.
+    'evolution' => [
+        'url' => env('EVOLUTION_API_URL', 'http://127.0.0.1:8085'),
+        'key' => env('EVOLUTION_API_KEY'),
+        'instance' => env('EVOLUTION_INSTANCE', 'vertice'),
+    ],
+
 ];

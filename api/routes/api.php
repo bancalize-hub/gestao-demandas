@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\DealController;
 use App\Http\Controllers\Api\MessageController;
 use App\Http\Controllers\Api\QuickReplyController;
 use App\Http\Controllers\Api\TaskController;
+use App\Http\Controllers\Api\WhatsAppController;
 use Illuminate\Support\Facades\Route;
 
 // --- Autenticação (Sanctum SPA cookie) ---
@@ -40,4 +41,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/quick-replies', [QuickReplyController::class, 'index']);
     Route::post('/quick-replies', [QuickReplyController::class, 'store']);
     Route::delete('/quick-replies/{quickReply}', [QuickReplyController::class, 'destroy']);
+
+    // WhatsApp (Evolution) — somente admin (checado no controller)
+    Route::get('/wpp/status', [WhatsAppController::class, 'status']);
+    Route::get('/wpp/qr', [WhatsAppController::class, 'qr']);
+    Route::delete('/wpp/logout', [WhatsAppController::class, 'logout']);
 });

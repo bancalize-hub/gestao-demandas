@@ -157,6 +157,8 @@ class WhatsAppController extends Controller
             }
         }
 
+        $this->fillAvatars();
+
         return response()->json(['imported' => $imported, 'demo_removed' => $removeDemo]);
     }
 
@@ -278,6 +280,34 @@ class WhatsAppController extends Controller
         $conv->save();
 
         return $conv;
+    }
+
+    /** Busca a foto de perfil (concorrente) das conversas que ainda não têm. */
+    private function fillAvatars(): void
+    {
+        $convs = Conversation::where('slug', 'like', 'wa-%')
+            ->whereNotNull('phone')
+            ->whereNull('avatar')
+            ->get(['id', 'phone']);
+
+        foreach ($convs->chunk(20) as $chunk) {
+            $byNum = $chunk->keyBy(fn ($c) => preg_replace('/\D/', '', (string) $c->phone));
+
+            $responses = Http::pool(fn ($pool) => $byNum->keys()->map(fn ($num) => $pool->as((string) $num)
+                ->baseUrl(rtrim((string) config('services.evolution.url'), '/'))
+                ->withHeaders(['apikey' => (string) config('services.evolution.key')])
+                ->timeout(15)
+                ->post('/chat/fetchProfilePictureUrl/'.config('services.evolution.instance'), ['number' => (string) $num])
+            )->all());
+
+            foreach ($byNum as $num => $conv) {
+                $r = $responses[(string) $num] ?? null;
+                if ($r instanceof \Illuminate\Http\Client\Response && $r->json('profilePictureUrl')) {
+                    $conv->avatar = $r->json('profilePictureUrl');
+                    $conv->save();
+                }
+            }
+        }
     }
 
     /** Prévia: hoje → HH:MM, ontem → "Ontem", senão → DD/MM/AAAA. */

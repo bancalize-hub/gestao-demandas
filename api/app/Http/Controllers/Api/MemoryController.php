@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Conversation;
 use App\Models\MemoryChunk;
 use App\Models\StyleProfile;
+use App\Models\StyleRule;
 use App\Models\StyleSample;
 use App\Support\Claude;
 use Illuminate\Http\Request;
@@ -19,7 +20,30 @@ class MemoryController extends Controller
             'chunks' => MemoryChunk::latest('id')->get(),
             'style' => StyleProfile::find(1)?->summary ?? '',
             'samples' => StyleSample::latest('id')->take(20)->get(),
+            'rules' => StyleRule::orderBy('id')->get(),
         ]);
+    }
+
+    /** Salva uma correção do atendente como regra (Claude generaliza). */
+    public function storeRule(Request $request)
+    {
+        $instruction = trim($request->validate(['instruction' => 'required|string'])['instruction']);
+
+        $prompt = "O atendente deu este ajuste a uma resposta sugerida: \"{$instruction}\".\n"
+            ."Transforme em UMA regra curta, geral e reutilizável (imperativo, 1 frase) de como ele quer que as respostas sejam.\n"
+            .'Responda APENAS a regra, sem aspas.';
+
+        $rule = Claude::run($prompt, 40);
+        $rule = $rule ? trim($rule) : $instruction;
+
+        return response()->json(StyleRule::create(['rule' => mb_substr($rule, 0, 400)]), 201);
+    }
+
+    public function destroyRule(StyleRule $styleRule)
+    {
+        $styleRule->delete();
+
+        return response()->json(['message' => 'ok']);
     }
 
     /** Lê a conversa com o Claude e extrai conhecimento + estilo para a memória. */

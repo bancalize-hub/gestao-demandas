@@ -6,6 +6,7 @@ const api = useApi()
 const chunks = ref<Chunk[]>([])
 const style = ref('')
 const samples = ref<{ id: number, text: string }[]>([])
+const rules = ref<{ id: number, rule: string }[]>([])
 const loading = ref(true)
 const savingStyle = ref(false)
 const styleSaved = ref(false)
@@ -13,10 +14,11 @@ const styleSaved = ref(false)
 async function load() {
   loading.value = true
   try {
-    const r = await api<{ chunks: Chunk[], style: string, samples: { id: number, text: string }[] }>('/api/memory')
+    const r = await api<{ chunks: Chunk[], style: string, samples: { id: number, text: string }[], rules: { id: number, rule: string }[] }>('/api/memory')
     chunks.value = r.chunks
     style.value = r.style
     samples.value = r.samples
+    rules.value = r.rules
   }
   catch { /* */ }
   finally { loading.value = false }
@@ -38,6 +40,12 @@ async function delChunk(id: number) {
   if (!confirm('Excluir este conhecimento da memória?')) return
   chunks.value = chunks.value.filter(c => c.id !== id)
   try { await api(`/api/memory/chunks/${id}`, { method: 'DELETE' }) }
+  catch { /* */ }
+}
+
+async function delRule(id: number) {
+  rules.value = rules.value.filter(r => r.id !== id)
+  try { await api(`/api/memory/rules/${id}`, { method: 'DELETE' }) }
   catch { /* */ }
 }
 
@@ -77,6 +85,20 @@ onMounted(load)
               <div style="font-size:11px;font-weight:700;color:#8696a0;letter-spacing:.4px;margin-bottom:8px;">EXEMPLOS DE MENSAGENS SUAS ({{ samples.length }})</div>
               <div style="display:flex;flex-direction:column;gap:6px;">
                 <div v-for="s in samples.slice(0, 6)" :key="s.id" style="font-size:12.5px;color:#aebac1;background:#202c33;border-radius:8px;padding:8px 11px;">“{{ s.text }}”</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- regras de resposta -->
+          <div style="background:#111b21;border:1px solid #1c2730;border-radius:16px;padding:24px;">
+            <div style="font-size:16px;font-weight:800;margin-bottom:4px;">Regras de resposta ({{ rules.length }})</div>
+            <div style="font-size:12.5px;color:#8696a0;margin-bottom:16px;">Correções que você salvou — a IA segue todas ao sugerir. Crie pelo botão "Salvar correção" no chat.</div>
+            <div v-if="!rules.length" style="font-size:13px;color:#5f6f78;">Nenhuma regra ainda.</div>
+            <div v-else style="display:flex;flex-direction:column;gap:8px;">
+              <div v-for="r in rules" :key="r.id" style="background:#202c33;border-radius:10px;padding:11px 14px;display:flex;gap:12px;align-items:center;">
+                <span style="color:#7ee6a8;flex-shrink:0;">✓</span>
+                <div style="flex:1;font-size:13px;">{{ r.rule }}</div>
+                <button title="Excluir" class="delk" style="background:none;border:none;color:#5a6b73;cursor:pointer;flex-shrink:0;display:flex;" @click="delRule(r.id)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
               </div>
             </div>
           </div>

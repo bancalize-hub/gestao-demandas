@@ -66,6 +66,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::patch('/memory/chunks/{memoryChunk}', [MemoryController::class, 'updateChunk']);
     Route::delete('/memory/chunks/{memoryChunk}', [MemoryController::class, 'destroyChunk']);
     Route::put('/memory/style', [MemoryController::class, 'updateStyle']);
+    Route::post('/memory/rules', [MemoryController::class, 'storeRule']);
+    Route::delete('/memory/rules/{styleRule}', [MemoryController::class, 'destroyRule']);
 
     // WhatsApp (Evolution) — somente admin (checado no controller)
     Route::get('/wpp/status', [WhatsAppController::class, 'status']);

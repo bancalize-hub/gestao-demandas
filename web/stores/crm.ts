@@ -279,21 +279,28 @@ export const useCrmStore = defineStore('crm', {
     },
 
     // Sugestão de resposta gerada pelo Claude (assinatura) com base na conversa ativa.
-    async suggestReply() {
+    async suggestReply(instruction?: string) {
       const conv = this.activeConv
       if (!conv || this.aiLoading) return
       this.aiLoading = true
-      this.aiSuggestion = ''
+      const previous = this.aiSuggestion
+      if (!instruction) this.aiSuggestion = ''
       try {
-        const r = await api()<{ suggestion: string }>(`/api/conversations/${conv.id}/suggest-reply`, { method: 'POST' })
+        const r = await api()<{ suggestion: string }>(`/api/conversations/${conv.id}/suggest-reply`, {
+          method: 'POST',
+          body: instruction ? { instruction, previous } : {},
+        })
         this.aiSuggestion = r.suggestion || ''
       }
       catch {
-        this.aiSuggestion = ''
+        if (!instruction) this.aiSuggestion = ''
       }
       finally {
         this.aiLoading = false
       }
+    },
+    async saveRule(instruction: string) {
+      await api()('/api/memory/rules', { method: 'POST', body: { instruction } })
     },
 
     send(text: string) {

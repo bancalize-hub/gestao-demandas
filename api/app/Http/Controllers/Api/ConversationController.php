@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Conversation;
 use App\Models\MemoryChunk;
 use App\Models\StyleProfile;
+use App\Models\StyleRule;
 use App\Models\StyleSample;
 use App\Support\Claude;
 use Illuminate\Http\Request;
@@ -31,9 +32,13 @@ class ConversationController extends Controller
     }
 
     /** Sugestão de próxima resposta — no seu estilo e usando a memória (Claude/assinatura). */
-    public function suggestReply(Conversation $conversation)
+    public function suggestReply(Request $request, Conversation $conversation)
     {
-        $reply = $this->generateReply($conversation);
+        $reply = $this->generateReply(
+            $conversation,
+            $request->input('instruction'),
+            $request->input('previous'),
+        );
         if ($reply === null) {
             return response()->json(['message' => 'Falha ao gerar sugestão'], 502);
         }
@@ -42,7 +47,7 @@ class ConversationController extends Controller
     }
 
     /** Monta o prompt (voz + conhecimento + histórico) e gera a resposta. */
-    private function generateReply(Conversation $conversation): ?string
+    private function generateReply(Conversation $conversation, ?string $instruction = null, ?string $previous = null): ?string
     {
         if (! config('services.claude.oauth_token')) {
             return null;
@@ -62,6 +67,10 @@ class ConversationController extends Controller
 
         $context = $this->memoryContext($conversation);
 
+        $task = ($instruction && $previous)
+            ? "Você ia mandar esta mensagem:\n\"{$previous}\"\n\nReescreva-a aplicando este ajuste pedido pelo atendente: \"{$instruction}\". Mantenha o estilo, as regras e o conhecimento."
+            : 'Escreva a próxima mensagem do Atendente.';
+
         $prompt = <<<TXT
         Você é o ATENDENTE escrevendo a próxima mensagem para um lead no WhatsApp.
         Lead: {$conversation->name}. Estágio: {$conversation->stage}.
@@ -70,8 +79,9 @@ class ConversationController extends Controller
         Conversa (Atendente = você; {$conversation->name} = lead):
         {$transcript}
 
-        Escreva APENAS a próxima mensagem do Atendente. Regras:
-        - Use EXATAMENTE o estilo/voz descrito acima (se houver).
+        {$task}
+        Regras de saída:
+        - Use EXATAMENTE o estilo/voz e as regras descritas acima (se houver).
         - Use o conhecimento acima quando fizer sentido; nunca invente preços/políticas.
         - Português do Brasil, no máximo 2-3 frases curtas.
         - Sem aspas, sem rótulos — só o texto da mensagem.
@@ -90,6 +100,11 @@ class ConversationController extends Controller
         $style = StyleProfile::find(1)?->summary;
         if ($style) {
             $ctx .= "COMO VOCÊ (atendente) FALA:\n{$style}\n\n";
+        }
+
+        $rules = StyleRule::orderBy('id')->pluck('rule');
+        if ($rules->isNotEmpty()) {
+            $ctx .= "REGRAS QUE VOCÊ SEMPRE SEGUE:\n- ".$rules->implode("\n- ")."\n\n";
         }
 
         $samples = StyleSample::latest('id')->take(4)->pluck('text');

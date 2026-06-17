@@ -62,6 +62,24 @@ async function doMemorize(id: string) {
   setTimeout(() => { memoToast.value = '' }, 3500)
 }
 
+// Ajustar a sugestão da IA por comando + salvar a correção como regra
+const adjust = ref('')
+const lastInstruction = ref('')
+async function doAdjust() {
+  const ins = adjust.value.trim()
+  if (!ins) return
+  await crm.suggestReply(ins)
+  lastInstruction.value = ins
+  adjust.value = ''
+}
+async function doSaveRule() {
+  if (!lastInstruction.value) return
+  await crm.saveRule(lastInstruction.value)
+  memoToast.value = 'Correção salva na memória ✓'
+  lastInstruction.value = ''
+  setTimeout(() => { memoToast.value = '' }, 3000)
+}
+
 // Mídia (carregada sob demanda — descriptografada pelo Evolution)
 const apiClient = useApi()
 const media = reactive<Record<number, string>>({})
@@ -377,13 +395,20 @@ watch(() => crm.activeId, () => {
       </div>
 
       <!-- sugestão IA (Claude via assinatura) -->
-      <div style="margin:0 22px 0;display:flex;align-items:center;gap:10px;background:linear-gradient(90deg,rgba(124,108,245,.14),rgba(124,108,245,.04));border:1px solid rgba(124,108,245,.3);border-radius:12px;padding:9px 13px;">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="#7c6cf5"><path d="m12 2 2.4 6.6L21 11l-6.6 2.4L12 20l-2.4-6.6L3 11l6.6-2.4z" /></svg>
-        <span v-if="crm.aiLoading" style="font-size:13px;color:#cdc6f7;flex:1;"><b style="color:#a89bf9;">IA</b> está escrevendo uma sugestão…</span>
-        <span v-else-if="crm.aiSuggestion" style="font-size:13px;color:#cdc6f7;flex:1;"><b style="color:#a89bf9;">IA sugere:</b> "{{ crm.aiSuggestion }}"</span>
-        <span v-else style="font-size:13px;color:#cdc6f7;flex:1;"><b style="color:#a89bf9;">IA:</b> gere uma resposta com base nesta conversa.</span>
-        <button v-if="crm.aiSuggestion && !crm.aiLoading" class="aibtn" style="font-size:12px;font-weight:700;color:#fff;background:#7c6cf5;border:none;padding:7px 15px;border-radius:9px;cursor:pointer;flex-shrink:0;" @click="useAISuggestion">Usar</button>
-        <button v-else class="aibtn" :disabled="crm.aiLoading" :style="{ fontSize: '12px', fontWeight: 700, color: '#fff', background: '#7c6cf5', border: 'none', padding: '7px 15px', borderRadius: '9px', cursor: crm.aiLoading ? 'default' : 'pointer', flexShrink: 0, opacity: crm.aiLoading ? 0.6 : 1 }" @click="crm.suggestReply()">{{ crm.aiLoading ? '…' : 'Gerar' }}</button>
+      <div style="margin:0 22px 0;background:linear-gradient(90deg,rgba(124,108,245,.14),rgba(124,108,245,.04));border:1px solid rgba(124,108,245,.3);border-radius:12px;padding:9px 13px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="#7c6cf5" style="flex-shrink:0;"><path d="m12 2 2.4 6.6L21 11l-6.6 2.4L12 20l-2.4-6.6L3 11l6.6-2.4z" /></svg>
+          <span v-if="crm.aiLoading" style="font-size:13px;color:#cdc6f7;flex:1;"><b style="color:#a89bf9;">IA</b> está escrevendo…</span>
+          <span v-else-if="crm.aiSuggestion" style="font-size:13px;color:#cdc6f7;flex:1;"><b style="color:#a89bf9;">IA sugere:</b> "{{ crm.aiSuggestion }}"</span>
+          <span v-else style="font-size:13px;color:#cdc6f7;flex:1;"><b style="color:#a89bf9;">IA:</b> gere uma resposta com base nesta conversa.</span>
+          <button v-if="crm.aiSuggestion && !crm.aiLoading" class="aibtn" style="font-size:12px;font-weight:700;color:#fff;background:#7c6cf5;border:none;padding:7px 15px;border-radius:9px;cursor:pointer;flex-shrink:0;" @click="useAISuggestion">Usar</button>
+          <button v-else class="aibtn" :disabled="crm.aiLoading" :style="{ fontSize: '12px', fontWeight: 700, color: '#fff', background: '#7c6cf5', border: 'none', padding: '7px 15px', borderRadius: '9px', cursor: crm.aiLoading ? 'default' : 'pointer', flexShrink: 0, opacity: crm.aiLoading ? 0.6 : 1 }" @click="crm.suggestReply()">{{ crm.aiLoading ? '…' : 'Gerar' }}</button>
+        </div>
+        <div v-if="crm.aiSuggestion && !crm.aiLoading" style="display:flex;align-items:center;gap:7px;margin-top:9px;">
+          <input v-model="adjust" placeholder="Ajustar (ex: mais informal, não fale de preço)" style="flex:1;background:#111b21;border:1px solid #2a3942;border-radius:8px;padding:7px 10px;color:#e9edef;font-family:inherit;font-size:12.5px;outline:none;" @keydown.enter="doAdjust">
+          <button style="font-size:12px;font-weight:700;color:#a89bf9;background:#202c33;border:none;padding:7px 13px;border-radius:8px;cursor:pointer;flex-shrink:0;" @click="doAdjust">Refazer</button>
+          <button v-if="lastInstruction" title="Salvar essa correção na memória (não erra de novo)" style="font-size:12px;font-weight:700;color:#7ee6a8;background:rgba(37,211,102,.12);border:1px solid rgba(37,211,102,.3);padding:7px 12px;border-radius:8px;cursor:pointer;flex-shrink:0;" @click="doSaveRule">💾 Salvar correção</button>
+        </div>
       </div>
 
       <!-- composer -->

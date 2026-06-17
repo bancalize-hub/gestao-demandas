@@ -46,8 +46,8 @@ const initials = computed(() => {
     <button class="navbtn" :style="nav(isActive('contact'))" title="Ficha do lead" @click="crm.go('contact')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.4" /><path d="M5.5 20a6.5 6.5 0 0 1 13 0" stroke-linecap="round" /></svg>
     </button>
-    <button class="navbtn" :style="nav(isActive('form'))" title="Portal de solicitações" @click="crm.go('form')">
-      <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 5H6.5A1.5 1.5 0 0 0 5 6.5v13A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5v-13A1.5 1.5 0 0 0 17.5 5H16" /><rect x="8.5" y="3.2" width="7" height="3.6" rx="1.2" /><path d="M8.5 11h7M8.5 15h4.5" stroke-linecap="round" /></svg>
+    <button v-if="user?.is_admin" class="navbtn" :style="nav(route.path.startsWith('/admin'))" title="Usuários" @click="navigateTo('/admin/usuarios')">
+      <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.2" /><path d="M3.5 20a5.5 5.5 0 0 1 11 0M17 5.5a3 3 0 0 1 0 5.4M21 20a5.5 5.5 0 0 0-3.5-5.1" stroke-linecap="round" /></svg>
     </button>
 
     <div style="flex:1;" />

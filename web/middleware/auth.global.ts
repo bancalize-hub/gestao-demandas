@@ -17,4 +17,8 @@ export default defineNuxtRouteMiddleware(async (to) => {
   if (user.value && to.path === '/login') {
     return navigateTo('/', { replace: true })
   }
+  // Área administrativa: somente admin.
+  if (to.path.startsWith('/admin') && !user.value?.is_admin) {
+    return navigateTo('/', { replace: true })
+  }
 })

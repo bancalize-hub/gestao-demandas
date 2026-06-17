@@ -19,6 +19,25 @@ function useQuick(text: string) {
   if (el) { el.value = text; el.focus() }
 }
 
+// Cadastro de respostas rápidas
+const addingQR = ref(false)
+const qrLabel = ref('')
+const qrText = ref('')
+const savingQR = ref(false)
+async function saveQR() {
+  if (savingQR.value || !qrLabel.value.trim() || !qrText.value.trim()) return
+  savingQR.value = true
+  try {
+    await crm.addQuickReply({ label: qrLabel.value.trim(), text: qrText.value.trim() })
+    qrLabel.value = ''
+    qrText.value = ''
+    addingQR.value = false
+  }
+  finally {
+    savingQR.value = false
+  }
+}
+
 const conv = computed(() => crm.activeConv)
 
 const EMPTY = {
@@ -281,11 +300,26 @@ watch(() => [thread.value.length, crm.activeId, crm.typing], async () => {
       </div>
 
       <div style="padding:16px 20px;border-bottom:1px solid #1c2730;">
-        <div style="display:flex;align-items:center;gap:7px;margin-bottom:11px;"><svg width="15" height="15" viewBox="0 0 24 24" fill="#7c6cf5"><path d="m12 2 2.4 6.6L21 11l-6.6 2.4L12 20l-2.4-6.6L3 11l6.6-2.4z" /></svg><span style="font-size:11px;font-weight:700;color:#a89bf9;letter-spacing:.5px;">RESPOSTAS RÁPIDAS</span></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:11px;">
+          <div style="display:flex;align-items:center;gap:7px;"><svg width="15" height="15" viewBox="0 0 24 24" fill="#7c6cf5"><path d="m12 2 2.4 6.6L21 11l-6.6 2.4L12 20l-2.4-6.6L3 11l6.6-2.4z" /></svg><span style="font-size:11px;font-weight:700;color:#a89bf9;letter-spacing:.5px;">RESPOSTAS RÁPIDAS</span></div>
+          <button title="Nova resposta rápida" style="background:#202c33;border:none;color:#a89bf9;width:24px;height:24px;border-radius:7px;cursor:pointer;display:flex;align-items:center;justify-content:center;" @click="addingQR = !addingQR"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg></button>
+        </div>
+
+        <div v-if="addingQR" style="background:#202c33;border-radius:10px;padding:11px;margin-bottom:9px;display:flex;flex-direction:column;gap:8px;">
+          <input v-model="qrLabel" placeholder="Título (ex: Agendar demo)" style="background:#111b21;border:1px solid #2a3942;border-radius:8px;padding:8px 10px;color:#e9edef;font-family:inherit;font-size:12.5px;outline:none;">
+          <textarea v-model="qrText" rows="2" placeholder="Texto da mensagem" style="background:#111b21;border:1px solid #2a3942;border-radius:8px;padding:8px 10px;color:#e9edef;font-family:inherit;font-size:12.5px;outline:none;resize:vertical;" />
+          <div style="display:flex;gap:7px;justify-content:flex-end;">
+            <button style="background:transparent;border:none;color:#8696a0;font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;padding:6px 10px;" @click="addingQR = false">Cancelar</button>
+            <button :disabled="savingQR" style="background:#7c6cf5;border:none;color:#fff;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;padding:6px 13px;border-radius:8px;" @click="saveQR">Salvar</button>
+          </div>
+        </div>
+
         <div style="display:flex;flex-direction:column;gap:8px;">
-          <div class="ghost" style="background:#202c33;border-radius:10px;padding:10px 12px;font-size:13px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;" @click="useQuick('Podemos agendar uma demonstração de 20 minutos? Te mostro o sistema na prática.')">Agendar demonstração<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8696a0" stroke-width="2"><path d="m9 6 6 6-6 6" /></svg></div>
-          <div class="ghost" style="background:#202c33;border-radius:10px;padding:10px 12px;font-size:13px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;" @click="useQuick('Segue a nossa tabela de preços atualizada. Qualquer dúvida é só chamar! 💰')">Enviar tabela de preços<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8696a0" stroke-width="2"><path d="m9 6 6 6-6 6" /></svg></div>
-          <div class="ghost" style="background:#202c33;border-radius:10px;padding:10px 12px;font-size:13px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;" @click="useQuick('Trabalhamos com pagamento mensal ou anual (com desconto). Qual formato faz mais sentido pra você?')">Condições de pagamento<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8696a0" stroke-width="2"><path d="m9 6 6 6-6 6" /></svg></div>
+          <div v-if="!crm.quickReplies.length && !addingQR" style="font-size:12.5px;color:#5f6f78;padding:4px 2px;">Nenhuma resposta rápida. Clique no + para criar.</div>
+          <div v-for="qr in crm.quickReplies" :key="qr.id" class="ghost qrrow" style="background:#202c33;border-radius:10px;padding:10px 12px;font-size:13px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px;" @click="useQuick(qr.text)">
+            <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ qr.label }}</span>
+            <button class="qrdel" title="Excluir" style="background:none;border:none;color:#8696a0;cursor:pointer;flex-shrink:0;display:flex;align-items:center;padding:0;" @click.stop="crm.removeQuickReply(qr.id)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+          </div>
         </div>
       </div>
 

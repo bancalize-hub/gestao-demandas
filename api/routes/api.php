@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ConversationController;
 use App\Http\Controllers\Api\DealController;
 use App\Http\Controllers\Api\MessageController;
+use App\Http\Controllers\Api\QuickReplyController;
 use App\Http\Controllers\Api\TaskController;
 use Illuminate\Support\Facades\Route;
 
@@ -35,4 +36,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/tasks', [TaskController::class, 'index']);
     Route::post('/tasks', [TaskController::class, 'store']);
     Route::patch('/tasks/{task}', [TaskController::class, 'update']);
+
+    Route::get('/quick-replies', [QuickReplyController::class, 'index']);
+    Route::post('/quick-replies', [QuickReplyController::class, 'store']);
+    Route::delete('/quick-replies/{quickReply}', [QuickReplyController::class, 'destroy']);
 });

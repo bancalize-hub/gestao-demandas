@@ -18,6 +18,7 @@ export interface Msg {
 
 export interface Tag { label: string, color: string }
 export interface Interaction { title: string, meta: string, color: string }
+export interface QuickReply { id: number, label: string, text: string }
 
 export interface Conversation {
   id: string // slug
@@ -148,6 +149,7 @@ export const useCrmStore = defineStore('crm', {
     conversations: [] as Conversation[],
     dealList: [] as Deal[],
     taskList: [] as Task[],
+    quickReplies: [] as QuickReply[],
     dragOverCol: null as string | null,
     formType: 'Novo recurso',
     formPriority: 'media' as 'baixa' | 'media' | 'alta',
@@ -183,14 +185,16 @@ export const useCrmStore = defineStore('crm', {
       this.loading = true
       try {
         const client = api()
-        const [convs, deals, tasks] = await Promise.all([
+        const [convs, deals, tasks, qr] = await Promise.all([
           client<any[]>(`/api/conversations`),
           client<any[]>(`/api/deals`),
           client<any[]>(`/api/tasks`),
+          client<QuickReply[]>(`/api/quick-replies`),
         ])
         this.conversations = convs.map(mapConv)
         this.dealList = deals.map(mapDeal)
         this.taskList = tasks.map(mapTask)
+        this.quickReplies = qr
         this.connection = 'online'
         if (!this.conversations.find(c => c.id === this.activeId))
           this.activeId = this.conversations[0]?.id ?? ''
@@ -282,6 +286,16 @@ export const useCrmStore = defineStore('crm', {
     async createDeal(payload: { name: string, sub: string, value: string, stage: string, hot: boolean }) {
       const created = await api()<any>('/api/deals', { method: 'POST', body: payload })
       this.dealList.push(mapDeal(created))
+    },
+
+    // ----- Respostas rápidas -----
+    async addQuickReply(payload: { label: string, text: string }) {
+      const created = await api()<QuickReply>('/api/quick-replies', { method: 'POST', body: payload })
+      this.quickReplies.push(created)
+    },
+    removeQuickReply(id: number) {
+      this.quickReplies = this.quickReplies.filter(q => q.id !== id)
+      api()(`/api/quick-replies/${id}`, { method: 'DELETE' }).catch(() => {})
     },
 
     // ----- Portal de solicitações -----

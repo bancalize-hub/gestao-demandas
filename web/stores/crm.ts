@@ -134,7 +134,7 @@ export const SCREEN_ROUTES: Record<Screen, string> = {
 
 // Cliente HTTP autenticado (Sanctum cookie + CSRF). Caminhos relativos /api/...
 function api() {
-  return useSanctumClient()
+  return useApi()
 }
 
 export const useCrmStore = defineStore('crm', {

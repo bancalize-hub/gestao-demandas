@@ -1,7 +1,7 @@
 <script setup lang="ts">
 definePageMeta({ layout: 'blank' })
 
-const { login } = useSanctumAuth()
+const { login } = useAuth()
 
 const email = ref('')
 const password = ref('')
@@ -15,7 +15,7 @@ async function submit() {
   loading.value = true
   try {
     await login({ email: email.value, password: password.value, remember: remember.value })
-    // redireciona via sanctum.redirect.onLogin
+    await navigateTo('/', { replace: true })
   }
   catch (e: any) {
     error.value = e?.response?._data?.message || 'E-mail ou senha inválidos.'

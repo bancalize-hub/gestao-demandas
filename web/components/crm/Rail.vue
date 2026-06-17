@@ -3,7 +3,7 @@ import { SCREEN_ROUTES, useCrmStore, type Screen } from '~/stores/crm'
 
 const crm = useCrmStore()
 const route = useRoute()
-const { user, logout } = useSanctumAuth<{ name?: string }>()
+const { user, logout } = useAuth()
 
 function isActive(s: Screen) {
   return route.path === SCREEN_ROUTES[s]

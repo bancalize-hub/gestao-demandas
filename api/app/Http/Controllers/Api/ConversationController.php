@@ -17,7 +17,7 @@ class ConversationController extends Controller
     public function update(Request $request, Conversation $conversation)
     {
         $conversation->update($request->only([
-            'unread', 'preview', 'time', 'stage', 'stage_color', 'prob', 'hot', 'online',
+            'unread', 'preview', 'time', 'stage', 'stage_color', 'prob', 'hot', 'online', 'archived',
         ]));
 
         return $conversation->load('messages');

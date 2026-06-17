@@ -14,6 +14,7 @@ class Conversation extends Model
         'hot' => 'boolean',
         'prob' => 'integer',
         'unread' => 'integer',
+        'archived' => 'boolean',
         'tags' => 'array',
         'interactions' => 'array',
     ];

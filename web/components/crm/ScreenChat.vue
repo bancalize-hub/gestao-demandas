@@ -8,7 +8,8 @@ const msgsRef = ref<HTMLElement | null>(null)
 
 // Busca + filtros da lista de conversas
 const search = ref('')
-const filter = ref<'tudo' | 'unread' | 'minhas'>('tudo')
+const filter = ref<'tudo' | 'unread' | 'minhas' | 'arquivadas'>('tudo')
+const menuFor = ref('')
 function pillStyle(active: boolean) {
   return active
     ? { fontSize: '12px', fontWeight: 700, color: '#062014', background: '#25D366', padding: '5px 13px', borderRadius: '20px', cursor: 'pointer', border: 'none' }
@@ -72,8 +73,8 @@ const active = computed(() => {
 
 const list = computed(() => crm.conversations.map(c => ({
   id: c.id, name: c.name, initials: c.initials, avatar: c.avatar, preview: c.preview, time: c.time,
-  unread: c.unread, online: c.online, hot: !!c.hot, hasUnread: c.unread > 0,
-  rowStyle: { display: 'flex', gap: '12px', padding: '11px 12px', borderRadius: '13px', cursor: 'pointer', alignItems: 'center', background: c.id === crm.activeId ? '#202c33' : 'transparent' },
+  unread: c.unread, online: c.online, hot: !!c.hot, hasUnread: c.unread > 0, archived: c.archived,
+  rowStyle: { display: 'flex', gap: '12px', padding: '11px 12px', borderRadius: '13px', cursor: 'pointer', alignItems: 'center', position: 'relative', background: c.id === crm.activeId ? '#202c33' : 'transparent' },
   avatarStyle: { width: '48px', height: '48px', borderRadius: '50%', background: c.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '16px', flexShrink: 0, position: 'relative' },
   dotStyle: { position: 'absolute', bottom: '1px', right: '1px', width: '12px', height: '12px', borderRadius: '50%', background: '#25D366', border: `2.5px solid ${c.id === crm.activeId ? '#202c33' : '#111b21'}` },
 })))
@@ -81,6 +82,12 @@ const list = computed(() => crm.conversations.map(c => ({
 const filteredList = computed(() => {
   const q = search.value.trim().toLowerCase()
   return list.value.filter((c) => {
+    if (filter.value === 'arquivadas') {
+      if (!c.archived) return false
+    }
+    else if (c.archived) {
+      return false
+    }
     if (filter.value === 'unread' && !c.hasUnread) return false
     if (q && !(`${c.name} ${c.preview}`.toLowerCase().includes(q))) return false
     return true
@@ -88,9 +95,10 @@ const filteredList = computed(() => {
 })
 
 const counts = computed(() => ({
-  tudo: list.value.length,
-  unread: list.value.filter(c => c.hasUnread).length,
-  minhas: list.value.length,
+  tudo: list.value.filter(c => !c.archived).length,
+  unread: list.value.filter(c => c.hasUnread && !c.archived).length,
+  minhas: list.value.filter(c => !c.archived).length,
+  arquivadas: list.value.filter(c => c.archived).length,
 }))
 
 const thread = computed(() => (conv.value?.thread || []).map((m) => {
@@ -146,7 +154,7 @@ watch(() => [thread.value.length, crm.activeId, crm.typing], async () => {
         <div style="display:flex;gap:7px;margin-top:13px;">
           <button :style="pillStyle(filter === 'tudo')" @click="filter = 'tudo'">Tudo · {{ counts.tudo }}</button>
           <button :style="pillStyle(filter === 'unread')" @click="filter = 'unread'">Não lidas · {{ counts.unread }}</button>
-          <button :style="pillStyle(filter === 'minhas')" @click="filter = 'minhas'">Minhas · {{ counts.minhas }}</button>
+          <button :style="pillStyle(filter === 'arquivadas')" @click="filter = 'arquivadas'">Arquivadas · {{ counts.arquivadas }}</button>
         </div>
       </div>
 
@@ -164,7 +172,7 @@ watch(() => [thread.value.length, crm.activeId, crm.typing], async () => {
 
         <template v-else>
           <div v-if="!filteredList.length" style="padding:30px 14px;text-align:center;color:#8696a0;font-size:13px;">Nenhuma conversa encontrada</div>
-          <div v-for="c in filteredList" :key="c.id" :style="c.rowStyle" class="convrow" @click="crm.selectConv(c.id)">
+          <div v-for="c in filteredList" :key="c.id" :style="c.rowStyle" class="convrow" @click="crm.selectConv(c.id); menuFor = ''">
             <div :style="c.avatarStyle">
               <img v-if="c.avatar && !broken.has(c.id)" :src="c.avatar" referrerpolicy="no-referrer" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" @error="broken.add(c.id)">
               <template v-else>{{ c.initials }}</template>
@@ -180,6 +188,11 @@ watch(() => [thread.value.length, crm.activeId, crm.typing], async () => {
                 <span v-if="c.hasUnread" style="background:#25D366;color:#062014;font-size:11px;font-weight:700;min-width:19px;height:19px;border-radius:10px;display:flex;align-items:center;justify-content:center;padding:0 5px;flex-shrink:0;">{{ c.unread }}</span>
               </div>
               <div v-if="c.hot" style="margin-top:6px;display:inline-flex;font-size:10.5px;font-weight:700;color:#ff7a45;background:rgba(255,122,69,.13);padding:2px 8px;border-radius:6px;">🔥 Lead quente</div>
+            </div>
+            <button class="rowmenu" title="Ações" style="position:absolute;top:8px;right:6px;background:#202c33;border:none;color:#cfd6db;width:22px;height:22px;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:15px;line-height:1;" @click.stop="menuFor = menuFor === c.id ? '' : c.id">⋮</button>
+            <div v-if="menuFor === c.id" style="position:absolute;top:30px;right:6px;z-index:30;background:#202c33;border:1px solid #2a3942;border-radius:10px;padding:5px;min-width:180px;box-shadow:0 10px 28px rgba(0,0,0,.45);" @click.stop>
+              <button class="mitem" style="width:100%;text-align:left;background:none;border:none;color:#e9edef;font-family:inherit;font-size:13px;padding:8px 11px;border-radius:7px;cursor:pointer;" @click="crm.markUnread(c.id); menuFor = ''">Marcar como não lida</button>
+              <button class="mitem" style="width:100%;text-align:left;background:none;border:none;color:#e9edef;font-family:inherit;font-size:13px;padding:8px 11px;border-radius:7px;cursor:pointer;" @click="crm.toggleArchive(c.id); menuFor = ''">{{ c.archived ? 'Desarquivar' : 'Arquivar' }}</button>
             </div>
           </div>
         </template>
@@ -352,6 +365,9 @@ watch(() => [thread.value.length, crm.activeId, crm.typing], async () => {
 
 <style scoped>
 .convrow:hover { background: #19242b !important; }
+.rowmenu { opacity: 0; transition: opacity .15s; }
+.convrow:hover .rowmenu { opacity: 1; }
+.mitem:hover { background: #2a3942 !important; }
 .iconbtn:hover { background: #2a3942 !important; }
 .aibtn:hover { background: #8b7cff !important; }
 .ghost:hover { background: #2a3942 !important; }

@@ -47,6 +47,7 @@ return [
         'url' => env('EVOLUTION_API_URL', 'http://127.0.0.1:8085'),
         'key' => env('EVOLUTION_API_KEY'),
         'instance' => env('EVOLUTION_INSTANCE', 'vertice'),
+        'webhook_token' => env('EVOLUTION_WEBHOOK_TOKEN'),
     ],
 
 ];

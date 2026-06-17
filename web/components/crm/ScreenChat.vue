@@ -41,6 +41,11 @@ async function saveQR() {
 const conv = computed(() => crm.activeConv)
 const broken = reactive(new Set<string>())
 
+// Polling p/ mensagens novas (tempo real via webhook do WhatsApp).
+let pollTimer: ReturnType<typeof setInterval> | null = null
+onMounted(() => { pollTimer = setInterval(() => crm.refresh(), 7000) })
+onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
+
 const EMPTY = {
   id: '', avatar: '', name: '', initials: '', role: '', statusText: '', statusColor: '#8696a0',
   dealValue: '', dealUnit: '', stage: '', probText: '',

@@ -213,6 +213,15 @@ export const useCrmStore = defineStore('crm', {
       return navigateTo(SCREEN_ROUTES[screen] ?? '/')
     },
 
+    // Atualiza a lista/threads (polling — mensagens novas em tempo real).
+    async refresh() {
+      try {
+        const convs = await api()<any[]>('/api/conversations')
+        this.conversations = convs.map(mapConv)
+      }
+      catch { /* silencioso */ }
+    },
+
     selectConv(id: string) {
       this.activeId = id
       this.threadError = false

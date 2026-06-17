@@ -15,6 +15,9 @@ Route::post('/login', [AuthController::class, 'login']);
 // --- Público: canal do cliente (portal de solicitações, sem login) ---
 Route::post('/solicitacoes', [TaskController::class, 'store']);
 
+// --- Público: webhook do Evolution (protegido por token na query) ---
+Route::post('/wpp/webhook', [WhatsAppController::class, 'webhook']);
+
 // --- Protegido (auth:sanctum) ---
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/me', [AuthController::class, 'me']);

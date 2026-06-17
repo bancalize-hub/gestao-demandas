@@ -162,6 +162,96 @@ class WhatsAppController extends Controller
         return response()->json(['imported' => $imported, 'demo_removed' => $removeDemo]);
     }
 
+    /** Webhook do Evolution (público; protegido por token). Mensagens em tempo real. */
+    public function webhook(Request $request)
+    {
+        abort_unless($request->query('token') === config('services.evolution.webhook_token'), 401);
+
+        if ($request->input('event') === 'messages.upsert') {
+            $data = $request->input('data', []);
+            $messages = isset($data['key']) ? [$data] : ($data['messages'] ?? []);
+            foreach ($messages as $m) {
+                if (is_array($m)) {
+                    $this->ingestMessage($m);
+                }
+            }
+        }
+
+        return response()->json(['ok' => true]);
+    }
+
+    private function ingestMessage(array $m): void
+    {
+        $key = $m['key'] ?? [];
+        $remoteJid = (string) ($key['remoteJid'] ?? '');
+        if ($remoteJid === '' || str_ends_with($remoteJid, '@g.us') || str_contains($remoteJid, 'broadcast')) {
+            return;
+        }
+
+        $waId = (string) ($key['id'] ?? '');
+        if ($waId !== '' && Message::where('wa_id', $waId)->exists()) {
+            return;
+        }
+
+        $msg = $m['message'] ?? [];
+        $text = $msg['conversation'] ?? $msg['extendedTextMessage']['text'] ?? null;
+        if ($text === null) {
+            $mt = (string) ($m['messageType'] ?? '');
+            $text = match (true) {
+                str_contains($mt, 'image') => '📷 Imagem',
+                str_contains($mt, 'audio') => '🎵 Áudio',
+                str_contains($mt, 'video') => '🎬 Vídeo',
+                str_contains($mt, 'document') => '📄 Documento',
+                str_contains($mt, 'sticker') => 'Figurinha',
+                default => null,
+            };
+            if ($text === null) {
+                return;
+            }
+        }
+
+        [$local, $domain] = array_pad(explode('@', $remoteJid, 2), 2, '');
+        $isPhone = $domain === 's.whatsapp.net';
+        $slug = 'wa-'.preg_replace('/[^a-z0-9]/i', '', $local);
+
+        $realNumber = $isPhone ? $local : null;
+        if (! $isPhone) {
+            $alt = (string) ($key['remoteJidAlt'] ?? '');
+            if (str_ends_with($alt, '@s.whatsapp.net')) {
+                $realNumber = explode('@', $alt)[0];
+            }
+        }
+
+        $isOut = (bool) ($key['fromMe'] ?? false);
+        $ts = (int) ($m['messageTimestamp'] ?? time());
+
+        $conv = Conversation::firstOrNew(['slug' => $slug]);
+        if (! $conv->exists) {
+            $name = $m['pushName'] ?? ($realNumber ? '+'.$realNumber : 'Contato WhatsApp');
+            $conv->name = $name;
+            $conv->initials = $this->initialsOf($name);
+            $conv->color = '#6b7cff';
+            $conv->position = (int) (Conversation::max('position') ?? 0) + 1;
+        }
+        $conv->origin = 'WhatsApp';
+        $conv->phone = $conv->phone ?: ($realNumber ? '+'.$realNumber : null);
+        $conv->preview = mb_substr($text, 0, 80);
+        $conv->time = $this->humanDate($ts);
+        if (! $isOut) {
+            $conv->unread = (int) $conv->unread + 1;
+        }
+        $conv->save();
+
+        $conv->messages()->create([
+            'wa_id' => $waId ?: null,
+            'type' => 'text',
+            'is_out' => $isOut,
+            'text' => mb_substr($text, 0, 4000),
+            'time' => date('H:i', $ts),
+            'position' => ((int) $conv->messages()->max('position')) + 1,
+        ]);
+    }
+
     /** Busca mensagens de um JID no Evolution e grava como conversa+thread. */
     private function importConversation(string $remoteJid, int $maxPages, ?int $keepLast = null, ?string $name = null, ?string $avatar = null): ?Conversation
     {

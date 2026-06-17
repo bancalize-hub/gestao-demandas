@@ -226,6 +226,7 @@ class WhatsAppController extends Controller
         $conv->wa_jid = $conv->wa_jid ?: $remoteJid;
         $conv->preview = mb_substr($p['preview'], 0, 80);
         $conv->time = $this->humanDate($ts);
+        $conv->last_message_at = date('Y-m-d H:i:s', $ts);
         if (! $isOut) {
             $conv->unread = (int) $conv->unread + 1;
         }
@@ -345,6 +346,7 @@ class WhatsAppController extends Controller
 
         $conv->preview = mb_substr((string) $last, 0, 80);
         $conv->time = $lastTs ? $this->humanDate($lastTs) : null;
+        $conv->last_message_at = $lastTs ? date('Y-m-d H:i:s', $lastTs) : null;
         $conv->save();
 
         return $conv;

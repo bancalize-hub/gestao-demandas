@@ -15,7 +15,10 @@ class ConversationController extends Controller
 {
     public function index()
     {
-        return Conversation::with('messages')->orderBy('position')->get();
+        return Conversation::with('messages')
+            ->orderByRaw('last_message_at IS NULL, last_message_at DESC')
+            ->orderBy('position')
+            ->get();
     }
 
     public function update(Request $request, Conversation $conversation)

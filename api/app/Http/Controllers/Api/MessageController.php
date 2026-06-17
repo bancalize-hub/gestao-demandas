@@ -49,6 +49,7 @@ class MessageController extends Controller
                 'preview' => $data['text'] ?? $conversation->preview,
                 'time' => $data['time'] ?? $conversation->time,
                 'unread' => ($data['is_out'] ?? false) ? 0 : $conversation->unread,
+                'last_message_at' => now(),
             ]);
         }
 

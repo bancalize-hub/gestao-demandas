@@ -20,6 +20,7 @@ export interface Msg {
 export interface Tag { label: string, color: string }
 export interface Interaction { title: string, meta: string, color: string }
 export interface QuickReply { id: number, label: string, text: string }
+export interface Stage { id?: number, key: string, name: string, color: string, position?: number }
 
 export interface Conversation {
   id: string // slug
@@ -65,12 +66,12 @@ type Board = 'pipeline' | 'tasks'
 interface DragRef { board: Board, from: string, id: number }
 
 // ----- Metadados fixos das colunas -----
-const PIPE_COLS = [
-  { id: 'novo', title: 'Novo lead', dot: '#53bdeb' },
-  { id: 'contato', title: 'Contato feito', dot: '#7c6cf5' },
-  { id: 'proposta', title: 'Proposta enviada', dot: '#3aa6ff' },
-  { id: 'negociacao', title: 'Negociação', dot: '#ffb443' },
-  { id: 'fechado', title: 'Fechado', dot: '#25D366' },
+const DEFAULT_STAGES: Stage[] = [
+  { key: 'novo', name: 'Novo lead', color: '#53bdeb' },
+  { key: 'contato', name: 'Contato feito', color: '#7c6cf5' },
+  { key: 'proposta', name: 'Proposta enviada', color: '#3aa6ff' },
+  { key: 'negociacao', name: 'Negociação', color: '#ffb443' },
+  { key: 'fechado', name: 'Fechado', color: '#25D366' },
 ]
 const TASK_COLS = [
   { id: 'todo', title: 'A fazer', dot: '#8696a0' },
@@ -155,6 +156,7 @@ export const useCrmStore = defineStore('crm', {
     taskList: [] as Task[],
     quickReplies: [] as QuickReply[],
     labels: [] as { id: number, name: string, color: string }[],
+    stages: [...DEFAULT_STAGES] as Stage[],
     dragOverCol: null as string | null,
     formType: 'Novo recurso',
     formPriority: 'media' as 'baixa' | 'media' | 'alta',
@@ -169,9 +171,9 @@ export const useCrmStore = defineStore('crm', {
       return s.conversations.find(c => c.id === s.activeId) || s.conversations[0]
     },
     pipeline(s): Column<Deal>[] {
-      return PIPE_COLS.map(col => ({
-        ...col, money: true,
-        cards: s.dealList.filter(d => d.stage === col.id).slice().sort(sortByPos),
+      return s.stages.map(col => ({
+        id: col.key, title: col.name, dot: col.color, money: true,
+        cards: s.dealList.filter(d => d.stage === col.key).slice().sort(sortByPos),
       }))
     },
     tasks(s): Column<Task>[] {
@@ -190,18 +192,18 @@ export const useCrmStore = defineStore('crm', {
       this.loading = true
       try {
         const client = api()
-        const [convs, deals, tasks, qr, labels] = await Promise.all([
+        const [convs, deals, tasks, qr, stages] = await Promise.all([
           client<any[]>(`/api/conversations`),
           client<any[]>(`/api/deals`),
           client<any[]>(`/api/tasks`),
           client<QuickReply[]>(`/api/quick-replies`),
-          client<{ id: number, name: string, color: string }[]>(`/api/labels`),
+          client<Stage[]>(`/api/stages`),
         ])
         this.conversations = convs.map(mapConv)
         this.dealList = deals.map(mapDeal)
         this.taskList = tasks.map(mapTask)
         this.quickReplies = qr
-        this.labels = labels
+        if (stages.length) this.stages = stages
         this.connection = 'online'
         if (!this.conversations.find(c => c.id === this.activeId))
           this.activeId = this.conversations[0]?.id ?? ''
@@ -321,6 +323,11 @@ export const useCrmStore = defineStore('crm', {
       const created = await api()<any>('/api/deals', { method: 'POST', body: payload })
       this.dealList.push(mapDeal(created))
     },
+    updateDeal(id: number, patch: Partial<Deal>) {
+      const d = this.dealList.find(x => x.id === id)
+      if (d) Object.assign(d, patch)
+      api()(`/api/deals/${id}`, { method: 'PATCH', body: patch }).catch(() => {})
+    },
     removeDeal(id: number) {
       this.dealList = this.dealList.filter(d => d.id !== id)
       api()(`/api/deals/${id}`, { method: 'DELETE' }).catch(() => {})
@@ -355,6 +362,25 @@ export const useCrmStore = defineStore('crm', {
       if (!c) return
       c.tags = tags
       api()(`/api/conversations/${id}`, { method: 'PATCH', body: { tags } }).catch(() => {})
+    },
+
+    // ----- Etapas do funil (também são as etiquetas) -----
+    async createStage(payload: { name: string, color: string }) {
+      const s = await api()<Stage>('/api/stages', { method: 'POST', body: payload })
+      this.stages.push(s)
+      return s
+    },
+    updateStage(id: number, patch: Partial<Stage>) {
+      const s = this.stages.find(x => x.id === id)
+      if (s) Object.assign(s, patch)
+      api()(`/api/stages/${id}`, { method: 'PATCH', body: patch }).catch(() => {})
+    },
+    removeStage(id: number) {
+      this.stages = this.stages.filter(x => x.id !== id)
+      api()(`/api/stages/${id}`, { method: 'DELETE' }).catch(() => {})
+    },
+    reorderStages() {
+      api()('/api/stages/reorder', { method: 'POST', body: { ids: this.stages.map(s => s.id) } }).catch(() => {})
     },
 
     // ----- Portal de solicitações -----

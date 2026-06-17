@@ -193,6 +193,13 @@ watch(() => [thread.value.length, crm.activeId, crm.typing], async () => {
   const el = msgsRef.value
   if (el) el.scrollTop = el.scrollHeight
 })
+
+// Auto-carrega as mídias da conversa aberta (sem precisar clicar).
+watch(() => crm.activeId, () => {
+  for (const m of thread.value) {
+    if (m.isMedia && m.id) loadMedia(m.id)
+  }
+}, { immediate: true })
 </script>
 
 <template>
@@ -284,16 +291,13 @@ watch(() => [thread.value.length, crm.activeId, crm.typing], async () => {
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7.2-7.2A2 2 0 0 1 2.8 12V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.4.6l7.4 7.4a2 2 0 0 1 0 2.8Z" stroke-linejoin="round" /><circle cx="7.5" cy="7.5" r="1.4" fill="currentColor" stroke="none" /></svg>
             </button>
             <div v-if="showLabels" style="position:absolute;top:46px;right:0;z-index:40;background:#202c33;border:1px solid #2a3942;border-radius:12px;padding:9px;min-width:220px;box-shadow:0 12px 32px rgba(0,0,0,.5);" @click.stop>
-              <div style="font-size:10.5px;color:#8696a0;font-weight:700;letter-spacing:.5px;padding:3px 7px 7px;">ETIQUETAS</div>
-              <button v-for="l in crm.labels" :key="l.id" class="mitem" style="width:100%;display:flex;align-items:center;gap:9px;background:none;border:none;color:#e9edef;font-family:inherit;font-size:13px;padding:7px 8px;border-radius:7px;cursor:pointer;text-align:left;" @click="toggleLabel(l)">
+              <div style="font-size:10.5px;color:#8696a0;font-weight:700;letter-spacing:.5px;padding:3px 7px 7px;">ETAPA DO FUNIL</div>
+              <button v-for="l in crm.stages" :key="l.key" class="mitem" style="width:100%;display:flex;align-items:center;gap:9px;background:none;border:none;color:#e9edef;font-family:inherit;font-size:13px;padding:7px 8px;border-radius:7px;cursor:pointer;text-align:left;" @click="toggleLabel(l)">
                 <span :style="{ width: '11px', height: '11px', borderRadius: '3px', background: l.color, flexShrink: 0 }" />
                 <span style="flex:1;">{{ l.name }}</span>
                 <svg v-if="hasLabel(l.name)" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#25D366" stroke-width="2.5"><path d="m5 13 4 4L19 7" stroke-linecap="round" stroke-linejoin="round" /></svg>
               </button>
-              <div style="display:flex;gap:6px;margin-top:8px;padding:0 3px;">
-                <input v-model="newLabel" placeholder="Nova etiqueta" style="flex:1;background:#111b21;border:1px solid #2a3942;border-radius:8px;padding:7px 9px;color:#e9edef;font-family:inherit;font-size:12.5px;outline:none;" @keydown.enter="addNewLabel">
-                <button style="background:#7c6cf5;border:none;color:#fff;width:30px;border-radius:8px;cursor:pointer;font-size:16px;" @click="addNewLabel">+</button>
-              </div>
+              <div style="font-size:11px;color:#5f6f78;padding:7px 8px 2px;">Edite as etapas no Funil.</div>
             </div>
           </div>
           <button class="iconbtn" style="width:38px;height:38px;border-radius:11px;border:none;background:#202c33;color:#e9edef;display:flex;align-items:center;justify-content:center;cursor:pointer;" @click="navigateTo('/reuniao/' + (conv?.id || 'sala'))">

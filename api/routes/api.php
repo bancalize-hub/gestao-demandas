@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\LabelController;
 use App\Http\Controllers\Api\MemoryController;
 use App\Http\Controllers\Api\MessageController;
 use App\Http\Controllers\Api\QuickReplyController;
+use App\Http\Controllers\Api\StageController;
 use App\Http\Controllers\Api\TaskController;
 use App\Http\Controllers\Api\WhatsAppController;
 use Illuminate\Support\Facades\Route;
@@ -34,6 +35,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::patch('/conversations/{conversation}', [ConversationController::class, 'update']);
     Route::post('/conversations/{conversation}/messages', [MessageController::class, 'store']);
     Route::post('/conversations/{conversation}/suggest-reply', [ConversationController::class, 'suggestReply']);
+
+    Route::get('/stages', [StageController::class, 'index']);
+    Route::post('/stages', [StageController::class, 'store']);
+    Route::post('/stages/reorder', [StageController::class, 'reorder']);
+    Route::patch('/stages/{stage}', [StageController::class, 'update']);
+    Route::delete('/stages/{stage}', [StageController::class, 'destroy']);
 
     Route::get('/deals', [DealController::class, 'index']);
     Route::post('/deals', [DealController::class, 'store']);

@@ -17,11 +17,13 @@ return new class extends Migration
             $table->timestamps();
         });
 
+        // Etiquetas espelham os estágios do funil de vendas.
         DB::table('labels')->insert([
-            ['name' => 'Cliente', 'color' => '#25D366', 'position' => 0, 'created_at' => now(), 'updated_at' => now()],
-            ['name' => 'Lead', 'color' => '#53bdeb', 'position' => 1, 'created_at' => now(), 'updated_at' => now()],
-            ['name' => 'Urgente', 'color' => '#ff6b6b', 'position' => 2, 'created_at' => now(), 'updated_at' => now()],
-            ['name' => 'Suporte', 'color' => '#ffb443', 'position' => 3, 'created_at' => now(), 'updated_at' => now()],
+            ['name' => 'Novo lead', 'color' => '#53bdeb', 'position' => 0, 'created_at' => now(), 'updated_at' => now()],
+            ['name' => 'Contato feito', 'color' => '#7c6cf5', 'position' => 1, 'created_at' => now(), 'updated_at' => now()],
+            ['name' => 'Proposta enviada', 'color' => '#3aa6ff', 'position' => 2, 'created_at' => now(), 'updated_at' => now()],
+            ['name' => 'Negociação', 'color' => '#ffb443', 'position' => 3, 'created_at' => now(), 'updated_at' => now()],
+            ['name' => 'Fechado', 'color' => '#25D366', 'position' => 4, 'created_at' => now(), 'updated_at' => now()],
         ]);
     }
 

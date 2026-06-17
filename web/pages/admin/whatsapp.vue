@@ -1,5 +1,52 @@
 <script setup lang="ts">
+import { useCrmStore } from '~/stores/crm'
+
 const api = useApi()
+const crm = useCrmStore()
+
+// Sincronização das conversas
+const syncing = ref(false)
+const syncMsg = ref('')
+async function syncWpp() {
+  if (syncing.value) return
+  syncing.value = true
+  syncMsg.value = 'Sincronizando… isso pode levar até ~30s.'
+  try {
+    const r = await api<{ imported: number }>('/api/wpp/sync', { method: 'POST', body: { remove_demo: true, limit: 25 } })
+    await crm.init()
+    syncMsg.value = `${r.imported} conversas importadas. Abrindo o chat…`
+    setTimeout(() => navigateTo('/'), 900)
+  }
+  catch {
+    syncMsg.value = 'Falha ao sincronizar.'
+  }
+  finally {
+    syncing.value = false
+  }
+}
+
+// Importar um número específico (conversa completa)
+const impNumber = ref('')
+const importing = ref(false)
+const impMsg = ref('')
+async function importOne() {
+  const n = impNumber.value.replace(/\D/g, '')
+  if (!n || importing.value) return
+  importing.value = true
+  impMsg.value = ''
+  try {
+    await api('/api/wpp/import', { method: 'POST', body: { number: n } })
+    await crm.init()
+    impMsg.value = 'Conversa importada. Abrindo o chat…'
+    setTimeout(() => navigateTo('/'), 800)
+  }
+  catch (e: any) {
+    impMsg.value = e?.response?._data?.message || 'Falha ao importar.'
+  }
+  finally {
+    importing.value = false
+  }
+}
 
 const state = ref<'open' | 'connecting' | 'close'>('connecting')
 const number = ref<string | null>(null)
@@ -105,13 +152,34 @@ onBeforeUnmount(() => {
         <div v-if="loading" style="background:#111b21;border:1px solid #1c2730;border-radius:18px;padding:40px;text-align:center;color:#8696a0;font-size:14px;">Carregando…</div>
 
         <!-- conectado -->
-        <div v-else-if="connected" style="background:#111b21;border:1px solid #1c2730;border-radius:18px;padding:34px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:14px;">
-          <div style="width:70px;height:70px;border-radius:50%;background:rgba(37,211,102,.14);display:flex;align-items:center;justify-content:center;"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#25D366" stroke-width="2.4"><path d="m5 13 4 4L19 7" stroke-linecap="round" stroke-linejoin="round" /></svg></div>
-          <div style="font-size:20px;font-weight:800;">WhatsApp conectado</div>
-          <div v-if="number" style="font-size:14px;color:#aebac1;">Número: <b style="color:#e9edef;">+{{ number }}</b></div>
-          <div style="font-size:13px;color:#8696a0;max-width:340px;line-height:1.5;">As conversas serão sincronizadas e as mensagens enviadas pelo chat sairão por este número.</div>
-          <button style="margin-top:6px;background:rgba(255,77,77,.12);border:1px solid rgba(255,77,77,.3);color:#ff8d8d;font-family:inherit;font-size:13.5px;font-weight:700;padding:11px 20px;border-radius:11px;cursor:pointer;" @click="disconnect">Desconectar</button>
-        </div>
+        <template v-else-if="connected">
+          <div style="background:#111b21;border:1px solid #1c2730;border-radius:18px;padding:30px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:12px;">
+            <div style="width:64px;height:64px;border-radius:50%;background:rgba(37,211,102,.14);display:flex;align-items:center;justify-content:center;"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#25D366" stroke-width="2.4"><path d="m5 13 4 4L19 7" stroke-linecap="round" stroke-linejoin="round" /></svg></div>
+            <div style="font-size:19px;font-weight:800;">WhatsApp conectado</div>
+            <div v-if="number" style="font-size:14px;color:#aebac1;">Número: <b style="color:#e9edef;">+{{ number }}</b></div>
+            <button style="margin-top:4px;background:rgba(255,77,77,.12);border:1px solid rgba(255,77,77,.3);color:#ff8d8d;font-family:inherit;font-size:13px;font-weight:700;padding:9px 18px;border-radius:10px;cursor:pointer;" @click="disconnect">Desconectar</button>
+          </div>
+
+          <!-- sincronizar / importar conversas -->
+          <div style="margin-top:18px;background:#111b21;border:1px solid #1c2730;border-radius:18px;padding:26px;">
+            <div style="font-size:16px;font-weight:800;">Conversas</div>
+            <div style="font-size:13px;color:#8696a0;margin-top:4px;line-height:1.5;">Traga as conversas reais do WhatsApp para o chat. Isso <b style="color:#aebac1;">remove as conversas de exemplo</b> e importa as mais recentes.</div>
+
+            <button :disabled="syncing" :style="{ width: '100%', marginTop: '16px', background: '#25D366', border: 'none', color: '#062014', fontFamily: 'inherit', fontSize: '14px', fontWeight: 700, padding: '13px', borderRadius: '12px', cursor: syncing ? 'default' : 'pointer', opacity: syncing ? 0.7 : 1 }" @click="syncWpp">
+              {{ syncing ? 'Sincronizando…' : 'Sincronizar conversas do WhatsApp' }}
+            </button>
+            <div v-if="syncMsg" style="margin-top:10px;font-size:12.5px;color:#a89bf9;text-align:center;">{{ syncMsg }}</div>
+
+            <div style="margin-top:18px;border-top:1px solid #1c2730;padding-top:16px;">
+              <div style="font-size:12.5px;font-weight:700;color:#aebac1;margin-bottom:9px;">Importar um número específico (histórico completo)</div>
+              <div style="display:flex;gap:8px;">
+                <input v-model="impNumber" placeholder="5511987654321" style="flex:1;background:#202c33;border:1px solid #2a3942;border-radius:10px;padding:10px 12px;color:#e9edef;font-family:inherit;font-size:13.5px;outline:none;" @keydown.enter="importOne">
+                <button :disabled="importing" :style="{ background: '#202c33', border: 'none', color: '#e9edef', fontFamily: 'inherit', fontSize: '13px', fontWeight: 700, padding: '0 16px', borderRadius: '10px', cursor: importing ? 'default' : 'pointer', whiteSpace: 'nowrap' }" @click="importOne">{{ importing ? '…' : 'Importar' }}</button>
+              </div>
+              <div v-if="impMsg" style="margin-top:8px;font-size:12.5px;color:#a89bf9;">{{ impMsg }}</div>
+            </div>
+          </div>
+        </template>
 
         <!-- pareamento (QR) -->
         <div v-else style="background:#111b21;border:1px solid #1c2730;border-radius:18px;padding:30px;">

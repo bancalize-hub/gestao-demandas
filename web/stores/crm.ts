@@ -6,7 +6,8 @@ export type Screen =
   | 'meeting' | 'contact' | 'form' | 'mobile'
 
 export interface Msg {
-  type: 'divider' | 'text' | 'voice' | 'file'
+  id?: number
+  type: 'divider' | 'text' | 'voice' | 'file' | 'image' | 'video'
   label?: string | null
   isOut?: boolean
   text?: string | null
@@ -112,7 +113,7 @@ function mapConv(c: any): Conversation {
   }
 }
 function mapMsg(m: any): Msg {
-  return { type: m.type, isOut: !!m.is_out, text: m.text, time: m.time, dur: m.dur, fileName: m.file_name, meta: m.meta, label: m.label }
+  return { id: m.id, type: m.type, isOut: !!m.is_out, text: m.text, time: m.time, dur: m.dur, fileName: m.file_name, meta: m.meta, label: m.label }
 }
 function mapDeal(d: any): Deal {
   return { id: d.id, name: d.name, sub: d.sub ?? '', value: d.value ?? '', tag: d.tag ?? '', stage: d.stage, hot: !!d.hot, won: !!d.won, tagStrong: !!d.tag_strong, position: d.position ?? 0 }

@@ -58,5 +58,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/wpp/pair', [WhatsAppController::class, 'pair']);
     Route::post('/wpp/import', [WhatsAppController::class, 'import']);
     Route::post('/wpp/sync', [WhatsAppController::class, 'sync']);
+    Route::get('/wpp/media/{message}', [WhatsAppController::class, 'media']);
     Route::delete('/wpp/logout', [WhatsAppController::class, 'logout']);
 });

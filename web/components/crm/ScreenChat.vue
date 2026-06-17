@@ -47,6 +47,21 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => { pollTimer = setInterval(() => crm.refresh(), 7000) })
 onBeforeUnmount(() => { if (pollTimer) clearInterval(pollTimer) })
 
+// Mídia (carregada sob demanda — descriptografada pelo Evolution)
+const apiClient = useApi()
+const media = reactive<Record<number, string>>({})
+const mediaLoading = reactive<Record<number, boolean>>({})
+async function loadMedia(id?: number) {
+  if (!id || media[id] || mediaLoading[id]) return
+  mediaLoading[id] = true
+  try {
+    const r = await apiClient<{ data: string }>(`/api/wpp/media/${id}`)
+    media[id] = r.data
+  }
+  catch { /* */ }
+  finally { mediaLoading[id] = false }
+}
+
 // Etiquetas
 const showLabels = ref(false)
 const newLabel = ref('')
@@ -98,7 +113,7 @@ const active = computed(() => {
 
 const list = computed(() => crm.conversations.map(c => ({
   id: c.id, name: c.name, initials: c.initials, avatar: c.avatar, preview: c.preview, time: c.time,
-  unread: c.unread, online: c.online, hot: !!c.hot, hasUnread: c.unread > 0, archived: c.archived,
+  unread: c.unread, online: c.online, hot: !!c.hot, hasUnread: c.unread > 0, archived: c.archived, tags: c.tags || [],
   rowStyle: { display: 'flex', gap: '12px', padding: '11px 12px', borderRadius: '13px', cursor: 'pointer', alignItems: 'center', position: 'relative', background: c.id === crm.activeId ? '#202c33' : 'transparent' },
   avatarStyle: { width: '48px', height: '48px', borderRadius: '50%', background: c.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '16px', flexShrink: 0, position: 'relative' },
   dotStyle: { position: 'absolute', bottom: '1px', right: '1px', width: '12px', height: '12px', borderRadius: '50%', background: '#25D366', border: `2.5px solid ${c.id === crm.activeId ? '#202c33' : '#111b21'}` },
@@ -132,12 +147,13 @@ const thread = computed(() => (conv.value?.thread || []).map((m) => {
   const align = isOut ? 'flex-end' : 'flex-start'
   return {
     ...m, isOut,
-    isDivider: m.type === 'divider', isText: m.type === 'text', isVoice: m.type === 'voice', isFile: m.type === 'file',
+    isDivider: m.type === 'divider', isText: m.type === 'text',
+    isImage: m.type === 'image', isVoice: m.type === 'voice', isVideo: m.type === 'video', isFile: m.type === 'file',
+    isMedia: m.type === 'image' || m.type === 'voice' || m.type === 'video' || m.type === 'file',
     avColor: conv.value?.color, avInitials: conv.value?.initials,
     dividerStyle: { alignSelf: 'center', background: '#1c2a33', color: '#8696a0', fontSize: '11px', fontWeight: 600, padding: '5px 13px', borderRadius: '8px', margin: '2px 0 6px' },
     bubbleText: { alignSelf: align, maxWidth: '64%', background: baseBg, padding: '9px 13px', borderRadius: isOut ? '9px 9px 2px 9px' : '9px 9px 9px 2px' },
-    bubbleVoice: { alignSelf: align, maxWidth: '64%', background: baseBg, padding: '11px 13px', borderRadius: '9px', display: 'flex', alignItems: 'center', gap: '11px' },
-    bubbleFile: { alignSelf: align, maxWidth: '64%', background: baseBg, padding: '7px', borderRadius: '9px' },
+    bubbleMedia: { alignSelf: align, maxWidth: '64%', background: baseBg, padding: '8px', borderRadius: '9px' },
   }
 }))
 
@@ -213,6 +229,9 @@ watch(() => [thread.value.length, crm.activeId, crm.typing], async () => {
                 <span v-if="c.hasUnread" style="background:#25D366;color:#062014;font-size:11px;font-weight:700;min-width:19px;height:19px;border-radius:10px;display:flex;align-items:center;justify-content:center;padding:0 5px;flex-shrink:0;">{{ c.unread }}</span>
               </div>
               <div v-if="c.hot" style="margin-top:6px;display:inline-flex;font-size:10.5px;font-weight:700;color:#ff7a45;background:rgba(255,122,69,.13);padding:2px 8px;border-radius:6px;">🔥 Lead quente</div>
+              <div v-if="c.tags && c.tags.length" style="display:flex;gap:4px;flex-wrap:wrap;margin-top:5px;">
+                <span v-for="(t, i) in c.tags" :key="i" :style="{ fontSize: '10px', fontWeight: 700, color: t.color, background: `${t.color}22`, padding: '1px 7px', borderRadius: '5px' }">{{ t.label }}</span>
+              </div>
             </div>
             <button class="rowmenu" title="Ações" style="position:absolute;top:8px;right:6px;background:#202c33;border:none;color:#cfd6db;width:22px;height:22px;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:15px;line-height:1;" @click.stop="menuFor = menuFor === c.id ? '' : c.id">⋮</button>
             <div v-if="menuFor === c.id" style="position:absolute;top:30px;right:6px;z-index:30;background:#202c33;border:1px solid #2a3942;border-radius:10px;padding:5px;min-width:180px;box-shadow:0 10px 28px rgba(0,0,0,.45);" @click.stop>
@@ -299,26 +318,21 @@ watch(() => [thread.value.length, crm.activeId, crm.typing], async () => {
                 <svg v-if="m.isOut" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#53bdeb" stroke-width="2.4"><path d="m4 13 3.5 3.5L14 8M11 16l1.5 1.5L20 9" /></svg>
               </div>
             </div>
-            <div v-else-if="m.isVoice" :style="m.bubbleVoice">
-              <div :style="{ width: '38px', height: '38px', borderRadius: '50%', background: m.avColor, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: '12px', fontWeight: 700 }">{{ m.avInitials }}</div>
-              <button style="width:30px;height:30px;border-radius:50%;border:none;background:#25D366;color:#062014;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5v14l12-7z" /></svg></button>
-              <div style="display:flex;align-items:center;gap:2px;height:26px;">
-                <span style="width:3px;height:10px;background:#25D366;border-radius:3px;" /><span style="width:3px;height:20px;background:#25D366;border-radius:3px;" /><span style="width:3px;height:14px;background:#5a6b73;border-radius:3px;" /><span style="width:3px;height:24px;background:#5a6b73;border-radius:3px;" /><span style="width:3px;height:9px;background:#5a6b73;border-radius:3px;" /><span style="width:3px;height:18px;background:#5a6b73;border-radius:3px;" /><span style="width:3px;height:13px;background:#5a6b73;border-radius:3px;" /><span style="width:3px;height:22px;background:#5a6b73;border-radius:3px;" /><span style="width:3px;height:11px;background:#5a6b73;border-radius:3px;" /><span style="width:3px;height:16px;background:#5a6b73;border-radius:3px;" />
-              </div>
-              <span style="font-size:11px;color:#8696a0;flex-shrink:0;">{{ m.dur }}</span>
-            </div>
-            <div v-else-if="m.isFile" :style="m.bubbleFile">
-              <div style="display:flex;align-items:center;gap:11px;background:rgba(0,0,0,.18);border-radius:7px;padding:11px 13px;">
-                <div style="width:38px;height:44px;background:#ff5d5d;border-radius:5px;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><span style="font-size:9px;font-weight:800;color:#fff;">PDF</span></div>
-                <div style="flex:1;min-width:0;">
-                  <div style="font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ m.fileName }}</div>
-                  <div style="font-size:11px;color:#a7d4c5;margin-top:2px;">{{ m.meta }}</div>
-                </div>
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#a7d4c5" stroke-width="1.8"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14" stroke-linecap="round" stroke-linejoin="round" /></svg>
-              </div>
-              <div style="display:flex;align-items:center;justify-content:flex-end;gap:4px;margin-top:4px;padding-right:4px;">
-                <span style="font-size:10.5px;color:#a7d4c5;">{{ m.time }}</span>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#53bdeb" stroke-width="2.4"><path d="m4 13 3.5 3.5L14 8M11 16l1.5 1.5L20 9" /></svg>
+            <div v-else-if="m.isMedia" :style="m.bubbleMedia">
+              <template v-if="media[m.id]">
+                <img v-if="m.isImage" :src="media[m.id]" style="max-width:260px;width:100%;border-radius:7px;display:block;">
+                <video v-else-if="m.isVideo" :src="media[m.id]" controls style="max-width:260px;width:100%;border-radius:7px;display:block;" />
+                <audio v-else-if="m.isVoice" :src="media[m.id]" controls style="width:230px;display:block;" />
+                <a v-else :href="media[m.id]" :download="m.fileName || 'arquivo'" style="display:flex;align-items:center;gap:10px;background:rgba(0,0,0,.18);border-radius:7px;padding:10px 12px;color:#e9edef;text-decoration:none;font-size:13px;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#a7d4c5" stroke-width="1.8"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14" stroke-linecap="round" stroke-linejoin="round" /></svg>Baixar arquivo</a>
+              </template>
+              <button v-else :disabled="mediaLoading[m.id]" style="display:flex;align-items:center;gap:9px;background:rgba(0,0,0,.18);border:none;color:#e9edef;font-family:inherit;font-size:13px;padding:11px 14px;border-radius:7px;cursor:pointer;width:100%;min-width:170px;" @click="loadMedia(m.id)">
+                <span style="font-size:18px;">{{ m.isImage ? '📷' : m.isVoice ? '🎵' : m.isVideo ? '🎬' : '📄' }}</span>
+                <span style="flex:1;text-align:left;">{{ mediaLoading[m.id] ? 'Carregando…' : (m.isImage ? 'Ver imagem' : m.isVoice ? 'Tocar áudio' : m.isVideo ? 'Ver vídeo' : 'Baixar arquivo') }}</span>
+              </button>
+              <div v-if="m.text" style="font-size:13.5px;line-height:1.4;margin-top:6px;padding:0 2px;">{{ m.text }}</div>
+              <div style="display:flex;align-items:center;justify-content:flex-end;gap:4px;margin-top:4px;padding-right:2px;">
+                <span style="font-size:10.5px;color:#8696a0;">{{ m.time }}</span>
+                <svg v-if="m.isOut" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#53bdeb" stroke-width="2.4"><path d="m4 13 3.5 3.5L14 8M11 16l1.5 1.5L20 9" /></svg>
               </div>
             </div>
           </template>

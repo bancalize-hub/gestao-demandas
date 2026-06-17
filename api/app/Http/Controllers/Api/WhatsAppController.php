@@ -193,21 +193,9 @@ class WhatsAppController extends Controller
             return;
         }
 
-        $msg = $m['message'] ?? [];
-        $text = $msg['conversation'] ?? $msg['extendedTextMessage']['text'] ?? null;
-        if ($text === null) {
-            $mt = (string) ($m['messageType'] ?? '');
-            $text = match (true) {
-                str_contains($mt, 'image') => '📷 Imagem',
-                str_contains($mt, 'audio') => '🎵 Áudio',
-                str_contains($mt, 'video') => '🎬 Vídeo',
-                str_contains($mt, 'document') => '📄 Documento',
-                str_contains($mt, 'sticker') => 'Figurinha',
-                default => null,
-            };
-            if ($text === null) {
-                return;
-            }
+        $p = $this->parseMessage($m);
+        if (! $p) {
+            return;
         }
 
         [$local, $domain] = array_pad(explode('@', $remoteJid, 2), 2, '');
@@ -235,7 +223,7 @@ class WhatsAppController extends Controller
         }
         $conv->origin = 'WhatsApp';
         $conv->phone = $conv->phone ?: ($realNumber ? '+'.$realNumber : null);
-        $conv->preview = mb_substr($text, 0, 80);
+        $conv->preview = mb_substr($p['preview'], 0, 80);
         $conv->time = $this->humanDate($ts);
         if (! $isOut) {
             $conv->unread = (int) $conv->unread + 1;
@@ -244,9 +232,9 @@ class WhatsAppController extends Controller
 
         $conv->messages()->create([
             'wa_id' => $waId ?: null,
-            'type' => 'text',
+            'type' => $p['type'],
             'is_out' => $isOut,
-            'text' => mb_substr($text, 0, 4000),
+            'text' => $p['text'] !== null ? mb_substr($p['text'], 0, 4000) : null,
             'time' => date('H:i', $ts),
             'position' => ((int) $conv->messages()->max('position')) + 1,
         ]);
@@ -327,33 +315,21 @@ class WhatsAppController extends Controller
         $last = null;
         $lastTs = 0;
         foreach ($records as $r) {
-            $msg = $r['message'] ?? [];
-            $text = $msg['conversation'] ?? $msg['extendedTextMessage']['text'] ?? null;
-
-            if ($text === null) {
-                $mt = (string) ($r['messageType'] ?? '');
-                $text = match (true) {
-                    str_contains($mt, 'image') => '📷 Imagem',
-                    str_contains($mt, 'audio') => '🎵 Áudio',
-                    str_contains($mt, 'video') => '🎬 Vídeo',
-                    str_contains($mt, 'document') => '📄 Documento',
-                    str_contains($mt, 'sticker') => 'Figurinha',
-                    default => null,
-                };
-                if ($text === null) {
-                    continue;
-                }
+            $p = $this->parseMessage($r);
+            if (! $p) {
+                continue;
             }
 
             $ts = (int) ($r['messageTimestamp'] ?? 0);
             $conv->messages()->create([
-                'type' => 'text',
+                'wa_id' => $p['wa_id'],
+                'type' => $p['type'],
                 'is_out' => (bool) ($r['key']['fromMe'] ?? false),
-                'text' => mb_substr($text, 0, 4000),
+                'text' => $p['text'] !== null ? mb_substr($p['text'], 0, 4000) : null,
                 'time' => $ts ? date('H:i', $ts) : null,
                 'position' => $pos++,
             ]);
-            $last = $text;
+            $last = $p['preview'];
             $lastTs = $ts;
         }
 
@@ -398,6 +374,52 @@ class WhatsAppController extends Controller
                 }
             }
         }
+    }
+
+    /** Extrai [type, text(legenda/corpo), preview, wa_id] de uma mensagem do Evolution. */
+    private function parseMessage(array $m): ?array
+    {
+        $key = $m['key'] ?? [];
+        $msg = $m['message'] ?? [];
+        $waId = ((string) ($key['id'] ?? '')) ?: null;
+
+        $body = $msg['conversation'] ?? $msg['extendedTextMessage']['text'] ?? null;
+        if ($body !== null) {
+            return ['type' => 'text', 'text' => $body, 'preview' => $body, 'wa_id' => $waId];
+        }
+
+        $map = [
+            'imageMessage' => ['image', '📷 Imagem'],
+            'audioMessage' => ['voice', '🎵 Áudio'],
+            'videoMessage' => ['video', '🎬 Vídeo'],
+            'documentMessage' => ['file', '📄 Documento'],
+            'stickerMessage' => ['image', 'Figurinha'],
+        ];
+        $mt = (string) ($m['messageType'] ?? '');
+        if (! isset($map[$mt])) {
+            return null;
+        }
+        [$type, $label] = $map[$mt];
+
+        return ['type' => $type, 'text' => $msg[$mt]['caption'] ?? null, 'preview' => $label, 'wa_id' => $waId];
+    }
+
+    /** Mídia descriptografada (data URI base64) de uma mensagem — sob demanda. */
+    public function media(\App\Models\Message $message)
+    {
+        abort_unless((bool) $message->wa_id, 404);
+
+        $res = $this->evo()->timeout(40)->post("/chat/getBase64FromMediaMessage/{$this->instance()}", [
+            'message' => ['key' => ['id' => $message->wa_id]],
+            'convertToMp4' => false,
+        ]);
+
+        $base64 = $res->json('base64');
+        abort_unless((bool) $base64, 404);
+
+        $mime = $res->json('mimetype') ?: 'application/octet-stream';
+
+        return response()->json(['data' => "data:{$mime};base64,{$base64}"]);
     }
 
     /** Prévia: hoje → HH:MM, ontem → "Ontem", senão → DD/MM/AAAA. */

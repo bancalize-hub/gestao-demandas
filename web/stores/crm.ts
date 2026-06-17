@@ -278,6 +278,12 @@ export const useCrmStore = defineStore('crm', {
       }
     },
 
+    // ----- Negócios (funil) -----
+    async createDeal(payload: { name: string, sub: string, value: string, stage: string, hot: boolean }) {
+      const created = await api()<any>('/api/deals', { method: 'POST', body: payload })
+      this.dealList.push(mapDeal(created))
+    },
+
     // ----- Portal de solicitações -----
     async submitForm(payload: { name: string, company: string, desc: string, due: string }) {
       const name = payload.name.trim()

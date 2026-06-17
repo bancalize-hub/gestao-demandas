@@ -3,6 +3,37 @@ import { useCrmStore, sumCol } from '~/stores/crm'
 
 const crm = useCrmStore()
 
+// --- Novo negócio ---
+const showNew = ref(false)
+const saving = ref(false)
+const error = ref('')
+const form = reactive({ name: '', sub: '', value: '', stage: 'novo', hot: false })
+
+const stages = computed(() => crm.pipeline.map(c => ({ id: c.id, title: c.title })))
+
+function openNew() {
+  error.value = ''
+  Object.assign(form, { name: '', sub: '', value: '', stage: 'novo', hot: false })
+  showNew.value = true
+}
+
+async function submitNew() {
+  if (saving.value) return
+  if (!form.name.trim()) { error.value = 'Informe o nome do negócio.'; return }
+  saving.value = true
+  error.value = ''
+  try {
+    await crm.createDeal({ ...form, name: form.name.trim() })
+    showNew.value = false
+  }
+  catch {
+    error.value = 'Não foi possível criar o negócio.'
+  }
+  finally {
+    saving.value = false
+  }
+}
+
 const cols = computed(() => crm.pipeline.map((col) => {
   const key = `pipeline:${col.id}`
   const over = crm.dragOverCol === key
@@ -30,7 +61,7 @@ const cols = computed(() => crm.pipeline.map((col) => {
         </div>
         <div style="display:flex;gap:10px;align-items:center;">
           <div style="display:flex;align-items:center;gap:8px;background:#202c33;border-radius:11px;padding:9px 13px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8696a0" stroke-width="2"><circle cx="11" cy="11" r="7" /><path d="m20 20-3-3" stroke-linecap="round" /></svg><input placeholder="Buscar negócio" style="background:transparent;border:none;outline:none;color:#e9edef;font-family:inherit;font-size:13px;width:130px;"></div>
-          <button class="wabtn" style="background:#25D366;border:none;color:#062014;font-family:inherit;font-size:13.5px;font-weight:700;padding:10px 17px;border-radius:11px;cursor:pointer;display:flex;align-items:center;gap:7px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>Novo negócio</button>
+          <button class="wabtn" style="background:#25D366;border:none;color:#062014;font-family:inherit;font-size:13.5px;font-weight:700;padding:10px 17px;border-radius:11px;cursor:pointer;display:flex;align-items:center;gap:7px;" @click="openNew"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>Novo negócio</button>
         </div>
       </div>
 
@@ -68,6 +99,34 @@ const cols = computed(() => crm.pipeline.map((col) => {
               <div style="font-size:12px;color:#8696a0;margin-top:2px;">{{ card.sub }}</div>
               <div style="display:flex;justify-content:space-between;align-items:center;margin-top:11px;"><span style="font-size:13.5px;font-weight:700;color:#25D366;">{{ card.value }}</span><span :style="card.tagStyle">{{ card.tag }}</span></div>
             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- modal: novo negócio -->
+    <div v-if="showNew" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:50;padding:24px;" @click.self="showNew = false">
+      <div style="width:460px;max-width:100%;background:#111b21;border:1px solid #1c2730;border-radius:18px;padding:26px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+          <div style="font-size:19px;font-weight:800;">Novo negócio</div>
+          <button style="background:none;border:none;color:#8696a0;cursor:pointer;font-size:20px;line-height:1;" @click="showNew = false">×</button>
+        </div>
+        <div style="font-size:13px;color:#8696a0;margin-bottom:20px;">Adicione um negócio ao funil.</div>
+
+        <div style="display:flex;flex-direction:column;gap:15px;">
+          <label style="display:flex;flex-direction:column;gap:7px;"><span style="font-size:12.5px;font-weight:600;color:#aebac1;">Nome*</span><input v-model="form.name" placeholder="Ex: Vértice Pro — 12 licenças" style="background:#202c33;border:1px solid #2a3942;border-radius:11px;padding:11px 13px;color:#e9edef;font-family:inherit;font-size:14px;outline:none;"></label>
+          <label style="display:flex;flex-direction:column;gap:7px;"><span style="font-size:12.5px;font-weight:600;color:#aebac1;">Cliente / contato</span><input v-model="form.sub" placeholder="Ex: Mariana Costa" style="background:#202c33;border:1px solid #2a3942;border-radius:11px;padding:11px 13px;color:#e9edef;font-family:inherit;font-size:14px;outline:none;"></label>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+            <label style="display:flex;flex-direction:column;gap:7px;"><span style="font-size:12.5px;font-weight:600;color:#aebac1;">Valor</span><input v-model="form.value" placeholder="R$ 4.200" style="background:#202c33;border:1px solid #2a3942;border-radius:11px;padding:11px 13px;color:#e9edef;font-family:inherit;font-size:14px;outline:none;"></label>
+            <label style="display:flex;flex-direction:column;gap:7px;"><span style="font-size:12.5px;font-weight:600;color:#aebac1;">Etapa</span><select v-model="form.stage" style="background:#202c33;border:1px solid #2a3942;border-radius:11px;padding:11px 13px;color:#e9edef;font-family:inherit;font-size:14px;outline:none;color-scheme:dark;"><option v-for="s in stages" :key="s.id" :value="s.id">{{ s.title }}</option></select></label>
+          </div>
+          <label style="display:flex;align-items:center;gap:9px;font-size:13.5px;color:#aebac1;cursor:pointer;"><input v-model="form.hot" type="checkbox" style="width:16px;height:16px;accent-color:#ff7a45;cursor:pointer;">Marcar como lead quente 🔥</label>
+
+          <div v-if="error" style="background:rgba(255,77,77,.1);border:1px solid rgba(255,77,77,.3);color:#ff8d8d;font-size:13px;font-weight:600;padding:10px 13px;border-radius:10px;">{{ error }}</div>
+
+          <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:4px;">
+            <button style="background:#202c33;border:none;color:#e9edef;font-family:inherit;font-size:13.5px;font-weight:600;padding:11px 18px;border-radius:11px;cursor:pointer;" @click="showNew = false">Cancelar</button>
+            <button :disabled="saving" :style="{ background: '#25D366', border: 'none', color: '#062014', fontFamily: 'inherit', fontSize: '13.5px', fontWeight: 700, padding: '11px 20px', borderRadius: '11px', cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.7 : 1 }" @click="submitNew">{{ saving ? 'Salvando…' : 'Criar negócio' }}</button>
           </div>
         </div>
       </div>

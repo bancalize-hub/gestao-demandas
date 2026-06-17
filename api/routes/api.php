@@ -29,6 +29,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/conversations/{conversation}/suggest-reply', [ConversationController::class, 'suggestReply']);
 
     Route::get('/deals', [DealController::class, 'index']);
+    Route::post('/deals', [DealController::class, 'store']);
     Route::patch('/deals/{deal}', [DealController::class, 'update']);
 
     Route::get('/tasks', [TaskController::class, 'index']);

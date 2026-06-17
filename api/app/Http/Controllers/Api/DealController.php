@@ -13,6 +13,22 @@ class DealController extends Controller
         return Deal::orderBy('position')->orderBy('id')->get();
     }
 
+    public function store(Request $request)
+    {
+        $data = $request->validate([
+            'name' => 'required|string|max:255',
+            'sub' => 'nullable|string|max:255',
+            'value' => 'nullable|string|max:50',
+            'stage' => 'required|string|max:32',
+            'tag' => 'nullable|string|max:50',
+            'hot' => 'sometimes|boolean',
+        ]);
+
+        $data['position'] = (Deal::where('stage', $data['stage'])->max('position') ?? -1) + 1;
+
+        return response()->json(Deal::create($data), 201);
+    }
+
     public function update(Request $request, Deal $deal)
     {
         $data = $request->validate([

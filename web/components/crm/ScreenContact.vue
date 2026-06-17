@@ -36,7 +36,7 @@ function labelStyle(i: number) {
         </div>
         <div style="display:flex;gap:9px;">
           <button class="wabtn" style="background:#25D366;border:none;color:#062014;font-family:inherit;font-size:13px;font-weight:700;padding:11px 17px;border-radius:11px;cursor:pointer;display:flex;align-items:center;gap:7px;" @click="crm.go('chat')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-9 8.34 9 9 0 0 1-3.9-.9L3 21l1.06-4.1A8.38 8.38 0 0 1 3 11.5 8.5 8.5 0 0 1 21 11.5Z" stroke-linecap="round" stroke-linejoin="round" /></svg>Mensagem</button>
-          <button class="ghost" style="background:#202c33;border:none;color:#e9edef;font-family:inherit;font-size:13px;font-weight:700;padding:11px 15px;border-radius:11px;cursor:pointer;display:flex;align-items:center;gap:7px;" @click="crm.go('meeting')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2.5" y="6" width="13" height="12" rx="2.5" /><path d="M15.5 10l6-3.2v10.4l-6-3.2" /></svg>Reunião</button>
+          <button class="ghost" style="background:#202c33;border:none;color:#e9edef;font-family:inherit;font-size:13px;font-weight:700;padding:11px 15px;border-radius:11px;cursor:pointer;display:flex;align-items:center;gap:7px;" @click="navigateTo('/reuniao/' + (c?.id || 'sala'))"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2.5" y="6" width="13" height="12" rx="2.5" /><path d="M15.5 10l6-3.2v10.4l-6-3.2" /></svg>Reunião</button>
         </div>
       </div>
 

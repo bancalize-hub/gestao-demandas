@@ -189,7 +189,7 @@ watch(() => [thread.value.length, crm.activeId, crm.typing], async () => {
           <div style="display:flex;gap:6px;margin-right:6px;">
             <span v-for="(t, i) in active.tags" :key="i" :style="t.style">{{ t.label }}</span>
           </div>
-          <button class="iconbtn" style="width:38px;height:38px;border-radius:11px;border:none;background:#202c33;color:#e9edef;display:flex;align-items:center;justify-content:center;cursor:pointer;" @click="crm.go('meeting')">
+          <button class="iconbtn" style="width:38px;height:38px;border-radius:11px;border:none;background:#202c33;color:#e9edef;display:flex;align-items:center;justify-content:center;cursor:pointer;" @click="navigateTo('/reuniao/' + (conv?.id || 'sala'))">
             <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2.5" y="6" width="13" height="12" rx="2.5" /><path d="M15.5 10l6-3.2v10.4l-6-3.2" /></svg>
           </button>
           <button class="iconbtn" style="width:38px;height:38px;border-radius:11px;border:none;background:#202c33;color:#e9edef;display:flex;align-items:center;justify-content:center;cursor:pointer;">

@@ -47,7 +47,7 @@ const crm = useCrmStore()
           <div style="font-size:11px;color:#8696a0;text-align:right;padding:0 10px;height:74px;border-top:1px solid #16222a;">14:00</div>
           <div style="border-top:1px solid #16222a;border-left:1px solid #16222a;" />
           <div style="border-top:1px solid #16222a;border-left:1px solid #16222a;" />
-          <div style="border-top:1px solid #16222a;border-left:1px solid #16222a;padding:4px;"><div class="liveev" style="background:#1a3a2c;border-left:3px solid #25D366;border-radius:7px;padding:7px 9px;height:100%;cursor:pointer;position:relative;" @click="crm.go('meeting')"><div style="display:flex;align-items:center;gap:4px;"><span style="width:7px;height:7px;border-radius:50%;background:#25D366;animation:recpulse 1.6s infinite;" /><span style="font-size:12px;font-weight:700;color:#7ee6a8;">Demo · Mariana</span></div><div style="font-size:10.5px;color:#5fb585;margin-top:1px;">14:00 – 14:20 · ao vivo</div></div></div>
+          <div style="border-top:1px solid #16222a;border-left:1px solid #16222a;padding:4px;"><div class="liveev" style="background:#1a3a2c;border-left:3px solid #25D366;border-radius:7px;padding:7px 9px;height:100%;cursor:pointer;position:relative;" @click="navigateTo('/reuniao/sala')"><div style="display:flex;align-items:center;gap:4px;"><span style="width:7px;height:7px;border-radius:50%;background:#25D366;animation:recpulse 1.6s infinite;" /><span style="font-size:12px;font-weight:700;color:#7ee6a8;">Demo · Mariana</span></div><div style="font-size:10.5px;color:#5fb585;margin-top:1px;">14:00 – 14:20 · ao vivo</div></div></div>
           <div style="border-top:1px solid #16222a;border-left:1px solid #16222a;" />
           <div style="border-top:1px solid #16222a;border-left:1px solid #16222a;" />
 
@@ -68,7 +68,7 @@ const crm = useCrmStore()
           <div style="display:flex;align-items:center;gap:6px;"><span style="width:7px;height:7px;border-radius:50%;background:#25D366;animation:recpulse 1.6s infinite;" /><span style="font-size:11px;font-weight:700;color:#25D366;">AGORA · AO VIVO</span></div>
           <div style="font-weight:700;font-size:14.5px;margin-top:8px;">Demonstração — Mariana Costa</div>
           <div style="font-size:12.5px;color:#8696a0;margin-top:3px;">14:00 – 14:20 · Vídeo + tela</div>
-          <button class="wabtn" style="width:100%;margin-top:11px;background:#25D366;border:none;color:#062014;font-family:inherit;font-size:13px;font-weight:700;padding:9px;border-radius:9px;cursor:pointer;" @click="crm.go('meeting')">Entrar na reunião</button>
+          <button class="wabtn" style="width:100%;margin-top:11px;background:#25D366;border:none;color:#062014;font-family:inherit;font-size:13px;font-weight:700;padding:9px;border-radius:9px;cursor:pointer;" @click="navigateTo('/reuniao/sala')">Entrar na reunião</button>
         </div>
         <div style="background:#202c33;border-radius:13px;padding:14px;"><div style="font-size:11px;font-weight:700;color:#8696a0;">16:00</div><div style="font-weight:700;font-size:14px;margin-top:6px;">Reunião de time comercial</div><div style="font-size:12px;color:#8696a0;margin-top:3px;">6 participantes</div></div>
         <div style="background:#202c33;border-radius:13px;padding:14px;"><div style="font-size:11px;font-weight:700;color:#8696a0;">16:00</div><div style="font-weight:700;font-size:14px;margin-top:6px;">Onboarding — Juliana Mendes</div><div style="font-size:12px;color:#8696a0;margin-top:3px;">Cliente fechado · 1h</div></div>

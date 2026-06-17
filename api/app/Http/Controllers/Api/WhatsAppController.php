@@ -57,6 +57,19 @@ class WhatsAppController extends Controller
         ]);
     }
 
+    /** Código de pareamento (alternativa ao QR): WhatsApp > conectar com número. */
+    public function pair(Request $request)
+    {
+        $this->ensureAdmin($request);
+
+        $data = $request->validate(['number' => 'required|string']);
+        $number = preg_replace('/\D/', '', $data['number']);
+
+        $res = $this->evo()->get("/instance/connect/{$this->instance()}", ['number' => $number]);
+
+        return response()->json(['pairingCode' => $res->json('pairingCode')]);
+    }
+
     /** Desconecta o WhatsApp (logout do aparelho). */
     public function logout(Request $request)
     {

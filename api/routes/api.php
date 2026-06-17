@@ -45,5 +45,6 @@ Route::middleware('auth:sanctum')->group(function () {
     // WhatsApp (Evolution) — somente admin (checado no controller)
     Route::get('/wpp/status', [WhatsAppController::class, 'status']);
     Route::get('/wpp/qr', [WhatsAppController::class, 'qr']);
+    Route::get('/wpp/pair', [WhatsAppController::class, 'pair']);
     Route::delete('/wpp/logout', [WhatsAppController::class, 'logout']);
 });

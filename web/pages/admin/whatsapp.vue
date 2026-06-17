@@ -7,6 +7,12 @@ const qr = ref('')
 const loading = ref(true)
 const qrLoading = ref(false)
 
+// Pareamento por código
+const pairNumber = ref('')
+const pairCode = ref('')
+const pairLoading = ref(false)
+const pairError = ref('')
+
 let statusTimer: ReturnType<typeof setInterval> | null = null
 let qrTimer: ReturnType<typeof setInterval> | null = null
 
@@ -42,7 +48,24 @@ async function loadQr() {
 
 function startQr() {
   loadQr()
-  qrTimer = setInterval(loadQr, 22000)
+  qrTimer = setInterval(loadQr, 12000)
+}
+
+async function getPairCode() {
+  const num = pairNumber.value.replace(/\D/g, '')
+  if (num.length < 12) { pairError.value = 'Informe o número com DDI+DDD (ex: 5511987654321).'; return }
+  pairError.value = ''
+  pairLoading.value = true
+  pairCode.value = ''
+  try {
+    const r = await api<{ pairingCode: string | null }>(`/api/wpp/pair?number=${num}`)
+    pairCode.value = r.pairingCode || ''
+    if (!pairCode.value) pairError.value = 'Não foi possível gerar o código. Tente o QR.'
+  }
+  catch {
+    pairError.value = 'Falha ao gerar o código.'
+  }
+  finally { pairLoading.value = false }
 }
 
 async function disconnect() {
@@ -106,6 +129,19 @@ onBeforeUnmount(() => {
           </div>
 
           <button style="width:100%;margin-top:18px;background:#202c33;border:none;color:#e9edef;font-family:inherit;font-size:13px;font-weight:600;padding:11px;border-radius:11px;cursor:pointer;" @click="loadQr">Gerar novo QR</button>
+
+          <div style="margin-top:18px;border-top:1px solid #1c2730;padding-top:16px;">
+            <div style="font-size:12.5px;font-weight:700;color:#aebac1;margin-bottom:9px;">Ou conecte com o número</div>
+            <div style="display:flex;gap:8px;">
+              <input v-model="pairNumber" placeholder="5511987654321" style="flex:1;background:#202c33;border:1px solid #2a3942;border-radius:10px;padding:10px 12px;color:#e9edef;font-family:inherit;font-size:13.5px;outline:none;" @keydown.enter="getPairCode">
+              <button :disabled="pairLoading" :style="{ background: '#7c6cf5', border: 'none', color: '#fff', fontFamily: 'inherit', fontSize: '13px', fontWeight: 700, padding: '0 16px', borderRadius: '10px', cursor: pairLoading ? 'default' : 'pointer', whiteSpace: 'nowrap' }" @click="getPairCode">{{ pairLoading ? '…' : 'Gerar código' }}</button>
+            </div>
+            <div v-if="pairError" style="margin-top:8px;font-size:12.5px;color:#ff8d8d;">{{ pairError }}</div>
+            <div v-if="pairCode" style="margin-top:13px;text-align:center;background:#202c33;border-radius:11px;padding:14px;">
+              <div style="font-size:12px;color:#8696a0;line-height:1.45;">No WhatsApp: <b style="color:#aebac1;">Aparelhos conectados → Conectar um aparelho → "Conectar com número"</b> e digite:</div>
+              <div style="font-size:27px;font-weight:800;letter-spacing:4px;color:#25D366;margin-top:9px;font-family:monospace;">{{ pairCode }}</div>
+            </div>
+          </div>
 
           <div style="margin-top:16px;font-size:11.5px;color:#5f6f78;line-height:1.5;border-top:1px solid #1c2730;padding-top:14px;">⚠️ Use um número dedicado. É integração não-oficial e há risco de bloqueio do número pelo WhatsApp.</div>
         </div>

@@ -143,7 +143,7 @@ const filteredList = computed(() => {
     else if (c.archived) {
       return false
     }
-    if (filter.value === 'unread' && !c.hasUnread) return false
+    if (filter.value === 'unread' && !c.hasUnread && c.id !== crm.activeId) return false
     if (q && !(`${c.name} ${c.preview}`.toLowerCase().includes(q))) return false
     return true
   })

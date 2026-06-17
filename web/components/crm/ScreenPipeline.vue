@@ -34,6 +34,23 @@ async function submitNew() {
   }
 }
 
+const stats = computed(() => {
+  const ds = crm.dealList
+  const val = (v: string) => Number.parseInt(String(v || '').replace(/[^\d]/g, ''), 10) || 0
+  const emNeg = ds.filter(d => d.stage === 'negociacao').reduce((a, d) => a + val(d.value), 0)
+  const won = ds.filter(d => d.won || d.stage === 'fechado').length
+  return {
+    emNeg: emNeg >= 1000 ? `R$ ${(emNeg / 1000).toFixed(1).replace('.', ',')} mil` : `R$ ${emNeg.toLocaleString('pt-BR')}`,
+    taxa: ds.length ? Math.round((won / ds.length) * 100) : 0,
+    conversas: crm.conversations.length,
+    ativos: ds.filter(d => d.stage !== 'fechado').length,
+  }
+})
+
+function delDeal(id: number) {
+  if (confirm('Excluir este negócio?')) crm.removeDeal(id)
+}
+
 const cols = computed(() => crm.pipeline.map((col) => {
   const key = `pipeline:${col.id}`
   const over = crm.dragOverCol === key
@@ -66,10 +83,10 @@ const cols = computed(() => crm.pipeline.map((col) => {
       </div>
 
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:22px;">
-        <div style="background:#111b21;border:1px solid #1c2730;border-radius:14px;padding:16px 18px;"><div style="font-size:12.5px;color:#8696a0;">Em negociação</div><div style="font-size:25px;font-weight:800;margin-top:5px;">R$ 89,4 mil</div><div style="font-size:11.5px;color:#25D366;margin-top:4px;font-weight:600;">▲ 12% vs. mês anterior</div></div>
-        <div style="background:#111b21;border:1px solid #1c2730;border-radius:14px;padding:16px 18px;"><div style="font-size:12.5px;color:#8696a0;">Taxa de conversão</div><div style="font-size:25px;font-weight:800;margin-top:5px;">34%</div><div style="font-size:11.5px;color:#25D366;margin-top:4px;font-weight:600;">▲ 5 p.p.</div></div>
-        <div style="background:#111b21;border:1px solid #1c2730;border-radius:14px;padding:16px 18px;"><div style="font-size:12.5px;color:#8696a0;">Conversas abertas</div><div style="font-size:25px;font-weight:800;margin-top:5px;">27</div><div style="font-size:11.5px;color:#ffb443;margin-top:4px;font-weight:600;">3 não respondidas</div></div>
-        <div style="background:#111b21;border:1px solid #1c2730;border-radius:14px;padding:16px 18px;"><div style="font-size:12.5px;color:#8696a0;">Reuniões hoje</div><div style="font-size:25px;font-weight:800;margin-top:5px;">4</div><div style="font-size:11.5px;color:#7c6cf5;margin-top:4px;font-weight:600;">Próxima às 14:00</div></div>
+        <div style="background:#111b21;border:1px solid #1c2730;border-radius:14px;padding:16px 18px;"><div style="font-size:12.5px;color:#8696a0;">Em negociação</div><div style="font-size:25px;font-weight:800;margin-top:5px;">{{ stats.emNeg }}</div><div style="font-size:11.5px;color:#8696a0;margin-top:4px;font-weight:600;">no estágio Negociação</div></div>
+        <div style="background:#111b21;border:1px solid #1c2730;border-radius:14px;padding:16px 18px;"><div style="font-size:12.5px;color:#8696a0;">Taxa de conversão</div><div style="font-size:25px;font-weight:800;margin-top:5px;">{{ stats.taxa }}%</div><div style="font-size:11.5px;color:#8696a0;margin-top:4px;font-weight:600;">negócios fechados / total</div></div>
+        <div style="background:#111b21;border:1px solid #1c2730;border-radius:14px;padding:16px 18px;"><div style="font-size:12.5px;color:#8696a0;">Conversas</div><div style="font-size:25px;font-weight:800;margin-top:5px;">{{ stats.conversas }}</div><div style="font-size:11.5px;color:#8696a0;margin-top:4px;font-weight:600;">total no CRM</div></div>
+        <div style="background:#111b21;border:1px solid #1c2730;border-radius:14px;padding:16px 18px;"><div style="font-size:12.5px;color:#8696a0;">Negócios ativos</div><div style="font-size:25px;font-weight:800;margin-top:5px;">{{ stats.ativos }}</div><div style="font-size:11.5px;color:#8696a0;margin-top:4px;font-weight:600;">não fechados</div></div>
       </div>
     </div>
 
@@ -95,6 +112,7 @@ const cols = computed(() => crm.pipeline.map((col) => {
                 <div style="font-weight:700;font-size:14px;">{{ card.name }}</div>
                 <span v-if="card.hot" style="font-size:10px;font-weight:700;color:#ff7a45;background:rgba(255,122,69,.15);padding:2px 7px;border-radius:6px;flex-shrink:0;">🔥</span>
                 <svg v-if="card.won" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#25D366" stroke-width="2.5" style="flex-shrink:0;"><path d="m5 13 4 4L19 7" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                <button class="delbtn" title="Excluir" style="background:none;border:none;color:#5a6b73;cursor:pointer;padding:0;flex-shrink:0;display:flex;" @click.stop="delDeal(card.id)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
               </div>
               <div style="font-size:12px;color:#8696a0;margin-top:2px;">{{ card.sub }}</div>
               <div style="display:flex;justify-content:space-between;align-items:center;margin-top:11px;"><span style="font-size:13.5px;font-weight:700;color:#25D366;">{{ card.value }}</span><span :style="card.tagStyle">{{ card.tag }}</span></div>
@@ -137,4 +155,7 @@ const cols = computed(() => crm.pipeline.map((col) => {
 <style scoped>
 .wabtn:hover { background: #2ee070 !important; }
 .card:hover { filter: brightness(1.12); }
+.card .delbtn { opacity: 0; transition: opacity .15s; }
+.card:hover .delbtn { opacity: 1; }
+.delbtn:hover { color: #ff6b6b !important; }
 </style>

@@ -3,6 +3,10 @@ import { useCrmStore, prioMeta } from '~/stores/crm'
 
 const crm = useCrmStore()
 
+function delTask(id: number) {
+  if (confirm('Excluir esta tarefa?')) crm.removeTask(id)
+}
+
 const cols = computed(() => crm.tasks.map((col) => {
   const key = `tasks:${col.id}`
   const over = crm.dragOverCol === key
@@ -45,7 +49,10 @@ const cols = computed(() => crm.tasks.map((col) => {
               @dragstart="crm.setDrag('tasks', col.id, card.id)"
               @dragend="crm.setDragOver(null)"
             >
-              <div style="font-weight:700;font-size:13.5px;line-height:1.35;">{{ card.title }}</div>
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+                <div style="font-weight:700;font-size:13.5px;line-height:1.35;">{{ card.title }}</div>
+                <button class="delbtn" title="Excluir" style="background:none;border:none;color:#5a6b73;cursor:pointer;padding:0;flex-shrink:0;display:flex;" @click.stop="delTask(card.id)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+              </div>
               <div style="display:flex;align-items:center;gap:6px;margin-top:9px;"><span :style="card.prioStyle">{{ card.prioLabel }}</span><span style="font-size:10.5px;color:#8696a0;background:#0b141a;padding:2px 8px;border-radius:6px;">{{ card.type }}</span></div>
               <div style="display:flex;align-items:center;justify-content:space-between;margin-top:11px;"><span style="font-size:11.5px;color:#8696a0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px;">{{ card.client }}</span><span style="font-size:11px;color:#8696a0;display:flex;align-items:center;gap:4px;flex-shrink:0;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" stroke-linecap="round" /></svg>{{ card.due }}</span></div>
             </div>
@@ -59,4 +66,7 @@ const cols = computed(() => crm.tasks.map((col) => {
 <style scoped>
 .wabtn:hover { background: #2ee070 !important; }
 .card:hover { filter: brightness(1.12); }
+.card .delbtn { opacity: 0; transition: opacity .15s; }
+.card:hover .delbtn { opacity: 1; }
+.delbtn:hover { color: #ff6b6b !important; }
 </style>

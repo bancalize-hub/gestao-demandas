@@ -297,6 +297,14 @@ export const useCrmStore = defineStore('crm', {
       const created = await api()<any>('/api/deals', { method: 'POST', body: payload })
       this.dealList.push(mapDeal(created))
     },
+    removeDeal(id: number) {
+      this.dealList = this.dealList.filter(d => d.id !== id)
+      api()(`/api/deals/${id}`, { method: 'DELETE' }).catch(() => {})
+    },
+    removeTask(id: number) {
+      this.taskList = this.taskList.filter(t => t.id !== id)
+      api()(`/api/tasks/${id}`, { method: 'DELETE' }).catch(() => {})
+    },
 
     // ----- Respostas rápidas -----
     async addQuickReply(payload: { label: string, text: string }) {

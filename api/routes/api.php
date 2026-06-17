@@ -36,10 +36,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/deals', [DealController::class, 'index']);
     Route::post('/deals', [DealController::class, 'store']);
     Route::patch('/deals/{deal}', [DealController::class, 'update']);
+    Route::delete('/deals/{deal}', [DealController::class, 'destroy']);
 
     Route::get('/tasks', [TaskController::class, 'index']);
     Route::post('/tasks', [TaskController::class, 'store']);
     Route::patch('/tasks/{task}', [TaskController::class, 'update']);
+    Route::delete('/tasks/{task}', [TaskController::class, 'destroy']);
 
     Route::get('/quick-replies', [QuickReplyController::class, 'index']);
     Route::post('/quick-replies', [QuickReplyController::class, 'store']);

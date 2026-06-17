@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ConversationController;
 use App\Http\Controllers\Api\DealController;
+use App\Http\Controllers\Api\LabelController;
 use App\Http\Controllers\Api\MessageController;
 use App\Http\Controllers\Api\QuickReplyController;
 use App\Http\Controllers\Api\TaskController;
@@ -46,6 +47,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/quick-replies', [QuickReplyController::class, 'index']);
     Route::post('/quick-replies', [QuickReplyController::class, 'store']);
     Route::delete('/quick-replies/{quickReply}', [QuickReplyController::class, 'destroy']);
+
+    Route::get('/labels', [LabelController::class, 'index']);
+    Route::post('/labels', [LabelController::class, 'store']);
+    Route::delete('/labels/{label}', [LabelController::class, 'destroy']);
 
     // WhatsApp (Evolution) — somente admin (checado no controller)
     Route::get('/wpp/status', [WhatsAppController::class, 'status']);

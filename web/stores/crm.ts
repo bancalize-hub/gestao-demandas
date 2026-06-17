@@ -152,6 +152,7 @@ export const useCrmStore = defineStore('crm', {
     dealList: [] as Deal[],
     taskList: [] as Task[],
     quickReplies: [] as QuickReply[],
+    labels: [] as { id: number, name: string, color: string }[],
     dragOverCol: null as string | null,
     formType: 'Novo recurso',
     formPriority: 'media' as 'baixa' | 'media' | 'alta',
@@ -187,16 +188,18 @@ export const useCrmStore = defineStore('crm', {
       this.loading = true
       try {
         const client = api()
-        const [convs, deals, tasks, qr] = await Promise.all([
+        const [convs, deals, tasks, qr, labels] = await Promise.all([
           client<any[]>(`/api/conversations`),
           client<any[]>(`/api/deals`),
           client<any[]>(`/api/tasks`),
           client<QuickReply[]>(`/api/quick-replies`),
+          client<{ id: number, name: string, color: string }[]>(`/api/labels`),
         ])
         this.conversations = convs.map(mapConv)
         this.dealList = deals.map(mapDeal)
         this.taskList = tasks.map(mapTask)
         this.quickReplies = qr
+        this.labels = labels
         this.connection = 'online'
         if (!this.conversations.find(c => c.id === this.activeId))
           this.activeId = this.conversations[0]?.id ?? ''
@@ -328,6 +331,23 @@ export const useCrmStore = defineStore('crm', {
     removeQuickReply(id: number) {
       this.quickReplies = this.quickReplies.filter(q => q.id !== id)
       api()(`/api/quick-replies/${id}`, { method: 'DELETE' }).catch(() => {})
+    },
+
+    // ----- Etiquetas -----
+    async createLabel(payload: { name: string, color: string }) {
+      const created = await api()<{ id: number, name: string, color: string }>('/api/labels', { method: 'POST', body: payload })
+      this.labels.push(created)
+      return created
+    },
+    removeLabel(id: number) {
+      this.labels = this.labels.filter(l => l.id !== id)
+      api()(`/api/labels/${id}`, { method: 'DELETE' }).catch(() => {})
+    },
+    setConvLabels(id: string, tags: Tag[]) {
+      const c = this.conversations.find(x => x.id === id)
+      if (!c) return
+      c.tags = tags
+      api()(`/api/conversations/${id}`, { method: 'PATCH', body: { tags } }).catch(() => {})
     },
 
     // ----- Portal de solicitações -----

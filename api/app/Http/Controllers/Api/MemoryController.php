@@ -155,11 +155,29 @@ class MemoryController extends Controller
         }
     }
 
+    /** Cria um conhecimento manualmente pela tela de Memória. */
+    public function storeChunk(Request $request)
+    {
+        $data = $this->validateChunk($request);
+
+        return response()->json(MemoryChunk::create($data), 201);
+    }
+
     public function updateChunk(Request $request, MemoryChunk $memoryChunk)
     {
-        $memoryChunk->update($request->only(['kind', 'gatilho', 'conteudo', 'keywords']));
+        $memoryChunk->update($this->validateChunk($request));
 
         return response()->json($memoryChunk);
+    }
+
+    private function validateChunk(Request $request): array
+    {
+        return $request->validate([
+            'kind' => 'required|in:faq,preco,objecao,procedimento,fato',
+            'gatilho' => 'required|string|max:255',
+            'conteudo' => 'required|string|max:2000',
+            'keywords' => 'nullable|string|max:255',
+        ]);
     }
 
     public function destroyChunk(MemoryChunk $memoryChunk)

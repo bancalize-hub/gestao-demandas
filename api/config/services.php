@@ -42,6 +42,13 @@ return [
         'bin' => env('CLAUDE_BIN', '/usr/local/bin/claude'),
     ],
 
+    // Google Calendar (OAuth2 por usuário). Credenciais do projeto no Google Cloud.
+    'google' => [
+        'client_id' => env('GOOGLE_CLIENT_ID'),
+        'client_secret' => env('GOOGLE_CLIENT_SECRET'),
+        'redirect' => env('GOOGLE_REDIRECT_URI', 'https://api-demandas.bancalize.com.br/api/google/callback'),
+    ],
+
     // Evolution API (WhatsApp). URL no loopback; key fica server-side.
     'evolution' => [
         'url' => env('EVOLUTION_API_URL', 'http://127.0.0.1:8085'),

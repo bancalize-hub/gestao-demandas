@@ -4,19 +4,21 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Conversation;
-use App\Models\MemoryChunk;
-use App\Models\StyleProfile;
-use App\Models\StyleRule;
-use App\Models\StyleSample;
-use App\Support\Claude;
+use App\Models\Stage;
+use App\Services\AiReplyService;
+use App\Services\MeetingScheduler;
+use App\Support\Evolution;
 use Illuminate\Http\Request;
-use Illuminate\Support\Collection;
 
 class ConversationController extends Controller
 {
+    public function __construct(private AiReplyService $ai, private MeetingScheduler $scheduler) {}
+
     public function index()
     {
-        return Conversation::with('messages')
+        // A LISTA carrega só a última mensagem de cada conversa (preview + ✓✓), não as 11k+
+        // mensagens de todas — a thread completa vem do endpoint /full ao abrir a conversa.
+        return Conversation::with('lastMessage')
             ->orderByRaw('last_message_at IS NULL, last_message_at DESC')
             ->orderBy('position')
             ->get();
@@ -24,17 +26,62 @@ class ConversationController extends Controller
 
     public function update(Request $request, Conversation $conversation)
     {
+        $oldStage = $conversation->stage;
+
         $conversation->update($request->only([
             'unread', 'preview', 'time', 'stage', 'stage_color', 'prob', 'hot', 'online', 'archived', 'tags',
+            'deal_value', 'deal_unit', 'name', 'auto_reply',
         ]));
 
+        // Ligou o atendimento automático: se o lead está aguardando (última mensagem é dele),
+        // já agenda uma resposta. Desligou: cancela qualquer resposta pendente.
+        if ($conversation->wasChanged('auto_reply')) {
+            if ($conversation->auto_reply) {
+                $last = $conversation->messages()->reorder()->orderByDesc('ts')->orderByDesc('id')->first();
+                $conversation->auto_reply_due_at = ($last && ! $last->is_out) ? now() : null;
+            } else {
+                $conversation->auto_reply_due_at = null;
+            }
+            $conversation->save();
+        }
+
+        // Nome salvo manualmente → recalcula as iniciais do avatar.
+        if ($request->filled('name')) {
+            $parts = preg_split('/\s+/', trim((string) $request->input('name')), -1, PREG_SPLIT_NO_EMPTY);
+            $ini = mb_strtoupper(mb_substr($parts[0] ?? '', 0, 1).(count($parts) > 1 ? mb_substr(end($parts), 0, 1) : ''));
+            $conversation->update(['initials' => $ini ?: '#']);
+        }
+
+        // Mudou a etapa → sincroniza a etiqueta no WhatsApp Business (sistema → WhatsApp).
+        if ($conversation->wasChanged('stage') && $conversation->phone) {
+            $this->syncStageLabel($conversation, $oldStage, $conversation->stage);
+        }
+
         return $conversation->load('messages');
+    }
+
+    /** Aplica no WhatsApp a etiqueta da nova etapa e remove a da etapa anterior. */
+    private function syncStageLabel(Conversation $conversation, ?string $oldKey, ?string $newKey): void
+    {
+        $number = preg_replace('/\D/', '', (string) $conversation->phone);
+        if ($number === '') {
+            return;
+        }
+        $old = $oldKey ? Stage::where('key', $oldKey)->first() : null;
+        $new = $newKey ? Stage::where('key', $newKey)->first() : null;
+
+        if ($old && $old->wa_label_id) {
+            Evolution::handleLabel($number, $old->wa_label_id, 'remove');
+        }
+        if ($new && $new->wa_label_id) {
+            Evolution::handleLabel($number, $new->wa_label_id, 'add');
+        }
     }
 
     /** Sugestão de próxima resposta — no seu estilo e usando a memória (Claude/assinatura). */
     public function suggestReply(Request $request, Conversation $conversation)
     {
-        $reply = $this->generateReply(
+        $reply = $this->ai->generate(
             $conversation,
             $request->input('instruction'),
             $request->input('previous'),
@@ -46,104 +93,38 @@ class ConversationController extends Controller
         return response()->json(['suggestion' => $reply]);
     }
 
-    /** Monta o prompt (voz + conhecimento + histórico) e gera a resposta. */
-    private function generateReply(Conversation $conversation, ?string $instruction = null, ?string $previous = null): ?string
+    /**
+     * Agenda uma reunião com o lead: a IA lê a conversa, escolhe o melhor
+     * horário livre da agenda do atendente e marca (com Meet + e-mail do lead).
+     * Se a janela estiver lotada, devolve só a sugestão de mensagem para o cliente.
+     */
+    public function scheduleMeeting(Request $request, Conversation $conversation)
     {
+        $user = $request->user();
+        if (! $user->hasGoogle()) {
+            return response()->json([
+                'error' => 'sem_google',
+                'message' => 'Conecte sua conta Google na página Agenda antes de agendar reuniões.',
+            ], 409);
+        }
         if (! config('services.claude.oauth_token')) {
-            return null;
+            return response()->json(['message' => 'IA indisponível no momento.'], 502);
         }
 
-        $transcript = $conversation->messages()
-            ->where('type', 'text')
-            ->whereNotNull('text')
-            ->orderBy('id')
-            ->get(['is_out', 'text'])
-            ->map(fn ($m) => ($m->is_out ? 'Atendente' : $conversation->name).': '.$m->text)
-            ->implode("\n");
+        $result = $this->scheduler->decideAndBook($user, $conversation, $this->ai->memoryContext($conversation));
 
-        if ($transcript === '') {
-            $transcript = '(sem mensagens ainda — o lead acabou de iniciar a conversa)';
+        if (($result['error'] ?? null) === 'parse') {
+            return response()->json(['message' => 'Não consegui interpretar a sugestão da IA. Tente de novo.'], 502);
         }
 
-        $context = $this->memoryContext($conversation);
-
-        $task = ($instruction && $previous)
-            ? "Você ia mandar esta mensagem:\n\"{$previous}\"\n\nReescreva-a aplicando este ajuste pedido pelo atendente: \"{$instruction}\". Mantenha o estilo, as regras e o conhecimento."
-            : 'Escreva a próxima mensagem do Atendente.';
-
-        $prompt = <<<TXT
-        Você é o ATENDENTE escrevendo a próxima mensagem para um lead no WhatsApp.
-        Lead: {$conversation->name}. Estágio: {$conversation->stage}.
-
-        {$context}
-        Conversa (Atendente = você; {$conversation->name} = lead):
-        {$transcript}
-
-        {$task}
-        Regras de saída:
-        - Use EXATAMENTE o estilo/voz e as regras descritas acima (se houver).
-        - Use o conhecimento acima quando fizer sentido; nunca invente preços/políticas.
-        - Português do Brasil, no máximo 2-3 frases curtas.
-        - Sem aspas, sem rótulos — só o texto da mensagem.
-        TXT;
-
-        $out = Claude::run($prompt, 60);
-
-        return $out !== null ? trim($out) : null;
+        return response()->json(array_filter([
+            'scheduled' => $result['scheduled'],
+            'message' => $result['message'] ?? null,
+            'note' => $result['note'] ?? null,
+            'event' => $result['event'] ?? null,
+            'meet_link' => $result['meet_link'] ?? null,
+            'slot_label' => $result['slot_label'] ?? null,
+        ], fn ($v) => $v !== null));
     }
 
-    /** Bloco de contexto: perfil de voz + exemplos + conhecimento relevante. */
-    private function memoryContext(Conversation $conversation): string
-    {
-        $ctx = '';
-
-        $style = StyleProfile::find(1)?->summary;
-        if ($style) {
-            $ctx .= "COMO VOCÊ (atendente) FALA:\n{$style}\n\n";
-        }
-
-        $rules = StyleRule::orderBy('id')->pluck('rule');
-        if ($rules->isNotEmpty()) {
-            $ctx .= "REGRAS QUE VOCÊ SEMPRE SEGUE:\n- ".$rules->implode("\n- ")."\n\n";
-        }
-
-        $samples = StyleSample::latest('id')->take(4)->pluck('text');
-        if ($samples->isNotEmpty()) {
-            $ctx .= "EXEMPLOS DE MENSAGENS SUAS:\n- ".$samples->implode("\n- ")."\n\n";
-        }
-
-        $chunks = $this->relevantChunks($conversation);
-        if ($chunks->isNotEmpty()) {
-            $ctx .= "CONHECIMENTO (use quando relevante):\n";
-            foreach ($chunks as $c) {
-                $ctx .= "- [{$c->kind}] {$c->gatilho}: {$c->conteudo}\n";
-            }
-            $ctx .= "\n";
-        }
-
-        return $ctx;
-    }
-
-    /** Recupera os chunks mais relevantes por palavra-chave nas últimas mensagens do lead. */
-    private function relevantChunks(Conversation $conversation): Collection
-    {
-        $recent = $conversation->messages()
-            ->where('type', 'text')->where('is_out', false)->whereNotNull('text')
-            ->orderByDesc('id')->take(3)->pluck('text')->implode(' ');
-
-        $words = collect(preg_split('/\W+/u', mb_strtolower($recent)))
-            ->filter(fn ($w) => mb_strlen($w) >= 4)->unique();
-
-        $all = MemoryChunk::get();
-        if ($words->isEmpty() || $all->isEmpty()) {
-            return $all->take(5);
-        }
-
-        return $all->map(function ($c) use ($words) {
-            $hay = mb_strtolower(($c->keywords ?? '').' '.$c->gatilho);
-            $c->score = $words->filter(fn ($w) => str_contains($hay, $w))->count();
-
-            return $c;
-        })->filter(fn ($c) => $c->score > 0)->sortByDesc('score')->take(5)->values();
-    }
 }

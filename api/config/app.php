@@ -54,6 +54,9 @@ return [
 
     'url' => env('APP_URL', 'http://localhost'),
 
+    // URL do SPA (Nuxt) — usada para redirecionar de volta após o OAuth do Google.
+    'frontend_url' => env('FRONTEND_URL', 'https://demandas.bancalize.com.br'),
+
     /*
     |--------------------------------------------------------------------------
     | Application Timezone

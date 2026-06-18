@@ -11,6 +11,11 @@ export default defineNuxtConfig({
       apiBase: process.env.NUXT_PUBLIC_API_BASE || 'http://localhost:8000/api',
       // Origem da API (sem /api) — usada pelo useApi/useAuth (Sanctum SPA cookie).
       apiOrigin: process.env.NUXT_PUBLIC_API_ORIGIN || 'https://api-demandas.bancalize.com.br',
+      // WebSocket (Laravel Reverb) — tempo real.
+      wsKey: process.env.NUXT_PUBLIC_WS_KEY || 'qxprfq0k5iahxylchbf6',
+      wsHost: process.env.NUXT_PUBLIC_WS_HOST || 'api-demandas.bancalize.com.br',
+      wsPort: Number(process.env.NUXT_PUBLIC_WS_PORT || 443),
+      wsScheme: process.env.NUXT_PUBLIC_WS_SCHEME || 'wss',
     },
   },
   app: {

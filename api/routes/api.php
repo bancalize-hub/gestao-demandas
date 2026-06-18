@@ -1,8 +1,13 @@
 <?php
 
+use App\Http\Controllers\Api\AgentController;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\ChatTabController;
+use App\Http\Controllers\Api\ContactController;
 use App\Http\Controllers\Api\ConversationController;
 use App\Http\Controllers\Api\DealController;
+use App\Http\Controllers\Api\EventController;
+use App\Http\Controllers\Api\GoogleAuthController;
 use App\Http\Controllers\Api\LabelController;
 use App\Http\Controllers\Api\MemoryController;
 use App\Http\Controllers\Api\MessageController;
@@ -21,6 +26,9 @@ Route::post('/solicitacoes', [TaskController::class, 'store']);
 // --- Público: webhook do Evolution (protegido por token na query) ---
 Route::post('/wpp/webhook', [WhatsAppController::class, 'webhook']);
 
+// --- Público: callback do OAuth do Google (usuário identificado pelo state assinado) ---
+Route::get('/google/callback', [GoogleAuthController::class, 'callback']);
+
 // --- Protegido (auth:sanctum) ---
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/me', [AuthController::class, 'me']);
@@ -34,7 +42,18 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/conversations', [ConversationController::class, 'index']);
     Route::patch('/conversations/{conversation}', [ConversationController::class, 'update']);
     Route::post('/conversations/{conversation}/messages', [MessageController::class, 'store']);
+    Route::delete('/conversations/{conversation}/messages/{message}', [MessageController::class, 'destroy']);
     Route::post('/conversations/{conversation}/suggest-reply', [ConversationController::class, 'suggestReply']);
+    Route::post('/conversations/{conversation}/schedule-meeting', [ConversationController::class, 'scheduleMeeting']);
+
+    // Agente operacional (chat que dirige o Claude Code na VPS). Só logado; tudo auditado.
+    Route::get('/agent/sessions', [AgentController::class, 'index']);
+    Route::post('/agent/sessions', [AgentController::class, 'store']);
+    Route::get('/agent/sessions/{session}', [AgentController::class, 'show']);
+    Route::delete('/agent/sessions/{session}', [AgentController::class, 'destroy']);
+    Route::post('/agent/sessions/{session}/messages', [AgentController::class, 'message']);
+    Route::get('/agent/jobs/{job}', [AgentController::class, 'job']);
+    Route::post('/agent/jobs/{job}/stop', [AgentController::class, 'stop']);
 
     Route::get('/stages', [StageController::class, 'index']);
     Route::post('/stages', [StageController::class, 'store']);
@@ -52,9 +71,30 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::patch('/tasks/{task}', [TaskController::class, 'update']);
     Route::delete('/tasks/{task}', [TaskController::class, 'destroy']);
 
+    // Google Agenda — conexão da conta + CRUD de eventos
+    Route::get('/google/status', [GoogleAuthController::class, 'status']);
+    Route::get('/google/connect', [GoogleAuthController::class, 'connect']);
+    Route::delete('/google/disconnect', [GoogleAuthController::class, 'disconnect']);
+    Route::get('/google/events', [EventController::class, 'index']);
+    Route::post('/google/events', [EventController::class, 'store']);
+    Route::patch('/google/events/{event}', [EventController::class, 'update']);
+    Route::delete('/google/events/{event}', [EventController::class, 'destroy']);
+
     Route::get('/quick-replies', [QuickReplyController::class, 'index']);
     Route::post('/quick-replies', [QuickReplyController::class, 'store']);
     Route::delete('/quick-replies/{quickReply}', [QuickReplyController::class, 'destroy']);
+
+    // Contatos (sincronizados com o Google Contatos, 2 vias).
+    Route::get('/contacts', [ContactController::class, 'index']);
+    Route::post('/contacts', [ContactController::class, 'store']);
+    Route::patch('/contacts/{contact}', [ContactController::class, 'update']);
+    Route::delete('/contacts/{contact}', [ContactController::class, 'destroy']);
+
+    // Tabs personalizadas da lista de conversas (filtram por etiqueta/etapa).
+    Route::get('/chat-tabs', [ChatTabController::class, 'index']);
+    Route::post('/chat-tabs', [ChatTabController::class, 'store']);
+    Route::patch('/chat-tabs/{chatTab}', [ChatTabController::class, 'update']);
+    Route::delete('/chat-tabs/{chatTab}', [ChatTabController::class, 'destroy']);
 
     Route::get('/labels', [LabelController::class, 'index']);
     Route::post('/labels', [LabelController::class, 'store']);
@@ -63,6 +103,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Memória / base de conhecimento
     Route::post('/conversations/{conversation}/memorize', [MemoryController::class, 'memorize']);
     Route::get('/memory', [MemoryController::class, 'index']);
+    Route::post('/memory/chunks', [MemoryController::class, 'storeChunk']);
     Route::patch('/memory/chunks/{memoryChunk}', [MemoryController::class, 'updateChunk']);
     Route::delete('/memory/chunks/{memoryChunk}', [MemoryController::class, 'destroyChunk']);
     Route::put('/memory/style', [MemoryController::class, 'updateStyle']);
@@ -70,6 +111,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/memory/rules/{styleRule}', [MemoryController::class, 'destroyRule']);
 
     // WhatsApp (Evolution) — somente admin (checado no controller)
+    Route::get('/wpp/labels', [WhatsAppController::class, 'labels']);
+    Route::post('/wpp/start', [WhatsAppController::class, 'start']);
+    Route::post('/wpp/import-txt', [WhatsAppController::class, 'importTxt']);
     Route::get('/wpp/status', [WhatsAppController::class, 'status']);
     Route::get('/wpp/qr', [WhatsAppController::class, 'qr']);
     Route::get('/wpp/pair', [WhatsAppController::class, 'pair']);

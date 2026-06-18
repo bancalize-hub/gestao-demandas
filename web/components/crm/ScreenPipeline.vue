@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useCrmStore, sumCol } from '~/stores/crm'
+import { useCrmStore } from '~/stores/crm'
 
 const crm = useCrmStore()
 
@@ -47,6 +47,18 @@ async function submitNew() {
 // --- Editar etapas do funil ---
 const showStages = ref(false)
 const newStageName = ref('')
+// Etiquetas do WhatsApp Business (para vincular a cada etapa).
+const waLabels = ref<{ id: string, name: string, color?: string }[]>([])
+async function openStagesModal() {
+  showStages.value = true
+  if (!waLabels.value.length) {
+    try {
+      const r = await useApi()<{ labels: any[] }>('/api/wpp/labels')
+      waLabels.value = (r.labels || []).map(l => ({ id: String(l.id), name: l.name, color: l.color }))
+    }
+    catch { /* WhatsApp pode estar desconectado */ }
+  }
+}
 function addStage() {
   const n = newStageName.value.trim()
   if (!n) return
@@ -78,19 +90,73 @@ function delDeal(id: number) {
   if (confirm('Excluir este negócio?')) { crm.removeDeal(id); showNew.value = false }
 }
 
-const cols = computed(() => crm.pipeline.map((col) => {
-  const key = `pipeline:${col.id}`
+const val = (v: string) => Number.parseInt(String(v || '').replace(/[^\d]/g, ''), 10) || 0
+
+// Abre o card: conversa vai pro chat; negócio abre a ficha de edição.
+function openCard(card: any) {
+  if (card.kind === 'conv') {
+    crm.activeId = card.id
+    crm.go('chat')
+  }
+  else {
+    openEdit(card)
+  }
+}
+
+const cols = computed(() => crm.stages.map((st) => {
+  const key = `pipeline:${st.key}`
   const over = crm.dragOverCol === key
+  const isLast = crm.stages[crm.stages.length - 1]?.key === st.key
+
+  // Conversas (cada conversa = um negócio) na etapa atual.
+  const convCards = crm.conversations
+    .filter(c => !c.archived && c.stage === st.key)
+    .map(c => ({
+      kind: 'conv' as const,
+      id: c.id,
+      name: c.name,
+      sub: c.company || c.role || c.preview || '',
+      value: c.dealValue || '',
+      hot: c.hot,
+      won: isLast,
+      tag: c.origin || 'Conversa',
+      tagStrong: isLast,
+    }))
+
+  // Negócios criados manualmente ("Novo negócio").
+  const dealCards = crm.dealList
+    .filter(d => d.stage === st.key)
+    .slice().sort((a, b) => a.position - b.position || a.id - b.id)
+    .map(d => ({
+      kind: 'deal' as const,
+      id: d.id,
+      name: d.name,
+      sub: d.sub,
+      value: d.value,
+      stage: d.stage,
+      hot: d.hot,
+      won: d.won,
+      tag: d.tag,
+      tagStrong: d.tagStrong,
+    }))
+
+  const cards = [...convCards, ...dealCards].map(card => ({
+    ...card,
+    cardStyle: { background: card.won ? '#15281f' : (card.hot ? '#202c33' : '#1a262e'), borderRadius: '12px', padding: '13px', cursor: 'grab', borderLeft: `3px solid ${st.color}` },
+    tagStyle: card.tagStrong
+      ? { fontSize: '10.5px', fontWeight: 700, color: '#062014', background: '#25D366', padding: '3px 8px', borderRadius: '6px' }
+      : { fontSize: '10.5px', color: '#8696a0', background: '#0b141a', padding: '3px 8px', borderRadius: '6px' },
+  }))
+
+  const total = cards.reduce((a, c) => a + val(c.value), 0)
   return {
-    id: col.id, title: col.title, dot: col.dot, count: col.cards.length, sum: sumCol(col),
+    id: st.key,
+    title: st.name,
+    dot: st.color,
+    count: cards.length,
+    sum: total >= 1000 ? `R$ ${(total / 1000).toFixed(1).replace('.', ',')}k` : `R$ ${total}`,
     bodyStyle: { display: 'flex', flexDirection: 'column', gap: '10px', overflowY: 'auto', flex: 1, borderRadius: '10px', minHeight: '70px', transition: 'background .15s', background: over ? 'rgba(37,211,102,.08)' : 'transparent', outline: over ? '2px dashed rgba(37,211,102,.45)' : '2px dashed transparent', outlineOffset: '-2px' },
-    cards: col.cards.map(card => ({
-      ...card,
-      cardStyle: { background: card.won ? '#15281f' : (card.hot ? '#202c33' : '#1a262e'), borderRadius: '12px', padding: '13px', cursor: 'grab', borderLeft: `3px solid ${col.dot}` },
-      tagStyle: card.tagStrong
-        ? { fontSize: '10.5px', fontWeight: 700, color: '#062014', background: '#25D366', padding: '3px 8px', borderRadius: '6px' }
-        : { fontSize: '10.5px', color: '#8696a0', background: '#0b141a', padding: '3px 8px', borderRadius: '6px' },
-    })),
+    cards,
   }
 }))
 </script>
@@ -105,7 +171,7 @@ const cols = computed(() => crm.pipeline.map((col) => {
         </div>
         <div style="display:flex;gap:10px;align-items:center;">
           <div style="display:flex;align-items:center;gap:8px;background:#202c33;border-radius:11px;padding:9px 13px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8696a0" stroke-width="2"><circle cx="11" cy="11" r="7" /><path d="m20 20-3-3" stroke-linecap="round" /></svg><input placeholder="Buscar negócio" style="background:transparent;border:none;outline:none;color:#e9edef;font-family:inherit;font-size:13px;width:130px;"></div>
-          <button style="background:#202c33;border:none;color:#e9edef;font-family:inherit;font-size:13px;font-weight:600;padding:10px 14px;border-radius:11px;cursor:pointer;display:flex;align-items:center;gap:7px;" @click="showStages = true"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M3 12h18M3 18h18" stroke-linecap="round" /></svg>Editar etapas</button>
+          <button style="background:#202c33;border:none;color:#e9edef;font-family:inherit;font-size:13px;font-weight:600;padding:10px 14px;border-radius:11px;cursor:pointer;display:flex;align-items:center;gap:7px;" @click="openStagesModal"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M3 12h18M3 18h18" stroke-linecap="round" /></svg>Editar etapas</button>
           <button class="wabtn" style="background:#25D366;border:none;color:#062014;font-family:inherit;font-size:13.5px;font-weight:700;padding:10px 17px;border-radius:11px;cursor:pointer;display:flex;align-items:center;gap:7px;" @click="openNew"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>Novo negócio</button>
         </div>
       </div>
@@ -131,17 +197,18 @@ const cols = computed(() => crm.pipeline.map((col) => {
             @drop.prevent="crm.dropTo('pipeline', col.id)"
           >
             <div
-              v-for="card in col.cards" :key="card.id"
+              v-for="card in col.cards" :key="card.kind + ':' + card.id"
               draggable="true" :style="card.cardStyle" class="card"
-              @dragstart="crm.setDrag('pipeline', col.id, card.id)"
+              @dragstart="crm.setDrag('pipeline', col.id, card.id, card.kind)"
               @dragend="crm.setDragOver(null)"
-              @click="openEdit(card)"
+              @click="openCard(card)"
             >
               <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
                 <div style="font-weight:700;font-size:14px;">{{ card.name }}</div>
+                <span v-if="card.kind === 'conv'" title="Conversa" style="font-size:10px;font-weight:700;color:#53bdeb;background:rgba(83,189,235,.15);padding:2px 7px;border-radius:6px;flex-shrink:0;">💬</span>
                 <span v-if="card.hot" style="font-size:10px;font-weight:700;color:#ff7a45;background:rgba(255,122,69,.15);padding:2px 7px;border-radius:6px;flex-shrink:0;">🔥</span>
                 <svg v-if="card.won" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#25D366" stroke-width="2.5" style="flex-shrink:0;"><path d="m5 13 4 4L19 7" stroke-linecap="round" stroke-linejoin="round" /></svg>
-                <button class="delbtn" title="Excluir" style="background:none;border:none;color:#5a6b73;cursor:pointer;padding:0;flex-shrink:0;display:flex;" @click.stop="delDeal(card.id)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+                <button v-if="card.kind === 'deal'" class="delbtn" title="Excluir" style="background:none;border:none;color:#5a6b73;cursor:pointer;padding:0;flex-shrink:0;display:flex;" @click.stop="delDeal(Number(card.id))"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
               </div>
               <div style="font-size:12px;color:#8696a0;margin-top:2px;">{{ card.sub }}</div>
               <div style="display:flex;justify-content:space-between;align-items:center;margin-top:11px;"><span style="font-size:13.5px;font-weight:700;color:#25D366;">{{ card.value }}</span><span :style="card.tagStyle">{{ card.tag }}</span></div>
@@ -188,15 +255,24 @@ const cols = computed(() => crm.pipeline.map((col) => {
           <div style="font-size:19px;font-weight:800;">Etapas do funil</div>
           <button style="background:none;border:none;color:#8696a0;cursor:pointer;font-size:20px;line-height:1;" @click="showStages = false">×</button>
         </div>
-        <div style="font-size:13px;color:#8696a0;margin-bottom:18px;">Estas etapas também são as etiquetas das conversas no chat.</div>
-        <div style="display:flex;flex-direction:column;gap:8px;">
-          <div v-for="(s, i) in crm.stages" :key="s.id || s.key" style="display:flex;align-items:center;gap:8px;background:#202c33;border-radius:10px;padding:8px 10px;">
-            <input type="color" :value="s.color" style="width:26px;height:26px;border:none;background:none;cursor:pointer;padding:0;flex-shrink:0;" @input="s.id && crm.updateStage(s.id, { color: ($event.target as HTMLInputElement).value })">
-            <input :value="s.name" style="flex:1;background:#111b21;border:1px solid #2a3942;border-radius:8px;padding:8px 10px;color:#e9edef;font-family:inherit;font-size:13px;outline:none;" @change="s.id && crm.updateStage(s.id, { name: ($event.target as HTMLInputElement).value })">
-            <button title="Subir" :disabled="i === 0" style="background:none;border:none;color:#8696a0;cursor:pointer;padding:2px 4px;" @click="moveStage(i, -1)">▲</button>
-            <button title="Descer" :disabled="i === crm.stages.length - 1" style="background:none;border:none;color:#8696a0;cursor:pointer;padding:2px 4px;" @click="moveStage(i, 1)">▼</button>
-            <button title="Excluir" style="background:none;border:none;color:#ff6b6b;cursor:pointer;padding:2px 4px;" @click="s.id && confirm('Excluir a etapa? Os negócios dela vão para a primeira etapa.') && crm.removeStage(s.id)">✕</button>
-          </div>
+        <div style="font-size:13px;color:#8696a0;margin-bottom:18px;">Estas etapas também são as etiquetas das conversas no chat. Defina um <b style="color:#a89bf9;">objetivo da IA</b> em cada etapa — as sugestões de resposta vão conduzir a conversa rumo a ele.</div>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <div v-for="(s, i) in crm.stages" :key="s.id || s.key" style="display:flex;flex-direction:column;gap:8px;background:#202c33;border-radius:10px;padding:10px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <input type="color" :value="s.color" style="width:26px;height:26px;border:none;background:none;cursor:pointer;padding:0;flex-shrink:0;" @input="s.id && crm.updateStage(s.id, { color: ($event.target as HTMLInputElement).value })">
+              <input :value="s.name" style="flex:1;background:#111b21;border:1px solid #2a3942;border-radius:8px;padding:8px 10px;color:#e9edef;font-family:inherit;font-size:13px;outline:none;" @change="s.id && crm.updateStage(s.id, { name: ($event.target as HTMLInputElement).value })">
+              <button title="Subir" :disabled="i === 0" style="background:none;border:none;color:#8696a0;cursor:pointer;padding:2px 4px;" @click="moveStage(i, -1)">▲</button>
+              <button title="Descer" :disabled="i === crm.stages.length - 1" style="background:none;border:none;color:#8696a0;cursor:pointer;padding:2px 4px;" @click="moveStage(i, 1)">▼</button>
+              <button title="Excluir" style="background:none;border:none;color:#ff6b6b;cursor:pointer;padding:2px 4px;" @click="s.id && confirm('Excluir a etapa? Os negócios dela vão para a primeira etapa.') && crm.removeStage(s.id)">✕</button>
+            </div>
+            <textarea :value="s.goal ?? ''" rows="2" placeholder="Objetivo da IA nesta etapa (ex.: conduzir sutilmente o lead a agendar uma reunião)" style="background:#111b21;border:1px solid #2a3942;border-radius:8px;padding:8px 10px;color:#e9edef;font-family:inherit;font-size:12.5px;outline:none;resize:vertical;line-height:1.4;" @change="s.id && crm.updateStage(s.id, { goal: ($event.target as HTMLTextAreaElement).value })" />
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:11.5px;color:#8696a0;display:flex;align-items:center;gap:5px;flex-shrink:0;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#25D366" stroke-width="2"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7.2-7.2A2 2 0 0 1 2.8 12V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.4.6l7.4 7.4a2 2 0 0 1 0 2.8Z" stroke-linejoin="round"/></svg>Etiqueta WhatsApp</span>
+              <select :value="s.wa_label_id ?? ''" style="flex:1;background:#111b21;border:1px solid #2a3942;border-radius:8px;padding:7px 9px;color:#e9edef;font-family:inherit;font-size:12.5px;outline:none;color-scheme:dark;" @change="s.id && crm.updateStage(s.id, { wa_label_id: ($event.target as HTMLSelectElement).value || null })">
+                <option value="">— Não sincronizar —</option>
+                <option v-for="l in waLabels" :key="l.id" :value="l.id">{{ l.name }}</option>
+              </select>
+            </div></div>
         </div>
         <div style="display:flex;gap:8px;margin-top:14px;">
           <input v-model="newStageName" placeholder="Nova etapa" style="flex:1;background:#202c33;border:1px solid #2a3942;border-radius:10px;padding:10px 12px;color:#e9edef;font-family:inherit;font-size:13.5px;outline:none;" @keydown.enter="addStage">

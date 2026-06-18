@@ -162,12 +162,226 @@ class WhatsAppController extends Controller
         return response()->json(['imported' => $imported, 'demo_removed' => $removeDemo]);
     }
 
+    /**
+     * Importa uma conversa exportada do WhatsApp (.txt) — Android ou iPhone.
+     * Body: text (conteúdo), number, name?, client_sender? (nome de quem é o cliente).
+     */
+    public function importTxt(Request $request)
+    {
+        $data = $request->validate([
+            'text' => 'required|string',
+            'number' => 'required|string',
+            'name' => 'nullable|string|max:255',
+            'client_sender' => 'nullable|string|max:255',
+        ]);
+
+        $digits = preg_replace('/\D/', '', $data['number']);
+        if ($digits === '') {
+            return response()->json(['message' => 'Número inválido.'], 422);
+        }
+        if (strlen($digits) <= 11) {
+            $digits = '55'.$digits;
+        }
+        $slug = 'wa-'.$digits;
+
+        $parsed = $this->parseWhatsAppTxt($data['text']);
+        if (empty($parsed)) {
+            return response()->json(['message' => 'Não consegui ler mensagens nesse arquivo. Confira se é o .txt exportado do WhatsApp.'], 422);
+        }
+
+        $clientSender = trim((string) ($data['client_sender'] ?? '')) ?: null;
+
+        $conv = Conversation::firstOrNew(['slug' => $slug]);
+        $name = trim((string) ($data['name'] ?? ''));
+        if (! $conv->exists) {
+            $conv->name = $name !== '' ? $name : '+'.$digits;
+            $conv->initials = $this->initialsOf($conv->name);
+            $conv->color = '#6b7cff';
+            $conv->position = (int) (Conversation::max('position') ?? 0) + 1;
+        } elseif ($name !== '') {
+            $conv->name = $name;
+            $conv->initials = $this->initialsOf($name);
+        }
+        $conv->phone = '+'.$digits;
+        $conv->wa_jid = $digits.'@s.whatsapp.net';
+        $conv->origin = 'WhatsApp';
+        $conv->save();
+
+        // Dedup por ASSINATURA (is_out + minuto + texto) contra TODAS as mensagens
+        // já existentes (vindas do sync/webhook OU de import anterior) → importar
+        // numa conversa que já tem conteúdo só ADICIONA o que falta, sem duplicar.
+        $sig = fn ($isOut, $ts, $txt) => ($isOut ? '1' : '0').'|'.date('YmdHi', (int) $ts).'|'.trim(mb_substr((string) $txt, 0, 200));
+        $existing = $conv->messages()->get(['is_out', 'ts', 'text'])
+            ->mapWithKeys(fn ($mm) => [$sig((bool) $mm->is_out, (int) $mm->ts, (string) $mm->text) => true]);
+
+        $added = 0;
+        foreach ($parsed as $p) {
+            $isOut = $clientSender ? ($p['sender'] !== $clientSender) : false;
+            $s = $sig($isOut, $p['ts'], $p['text']);
+            if ($existing->has($s)) {
+                continue; // já existe (mesma mensagem) → não duplica
+            }
+            $conv->messages()->create([
+                'wa_id' => 'txt-'.md5($s),
+                'type' => 'text',
+                'is_out' => $isOut,
+                'text' => mb_substr($p['text'], 0, 4000),
+                'time' => date('H:i', $p['ts']),
+                'ts' => $p['ts'],
+                'position' => 0,
+            ]);
+            $existing[$s] = true;
+            $added++;
+        }
+
+        // Reordena por ts e atualiza prévia/última.
+        $ordered = $conv->messages()->orderByRaw('ts IS NULL, ts')->orderBy('id')->get();
+        foreach ($ordered as $i => $msg) {
+            if ((int) $msg->position !== $i) {
+                $msg->update(['position' => $i]);
+            }
+        }
+        $last = $ordered->last();
+        if ($last) {
+            $conv->preview = mb_substr((string) ($last->text ?: $conv->preview), 0, 80);
+            if ($last->ts) {
+                $conv->last_message_at = date('Y-m-d H:i:s', $last->ts);
+                $conv->time = date('H:i', $last->ts);
+            }
+        }
+        $conv->save();
+
+        return response()->json([
+            'conversation' => $conv->load('messages'),
+            'added' => $added,
+            'parsed' => count($parsed),
+        ], 201);
+    }
+
+    /**
+     * Parser do .txt exportado do WhatsApp (Android e iPhone).
+     *
+     * @return array<int, array{ts:int, sender:string, text:string}>
+     */
+    private function parseWhatsAppTxt(string $text): array
+    {
+        $text = str_replace(["\r\n", "\r"], "\n", $text);
+        $text = preg_replace('/[\x{200E}\x{200F}\x{202A}-\x{202E}\x{00A0}]/u', '', $text);
+        $lines = explode("\n", $text);
+
+        // iPhone: [12/06/2026, 14:30:45] Fulano: msg   |  Android: 12/06/2026 14:30 - Fulano: msg
+        $re = '/^\[?(\d{1,2})\/(\d{1,2})\/(\d{2,4}),?\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AaPp][Mm])?\]?\s*(?:-\s*)?(.*)$/u';
+
+        $out = [];
+        $cur = null;
+        foreach ($lines as $line) {
+            if (preg_match($re, $line, $m)) {
+                $y = strlen($m[3]) === 2 ? ('20'.$m[3]) : $m[3];
+                $hh = (int) $m[4];
+                if (! empty($m[7])) {
+                    $ap = strtolower($m[7]);
+                    if ($ap === 'pm' && $hh < 12) {
+                        $hh += 12;
+                    }
+                    if ($ap === 'am' && $hh === 12) {
+                        $hh = 0;
+                    }
+                }
+                $ts = mktime($hh, (int) $m[5], (int) ($m[6] ?? 0), (int) $m[2], (int) $m[1], (int) $y);
+                $rest = $m[8] ?? '';
+                if (preg_match('/^([^:]{1,60}):\s(.*)$/su', $rest, $mm)) {
+                    if ($cur) {
+                        $out[] = $cur;
+                    }
+                    $cur = ['ts' => $ts, 'sender' => trim($mm[1]), 'text' => $mm[2]];
+                } else {
+                    // Mensagem de sistema (sem "Nome: ") → ignora.
+                    if ($cur) {
+                        $out[] = $cur;
+                        $cur = null;
+                    }
+                }
+            } else {
+                if ($cur) {
+                    $cur['text'] .= "\n".$line; // continuação da mensagem anterior
+                }
+            }
+        }
+        if ($cur) {
+            $out[] = $cur;
+        }
+
+        return $out;
+    }
+
     /** Webhook do Evolution (público; protegido por token). Mensagens em tempo real. */
+    /** Etiquetas do WhatsApp Business (para vincular às etapas do funil). */
+    public function labels(Request $request)
+    {
+        $this->ensureAdmin($request);
+
+        return response()->json(['labels' => \App\Support\Evolution::findLabels()]);
+    }
+
+    /**
+     * Inicia (ou abre) uma conversa por número — útil para contatos que o
+     * Evolution não sincronizou (sem histórico). Valida que o número existe no WhatsApp.
+     */
+    public function start(Request $request)
+    {
+        $data = $request->validate([
+            'number' => 'required|string',
+            'name' => 'nullable|string|max:255',
+        ]);
+
+        $digits = preg_replace('/\D/', '', $data['number']);
+        if ($digits === '') {
+            return response()->json(['message' => 'Número inválido.'], 422);
+        }
+        if (strlen($digits) <= 11) {
+            $digits = '55'.$digits; // assume Brasil quando vem sem código do país
+        }
+
+        // Confirma que o número está no WhatsApp e pega o jid canônico.
+        $check = collect($this->evo()->post("/chat/whatsappNumbers/{$this->instance()}", [
+            'numbers' => [$digits],
+        ])->json());
+        $first = $check->first();
+        if (! is_array($first) || empty($first['exists'])) {
+            return response()->json(['message' => 'Esse número não está no WhatsApp.'], 422);
+        }
+
+        $jid = (string) ($first['jid'] ?? ($digits.'@s.whatsapp.net'));
+        $local = explode('@', $jid)[0];
+        $slug = 'wa-'.preg_replace('/[^a-z0-9]/i', '', $local);
+
+        $conv = Conversation::firstOrNew(['slug' => $slug]);
+        $name = trim((string) ($data['name'] ?? ''));
+        if (! $conv->exists) {
+            $conv->name = $name !== '' ? $name : '+'.$local;
+            $conv->initials = $this->initialsOf($conv->name);
+            $conv->color = '#6b7cff';
+            $conv->position = (int) (Conversation::max('position') ?? 0) + 1;
+        } elseif ($name !== '') {
+            $conv->name = $name;
+            $conv->initials = $this->initialsOf($name);
+        }
+        $conv->phone = '+'.$local;
+        $conv->wa_jid = $jid;
+        $conv->origin = 'WhatsApp';
+        $conv->save(); // hook define a 1ª etapa do funil
+
+        return response()->json($conv->load('messages'), 201);
+    }
+
     public function webhook(Request $request)
     {
         abort_unless($request->query('token') === config('services.evolution.webhook_token'), 401);
 
-        if ($request->input('event') === 'messages.upsert') {
+        $event = $request->input('event');
+
+        // messages.upsert = mensagem nova; messages.set = lote de histórico (sync full history).
+        if ($event === 'messages.upsert' || $event === 'messages.set') {
             $data = $request->input('data', []);
             $messages = isset($data['key']) ? [$data] : ($data['messages'] ?? []);
             foreach ($messages as $m) {
@@ -175,12 +389,50 @@ class WhatsAppController extends Controller
                     $this->ingestMessage($m);
                 }
             }
+        } elseif ($event === 'labels.association') {
+            $this->ingestLabelAssociation($request->input('data', []));
         }
 
         return response()->json(['ok' => true]);
     }
 
-    private function ingestMessage(array $m): void
+    /**
+     * Etiqueta mudou no WhatsApp → atualiza a etapa do funil da conversa.
+     * Só reage a 'add' de uma etiqueta vinculada a alguma etapa (evita ambiguidade/loops).
+     */
+    private function ingestLabelAssociation(array $data): void
+    {
+        \Illuminate\Support\Facades\Log::info('wpp: labels.association', $data);
+
+        $assoc = $data['association'] ?? $data;
+        $type = (string) ($data['type'] ?? $assoc['type'] ?? '');
+        $labelId = (string) ($assoc['labelId'] ?? $data['labelId'] ?? '');
+        $chatId = (string) ($assoc['chatId'] ?? $data['chatId'] ?? $assoc['number'] ?? '');
+
+        if ($type !== 'add' || $labelId === '' || $chatId === '') {
+            return;
+        }
+
+        $stage = \App\Models\Stage::where('wa_label_id', $labelId)->first();
+        if (! $stage) {
+            return; // etiqueta não vinculada a nenhuma etapa
+        }
+
+        $local = explode('@', $chatId)[0];
+        $slug = 'wa-'.preg_replace('/[^a-z0-9]/i', '', $local);
+        $conv = Conversation::where('slug', $slug)->first();
+        if (! $conv || $conv->stage === $stage->key) {
+            return; // sem conversa ou já está nessa etapa (corta o loop)
+        }
+
+        // Atualização direta (não passa pelo update HTTP → não re-empurra pro WhatsApp).
+        $conv->stage = $stage->key;
+        $conv->stage_color = $stage->color;
+        $conv->tags = [['label' => $stage->name, 'color' => $stage->color]];
+        $conv->save();
+    }
+
+    public function ingestMessage(array $m): void
     {
         $key = $m['key'] ?? [];
         $remoteJid = (string) ($key['remoteJid'] ?? '');
@@ -195,6 +447,13 @@ class WhatsAppController extends Controller
 
         $p = $this->parseMessage($m);
         if (! $p) {
+            // Diagnóstico: registra tipos de mensagem ainda não tratados (sem dados sensíveis).
+            \Illuminate\Support\Facades\Log::warning('wpp: mensagem descartada no parse', [
+                'messageType' => $m['messageType'] ?? null,
+                'msgKeys' => array_keys($m['message'] ?? []),
+                'fromMe' => $key['fromMe'] ?? null,
+            ]);
+
             return;
         }
 
@@ -214,12 +473,21 @@ class WhatsAppController extends Controller
         $ts = (int) ($m['messageTimestamp'] ?? time());
 
         $conv = Conversation::firstOrNew(['slug' => $slug]);
+        $push = trim((string) ($m['pushName'] ?? ''));
+        // Nome de verdade tem letras; pushName só-dígitos é id @lid, não serve.
+        // E pushName de mensagem ENVIADA é o próprio dono ("Você") — não nomeia o contato.
+        $validPush = ! $isOut && $push !== '' && ! preg_match('/^\d+$/', $push)
+            && ! in_array(mb_strtolower($push), ['você', 'voce', 'you'], true);
         if (! $conv->exists) {
-            $name = $m['pushName'] ?? ($realNumber ? '+'.$realNumber : 'Contato WhatsApp');
+            $name = $validPush ? $push : ($realNumber ? '+'.$realNumber : 'Contato WhatsApp');
             $conv->name = $name;
             $conv->initials = $this->initialsOf($name);
             $conv->color = '#6b7cff';
             $conv->position = (int) (Conversation::max('position') ?? 0) + 1;
+        } elseif (! $isOut && $validPush && preg_match('/^\+?\d+$/', (string) $conv->name)) {
+            // Tinha só o número como nome — assim que o WhatsApp mandar o nome real, usa.
+            $conv->name = $push;
+            $conv->initials = $this->initialsOf($push);
         }
         $conv->origin = 'WhatsApp';
         $conv->phone = $conv->phone ?: ($realNumber ? '+'.$realNumber : null);
@@ -229,15 +497,41 @@ class WhatsAppController extends Controller
         $conv->last_message_at = date('Y-m-d H:i:s', $ts);
         if (! $isOut) {
             $conv->unread = (int) $conv->unread + 1;
+            // Atendimento automático ligado: agenda uma resposta da IA. Cada nova mensagem do
+            // lead empurra o prazo (debounce) para não responder no meio de uma rajada.
+            if ($conv->auto_reply) {
+                $conv->auto_reply_due_at = now()->addSeconds(10);
+            }
+        } else {
+            // Nós (humano) respondemos → cancela qualquer resposta automática pendente.
+            $conv->auto_reply_due_at = null;
         }
         $conv->save();
+
+        $text = $p['text'] !== null ? mb_substr($p['text'], 0, 4000) : null;
+
+        // Eco do Evolution de uma mensagem que NÓS enviamos pelo CRM (auto-reply ou manual):
+        // a mensagem local foi criada sem wa_id, então o eco fromMe não casava e duplicava.
+        // Adota o wa_id na mensagem local recente igual em vez de criar uma cópia.
+        if ($isOut && $waId !== '' && $text !== null) {
+            $localMsg = $conv->messages()
+                ->where('is_out', true)->whereNull('wa_id')->where('text', $text)
+                ->whereBetween('ts', [$ts - 120, $ts + 120])
+                ->reorder()->orderByDesc('id')->first();
+            if ($localMsg) {
+                $localMsg->update(['wa_id' => $waId]);
+
+                return;
+            }
+        }
 
         $conv->messages()->create([
             'wa_id' => $waId ?: null,
             'type' => $p['type'],
             'is_out' => $isOut,
-            'text' => $p['text'] !== null ? mb_substr($p['text'], 0, 4000) : null,
+            'text' => $text,
             'time' => date('H:i', $ts),
+            'ts' => $ts ?: null,
             'position' => ((int) $conv->messages()->max('position')) + 1,
         ]);
     }
@@ -294,6 +588,10 @@ class WhatsAppController extends Controller
                 }
             }
         }
+        // pushName que é só dígitos num chat @lid é o id interno do WhatsApp, não um nome.
+        if ($name !== null && preg_match('/^\d+$/', (string) $name) && ! $realNumber) {
+            $name = null;
+        }
         $name = $name ?: ($realNumber ? ('+'.$realNumber) : 'Contato WhatsApp');
 
         $conv = Conversation::firstOrNew(['slug' => $slug]);
@@ -312,52 +610,71 @@ class WhatsAppController extends Controller
         $conv->position = $conv->position ?: ((int) (Conversation::max('position') ?? 0) + 1);
         $conv->save();
 
-        $conv->messages()->delete();
+        // Merge NÃO-destrutivo: nunca apaga o que já existe (preserva mensagens
+        // capturadas pelo webhook, inclusive temporárias que somem do histórico).
+        $existing = $conv->messages()->whereNotNull('wa_id')->pluck('wa_id')->flip();
 
-        $pos = 0;
-        $last = null;
-        $lastTs = 0;
         foreach ($records as $r) {
             $p = $this->parseMessage($r);
             if (! $p) {
                 continue;
             }
+            $waId = $p['wa_id'];
+            if ($waId && $existing->has($waId)) {
+                continue; // já temos esta mensagem (webhook ou import anterior)
+            }
 
             $ts = (int) ($r['messageTimestamp'] ?? 0);
             $conv->messages()->create([
-                'wa_id' => $p['wa_id'],
+                'wa_id' => $waId,
                 'type' => $p['type'],
                 'is_out' => (bool) ($r['key']['fromMe'] ?? false),
                 'text' => $p['text'] !== null ? mb_substr($p['text'], 0, 4000) : null,
                 'time' => $ts ? date('H:i', $ts) : null,
-                'position' => $pos++,
+                'ts' => $ts ?: null,
+                'position' => 0, // recalculado abaixo
             ]);
-            $last = $p['preview'];
-            $lastTs = $ts;
+            if ($waId) {
+                $existing[$waId] = true;
+            }
         }
 
-        // Sem mensagens de texto úteis → descarta (chats de sistema/mídia pura).
-        if ($pos === 0) {
-            $conv->messages()->delete();
+        // Conversa sem nenhuma mensagem → descarta (chat de sistema/mídia pura).
+        if ($conv->messages()->count() === 0) {
             $conv->delete();
 
             return null;
         }
 
-        $conv->preview = mb_substr((string) $last, 0, 80);
-        $conv->time = $lastTs ? $this->humanDate($lastTs) : null;
-        $conv->last_message_at = $lastTs ? date('Y-m-d H:i:s', $lastTs) : null;
+        // Reordena cronologicamente (ts; cai para id quando ausente).
+        $ordered = $conv->messages()->orderByRaw('ts IS NULL, ts')->orderBy('id')->get();
+        foreach ($ordered as $i => $msg) {
+            if ((int) $msg->position !== $i) {
+                $msg->update(['position' => $i]);
+            }
+        }
+
+        $lastMsg = $ordered->last();
+        if ($lastMsg) {
+            $conv->preview = mb_substr((string) ($lastMsg->text ?: $conv->preview), 0, 80);
+            if ($lastMsg->ts) {
+                $conv->time = $this->humanDate($lastMsg->ts);
+                $conv->last_message_at = date('Y-m-d H:i:s', $lastMsg->ts);
+            }
+        }
         $conv->save();
 
         return $conv;
     }
 
     /** Busca a foto de perfil (concorrente) das conversas que ainda não têm. */
-    private function fillAvatars(): void
+    public function fillAvatars(): void
     {
         $convs = Conversation::where('slug', 'like', 'wa-%')
             ->whereNotNull('phone')
-            ->whereNull('avatar')
+            ->where(function ($q) {
+                $q->whereNull('avatar')->orWhere('avatar', '');
+            })
             ->get(['id', 'phone']);
 
         foreach ($convs->chunk(20) as $chunk) {
@@ -384,14 +701,19 @@ class WhatsAppController extends Controller
     private function parseMessage(array $m): ?array
     {
         $key = $m['key'] ?? [];
-        $msg = $m['message'] ?? [];
         $waId = ((string) ($key['id'] ?? '')) ?: null;
+        $msg = $this->unwrap($m['message'] ?? []);
 
-        $body = $msg['conversation'] ?? $msg['extendedTextMessage']['text'] ?? null;
-        if ($body !== null) {
+        // Texto (cobre mensagem simples e com formatação/citação).
+        $body = $msg['conversation']
+            ?? $msg['extendedTextMessage']['text']
+            ?? null;
+        if (is_string($body) && $body !== '') {
             return ['type' => 'text', 'text' => $body, 'preview' => $body, 'wa_id' => $waId];
         }
 
+        // Mídia: detecta pelo campo presente no conteúdo (não pelo messageType,
+        // que em mensagens temporárias vem como "ephemeralMessage").
         $map = [
             'imageMessage' => ['image', '📷 Imagem'],
             'audioMessage' => ['voice', '🎵 Áudio'],
@@ -399,13 +721,40 @@ class WhatsAppController extends Controller
             'documentMessage' => ['file', '📄 Documento'],
             'stickerMessage' => ['image', 'Figurinha'],
         ];
-        $mt = (string) ($m['messageType'] ?? '');
-        if (! isset($map[$mt])) {
-            return null;
-        }
-        [$type, $label] = $map[$mt];
+        foreach ($map as $field => [$type, $label]) {
+            if (isset($msg[$field]) && is_array($msg[$field])) {
+                $caption = $msg[$field]['caption'] ?? null;
 
-        return ['type' => $type, 'text' => $msg[$mt]['caption'] ?? null, 'preview' => $label, 'wa_id' => $waId];
+                return ['type' => $type, 'text' => $caption, 'preview' => $caption ?: $label, 'wa_id' => $waId];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Desembrulha os "envelopes" do WhatsApp (mensagens temporárias/disappearing,
+     * ver-uma-vez, editadas, documento-com-legenda) até chegar no conteúdo real.
+     */
+    private function unwrap(array $msg): array
+    {
+        $wrappers = [
+            'ephemeralMessage', 'viewOnceMessage', 'viewOnceMessageV2',
+            'viewOnceMessageV2Extension', 'documentWithCaptionMessage', 'editedMessage',
+        ];
+        $guard = 0;
+        do {
+            $unwrapped = false;
+            foreach ($wrappers as $w) {
+                if (isset($msg[$w]['message']) && is_array($msg[$w]['message'])) {
+                    $msg = $msg[$w]['message'];
+                    $unwrapped = true;
+                    break;
+                }
+            }
+        } while ($unwrapped && ++$guard < 5);
+
+        return $msg;
     }
 
     /** Carrega o histórico COMPLETO da conversa (re-importa do Evolution). */

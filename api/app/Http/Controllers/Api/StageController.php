@@ -20,6 +20,7 @@ class StageController extends Controller
         $data = $request->validate([
             'name' => 'required|string|max:40',
             'color' => 'nullable|string|max:9',
+            'goal' => 'nullable|string|max:2000',
         ]);
 
         $base = Str::slug($data['name']) ?: 'etapa';
@@ -33,13 +34,14 @@ class StageController extends Controller
             'key' => $key,
             'name' => $data['name'],
             'color' => $data['color'] ?? '#8696a0',
+            'goal' => $data['goal'] ?? null,
             'position' => (Stage::max('position') ?? -1) + 1,
         ]), 201);
     }
 
     public function update(Request $request, Stage $stage)
     {
-        $stage->update($request->only(['name', 'color', 'position']));
+        $stage->update($request->only(['name', 'color', 'goal', 'wa_label_id', 'position']));
 
         return response()->json($stage);
     }

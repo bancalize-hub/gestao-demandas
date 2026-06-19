@@ -27,6 +27,36 @@ class Evolution
         return self::http()->get('/label/findLabels/'.self::instance($instance))->json() ?? [];
     }
 
+    /** Estado da conexão de uma instância: open | connecting | close. */
+    public static function connectionState(?string $instance = null): string
+    {
+        try {
+            return (string) (self::http()->get('/instance/connectionState/'.self::instance($instance))
+                ->json('instance.state') ?? 'close');
+        } catch (\Throwable $e) {
+            return 'close';
+        }
+    }
+
+    /** Confirma se um número (só dígitos) está no WhatsApp. */
+    public static function isOnWhatsApp(string $number, ?string $instance = null): bool
+    {
+        $number = preg_replace('/\D/', '', $number);
+        if ($number === '') {
+            return false;
+        }
+        try {
+            $check = self::http()->post('/chat/whatsappNumbers/'.self::instance($instance), [
+                'numbers' => [$number],
+            ])->json();
+            $first = is_array($check) ? ($check[0] ?? null) : null;
+
+            return is_array($first) && ! empty($first['exists']);
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
     /**
      * Envia mídia (imagem/vídeo/documento) pelo WhatsApp. `$base64` é o conteúdo puro
      * (sem o prefixo data:). `$mediatype` ∈ image|video|document. Retorna o wa_id (key.id).

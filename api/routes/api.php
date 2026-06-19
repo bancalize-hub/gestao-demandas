@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\AgentController;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\CampaignController;
 use App\Http\Controllers\Api\ChatTabController;
 use App\Http\Controllers\Api\ContactController;
 use App\Http\Controllers\Api\ConversationController;
@@ -142,4 +143,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/wpp/accounts', [WhatsAppController::class, 'accounts']);
     Route::post('/wpp/accounts', [WhatsAppController::class, 'createAccount']);
     Route::delete('/wpp/accounts/{account}', [WhatsAppController::class, 'destroyAccount']);
+
+    // Campanhas de prospecção/disparo (mensagem da IA, anti-ban conservador) — só admin.
+    Route::get('/campaigns', [CampaignController::class, 'index']);
+    Route::post('/campaigns', [CampaignController::class, 'store']);
+    Route::get('/campaigns/{campaign}', [CampaignController::class, 'show']);
+    Route::patch('/campaigns/{campaign}', [CampaignController::class, 'update']);
+    Route::delete('/campaigns/{campaign}', [CampaignController::class, 'destroy']);
+    Route::post('/campaigns/{campaign}/contacts', [CampaignController::class, 'importContacts']);
 });

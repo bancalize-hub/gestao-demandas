@@ -42,6 +42,12 @@ Schedule::command('followup:tick')
     ->everyMinute()
     ->withoutOverlapping();
 
+// Campanhas de prospecção/disparo: envia a próxima mensagem respeitando o anti-ban
+// conservador (intervalo aleatório por número, teto diário com aquecimento, janela).
+Schedule::command('campaigns:tick')
+    ->everyMinute()
+    ->withoutOverlapping();
+
 // Importa reuniões com Meet criadas direto no Google Agenda → tabela meetings (casa com o lead),
 // para o pós-reunião também processá-las. Roda antes do attendance-tick.
 Schedule::command('meetings:calendar-sync')

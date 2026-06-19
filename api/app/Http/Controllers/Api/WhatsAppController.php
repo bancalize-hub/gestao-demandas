@@ -711,6 +711,16 @@ class WhatsAppController extends Controller
         }
         $conv->save();
 
+        // Prospect respondeu a um disparo? Marca o contato da campanha como respondido (para o relatório).
+        if (! $isOut && $account && ! $account->isPrimary() && $realNumber) {
+            $contact = \App\Models\CampaignContact::where('phone', $realNumber)
+                ->where('status', 'sent')->orderByDesc('id')->first();
+            if ($contact) {
+                $contact->update(['status' => 'replied', 'conversation_id' => $conv->id]);
+                $contact->campaign?->refreshCounts();
+            }
+        }
+
         $text = $p['text'] !== null ? mb_substr($p['text'], 0, 4000) : null;
 
         // Eco do Evolution de uma mensagem que NÓS enviamos pelo CRM (auto-reply ou manual):

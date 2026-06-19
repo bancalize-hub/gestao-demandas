@@ -87,7 +87,7 @@ async function addFollowup() {
   savingFu.value = true
   try {
     // datetime-local vem sem timezone; envia ISO local que o Laravel interpreta no fuso do app.
-    await crm.createFollowup(v.id, { title: note, starts_at: fuWhen.value.replace('T', ' ') + ':00' })
+    await crm.createFollowup(v.id, { title: note.slice(0, 200), starts_at: fuWhen.value.replace('T', ' ') + ':00' })
     fuNote.value = ''
     fuWhen.value = ''
   }
@@ -103,7 +103,12 @@ async function addNote() {
   if (!v || !txt || savingNote.value) return
   savingNote.value = true
   try {
-    await crm.addActivity(v.id, { type: 'nota', title: txt })
+    // Nota curta vira o título; nota longa (>200 do backend) vai pro corpo,
+    // com um título resumido — o timeline mostra título + corpo abaixo.
+    const payload = txt.length <= 180
+      ? { type: 'nota', title: txt }
+      : { type: 'nota', title: txt.replace(/\s+/g, ' ').slice(0, 120).trim() + '…', body: txt }
+    await crm.addActivity(v.id, payload)
     noteText.value = ''
   }
   catch { /* silencioso */ }

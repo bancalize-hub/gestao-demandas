@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\LeadActivityController;
 use App\Http\Controllers\Api\MemoryController;
 use App\Http\Controllers\Api\MessageController;
 use App\Http\Controllers\Api\QuickReplyController;
+use App\Http\Controllers\Api\StageAutomationController;
 use App\Http\Controllers\Api\StageController;
 use App\Http\Controllers\Api\TaskController;
 use App\Http\Controllers\Api\WhatsAppController;
@@ -77,6 +78,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/stages/reorder', [StageController::class, 'reorder']);
     Route::patch('/stages/{stage}', [StageController::class, 'update']);
     Route::delete('/stages/{stage}', [StageController::class, 'destroy']);
+
+    // Playbook por etapa: mensagens automáticas (PDF/follow-up) ao entrar numa etapa.
+    Route::get('/stage-automations', [StageAutomationController::class, 'index']);
+    Route::post('/stage-automations', [StageAutomationController::class, 'store']);
+    Route::post('/stage-automations/steps/{step}/asset', [StageAutomationController::class, 'uploadAsset']);
+    Route::delete('/stage-automations/{stageAutomation}', [StageAutomationController::class, 'destroy']);
 
     Route::get('/deals', [DealController::class, 'index']);
     Route::post('/deals', [DealController::class, 'store']);

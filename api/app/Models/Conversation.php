@@ -57,6 +57,19 @@ class Conversation extends Model
         };
         static::saved($notify);
         static::deleted($notify);
+
+        // Playbook por etapa: ao ENTRAR numa etapa (mudança real de stage, não na
+        // criação), enfileira as mensagens automáticas dessa etapa. Best-effort:
+        // nunca derruba o save da conversa. Silenciado em importações em massa.
+        static::updated(function (Conversation $c) {
+            if (self::$muteBroadcast || ! $c->wasChanged('stage')) {
+                return;
+            }
+            try {
+                \App\Services\StageAutomationEnqueuer::onEnterStage($c);
+            } catch (\Throwable $e) {
+            }
+        });
     }
 
     public function account(): BelongsTo

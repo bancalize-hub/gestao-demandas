@@ -48,6 +48,12 @@ Schedule::command('campaigns:tick')
     ->everyMinute()
     ->withoutOverlapping();
 
+// Playbook por etapa: dispara as mensagens automáticas (PDF/follow-up) que venceram
+// quando um lead entrou numa etapa configurada (ex.: proposta após "Reunião Realizada").
+Schedule::command('automations:tick')
+    ->everyMinute()
+    ->withoutOverlapping();
+
 // Importa reuniões com Meet criadas direto no Google Agenda → tabela meetings (casa com o lead),
 // para o pós-reunião também processá-las. Roda antes do attendance-tick.
 Schedule::command('meetings:calendar-sync')

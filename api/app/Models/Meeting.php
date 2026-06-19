@@ -5,14 +5,15 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-class Task extends Model
+class Meeting extends Model
 {
     protected $guarded = [];
 
     protected $casts = [
         'starts_at' => 'datetime',
         'ends_at' => 'datetime',
-        'ai_draft_at' => 'datetime',
+        'reminder_sent_at' => 'datetime',
+        'reminder_lead_minutes' => 'integer',
     ];
 
     public function conversation(): BelongsTo

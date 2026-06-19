@@ -4,22 +4,110 @@ import { useCrmStore } from '~/stores/crm'
 const crm = useCrmStore()
 const c = computed(() => crm.activeConv)
 
-const STAGES = ['Novo lead', 'Contato', 'Proposta', 'Negociação', 'Fechado']
+// Etapas reais do funil (acompanham "Editar etapas" — não são mais fixas no código).
+const STAGES = computed(() => crm.stages)
 const stageIndex = computed(() => {
-  const map: Record<string, number> = { 'Contato feito': 1, 'Proposta enviada': 2, 'Negociação': 3, 'Fechado': 4 }
-  return map[c.value?.stage ?? ''] ?? 0
+  const i = crm.stages.findIndex(s => s.key === c.value?.stage)
+  return i < 0 ? 0 : i
 })
 function barStyle(i: number) {
   const idx = stageIndex.value
+  const col = crm.stages[i]?.color ?? '#ffb443'
   if (i < idx) return { height: '6px', borderRadius: '4px', background: '#25D366' }
-  if (i === idx) return { height: '6px', borderRadius: '4px', background: `linear-gradient(90deg,#25D366,${c.value?.stageColor ?? '#ffb443'})` }
+  if (i === idx) return { height: '6px', borderRadius: '4px', background: `linear-gradient(90deg,#25D366,${col})` }
   return { height: '6px', borderRadius: '4px', background: '#202c33' }
 }
 function labelStyle(i: number) {
   const idx = stageIndex.value
   if (i < idx) return { fontSize: '11px', color: '#25D366', fontWeight: 600, marginTop: '7px' }
-  if (i === idx) return { fontSize: '11px', color: c.value?.stageColor ?? '#ffb443', fontWeight: 700, marginTop: '7px' }
+  if (i === idx) return { fontSize: '11px', color: crm.stages[i]?.color ?? '#ffb443', fontWeight: 700, marginTop: '7px' }
   return { fontSize: '11px', color: '#8696a0', fontWeight: 600, marginTop: '7px' }
+}
+// Clicar numa etapa move o lead — mesma sincronização do funil/etiqueta (stage+cor+tag+WhatsApp).
+function setStage(key: string) {
+  if (c.value && c.value.stage !== key) crm.setConvStage(c.value.id, key)
+}
+
+// --- Ficha editável (draft local) ---
+// Bufferiza os campos localmente; o refetch do Reverb faz Object.assign no store e
+// apagaria um input controlado direto. Só re-sincronizamos quando troca o lead (id).
+const form = reactive({ email: '', company: '', origin: '', segmento: '', responsible: '', role: '', dealValue: '', prob: 0, notes: '' })
+watch(() => c.value?.id, () => {
+  const v = c.value
+  if (!v) return
+  Object.assign(form, {
+    email: v.email, company: v.company, origin: v.origin, segmento: v.segmento,
+    responsible: v.responsible, role: v.role, dealValue: v.dealValue, prob: v.prob, notes: v.notes,
+  })
+}, { immediate: true })
+
+function save(field: keyof typeof form) {
+  const v = c.value
+  if (!v) return
+  let val: any = form[field]
+  if (field === 'prob') val = Math.max(0, Math.min(100, Number.parseInt(String(val), 10) || 0))
+  if ((v as any)[field] === val) return
+  crm.patchConvFields(v.id, { [field]: val } as any)
+}
+
+const inputStyle = 'background:#202c33;border:1px solid #2a3942;border-radius:9px;padding:8px 11px;color:#e9edef;font-family:inherit;font-size:13.5px;font-weight:600;outline:none;text-align:right;width:170px;'
+
+// --- Linha do tempo de atividades (real) ---
+const ACT_COLOR: Record<string, string> = { nota: '#53bdeb', etapa: '#7c6cf5', reuniao: '#25D366', followup: '#ffb443', whatsapp: '#25D366' }
+function actColor(t: string) { return ACT_COLOR[t] ?? '#8696a0' }
+function fmtWhen(iso: string) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return d.toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+}
+function actMeta(a: { occurred_at: string, user?: { name: string } | null }) {
+  const when = fmtWhen(a.occurred_at)
+  return a.user?.name ? `${when} · ${a.user.name}` : when
+}
+
+// Carrega atividades + follow-ups sempre que troca o lead aberto.
+watch(() => c.value?.id, (id) => { if (id) { crm.loadActivities(id); crm.loadFollowups(id) } }, { immediate: true })
+
+// --- Follow-ups (acompanhamento) ---
+const fuNote = ref('')
+const fuWhen = ref('')
+const savingFu = ref(false)
+const pendingFu = computed(() => crm.followups.filter(f => f.column !== 'done'))
+function fmtDue(iso: string | null) {
+  if (!iso) return ''
+  return new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+}
+function isOverdue(iso: string | null) {
+  return !!iso && new Date(iso).getTime() <= Date.now()
+}
+async function addFollowup() {
+  const v = c.value
+  const note = fuNote.value.trim()
+  if (!v || !note || !fuWhen.value || savingFu.value) return
+  savingFu.value = true
+  try {
+    // datetime-local vem sem timezone; envia ISO local que o Laravel interpreta no fuso do app.
+    await crm.createFollowup(v.id, { title: note, starts_at: fuWhen.value.replace('T', ' ') + ':00' })
+    fuNote.value = ''
+    fuWhen.value = ''
+  }
+  catch { /* silencioso */ }
+  finally { savingFu.value = false }
+}
+
+const noteText = ref('')
+const savingNote = ref(false)
+async function addNote() {
+  const v = c.value
+  const txt = noteText.value.trim()
+  if (!v || !txt || savingNote.value) return
+  savingNote.value = true
+  try {
+    await crm.addActivity(v.id, { type: 'nota', title: txt })
+    noteText.value = ''
+  }
+  catch { /* silencioso */ }
+  finally { savingNote.value = false }
 }
 </script>
 
@@ -32,51 +120,100 @@ function labelStyle(i: number) {
         <div :style="{ width: '84px', height: '84px', borderRadius: '50%', background: c?.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '30px', flexShrink: 0 }">{{ c?.initials }}</div>
         <div style="flex:1;">
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;"><span style="font-size:22px;font-weight:800;">{{ c?.name }}</span><span v-if="c?.hot" style="font-size:11px;font-weight:700;color:#ff7a45;background:rgba(255,122,69,.13);padding:3px 10px;border-radius:7px;">🔥 Lead quente</span><span v-for="(t, i) in c?.tags" :key="i" :style="{ fontSize: '11px', fontWeight: 700, color: t.color, background: `${t.color}22`, padding: '3px 10px', borderRadius: '7px' }">{{ t.label }}</span></div>
-          <div style="font-size:14px;color:#8696a0;margin-top:5px;">{{ c?.role }}</div>
+          <input v-model="form.role" placeholder="Cargo / função" style="margin-top:6px;background:transparent;border:none;outline:none;color:#8696a0;font-family:inherit;font-size:14px;width:100%;" @blur="save('role')" @keydown.enter="(e) => (e.target as HTMLInputElement).blur()">
         </div>
         <div style="display:flex;gap:9px;">
           <button class="wabtn" style="background:#25D366;border:none;color:#062014;font-family:inherit;font-size:13px;font-weight:700;padding:11px 17px;border-radius:11px;cursor:pointer;display:flex;align-items:center;gap:7px;" @click="crm.go('chat')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-9 8.34 9 9 0 0 1-3.9-.9L3 21l1.06-4.1A8.38 8.38 0 0 1 3 11.5 8.5 8.5 0 0 1 21 11.5Z" stroke-linecap="round" stroke-linejoin="round" /></svg>Mensagem</button>
-          <button class="ghost" style="background:#202c33;border:none;color:#e9edef;font-family:inherit;font-size:13px;font-weight:700;padding:11px 15px;border-radius:11px;cursor:pointer;display:flex;align-items:center;gap:7px;" @click="navigateTo('/reuniao/' + (c?.id || 'sala'))"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2.5" y="6" width="13" height="12" rx="2.5" /><path d="M15.5 10l6-3.2v10.4l-6-3.2" /></svg>Reunião</button>
         </div>
       </div>
 
       <div style="background:#111b21;border:1px solid #1c2730;border-radius:18px;padding:22px 24px;margin-top:18px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;"><span style="font-size:15px;font-weight:700;">Progresso do negócio</span><span style="font-size:20px;font-weight:800;color:#25D366;">{{ c?.dealValue }}<span style="font-size:13px;color:#8696a0;font-weight:600;">{{ c?.dealUnit }}</span></span></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;"><span style="font-size:15px;font-weight:700;">Progresso do negócio</span><div style="display:flex;align-items:center;gap:4px;"><span style="font-size:13px;color:#8696a0;font-weight:600;">R$</span><input v-model="form.dealValue" placeholder="0" style="background:#202c33;border:1px solid #2a3942;border-radius:9px;padding:7px 11px;color:#25D366;font-family:inherit;font-size:18px;font-weight:800;outline:none;width:120px;text-align:right;" @blur="save('dealValue')" @keydown.enter="(e) => (e.target as HTMLInputElement).blur()"></div></div>
         <div style="display:flex;align-items:center;gap:6px;">
-          <div v-for="(s, i) in STAGES" :key="s" style="flex:1;text-align:center;"><div :style="barStyle(i)" /><div :style="labelStyle(i)">{{ s }}</div></div>
+          <div v-for="(s, i) in STAGES" :key="s.key" class="stagestep" style="flex:1;text-align:center;cursor:pointer;" :title="`Mover para “${s.name}”`" @click="setStage(s.key)"><div :style="barStyle(i)" /><div :style="labelStyle(i)">{{ s.name }}</div></div>
         </div>
+      </div>
+
+      <div style="background:#111b21;border:1px solid #1c2730;border-radius:18px;padding:22px 24px;margin-top:18px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;"><span style="font-size:15px;font-weight:700;">Próximos passos · acompanhamento</span><span style="font-size:12px;color:#8696a0;">{{ pendingFu.length }} pendente(s)</span></div>
+
+        <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
+          <input v-model="fuNote" placeholder="O que fazer (ex.: cobrar resposta da proposta)" style="flex:1;min-width:200px;background:#202c33;border:1px solid #2a3942;border-radius:10px;padding:10px 12px;color:#e9edef;font-family:inherit;font-size:13px;outline:none;" @keydown.enter="addFollowup">
+          <input v-model="fuWhen" type="datetime-local" style="background:#202c33;border:1px solid #2a3942;border-radius:10px;padding:9px 11px;color:#e9edef;font-family:inherit;font-size:13px;outline:none;color-scheme:dark;">
+          <button :disabled="savingFu || !fuNote.trim() || !fuWhen" :style="{ background: '#7c6cf5', border: 'none', color: '#fff', fontFamily: 'inherit', fontSize: '13px', fontWeight: 700, padding: '0 16px', borderRadius: '10px', cursor: (savingFu || !fuNote.trim() || !fuWhen) ? 'default' : 'pointer', opacity: (savingFu || !fuNote.trim() || !fuWhen) ? 0.6 : 1 }" @click="addFollowup">Agendar</button>
+        </div>
+
+        <div v-if="crm.followups.length" style="display:flex;flex-direction:column;gap:9px;">
+          <div v-for="f in crm.followups" :key="f.id" :style="{ display: 'flex', alignItems: 'flex-start', gap: '11px', background: '#0f181e', borderRadius: '11px', padding: '11px 13px', opacity: f.column === 'done' ? 0.55 : 1, borderLeft: `3px solid ${f.column === 'done' ? '#25D366' : (isOverdue(f.starts_at) ? '#ff7a45' : '#7c6cf5')}` }">
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:13.5px;font-weight:600;word-break:break-word;" :style="{ textDecoration: f.column === 'done' ? 'line-through' : 'none' }">{{ f.title }}</div>
+              <div style="font-size:12px;margin-top:3px;" :style="{ color: (f.column !== 'done' && isOverdue(f.starts_at)) ? '#ff9d6b' : '#8696a0' }">
+                <span v-if="f.column === 'done'">Concluído</span>
+                <span v-else>{{ isOverdue(f.starts_at) ? 'Venceu' : 'Agendado' }} · {{ fmtDue(f.starts_at) }}</span>
+              </div>
+              <div v-if="f.ai_draft" style="margin-top:9px;background:#16212a;border:1px solid #2a3942;border-radius:9px;padding:9px 11px;">
+                <div style="font-size:11px;font-weight:700;color:#a89bf9;margin-bottom:4px;">✨ Rascunho da IA</div>
+                <div style="font-size:12.5px;color:#cdc6f7;white-space:pre-wrap;word-break:break-word;line-height:1.45;">{{ f.ai_draft }}</div>
+                <button class="aibtn" style="margin-top:8px;font-size:12px;font-weight:700;color:#fff;background:#7c6cf5;border:none;padding:7px 13px;border-radius:8px;cursor:pointer;" @click="c && crm.useFollowupDraft(c.id, f.ai_draft!)">Abrir no chat com o rascunho</button>
+              </div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
+              <button v-if="f.column !== 'done'" title="Concluir" style="background:rgba(37,211,102,.14);border:none;color:#25D366;cursor:pointer;padding:6px 8px;border-radius:8px;display:flex;" @click="c && crm.completeFollowup(c.id, f.id)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m5 13 4 4L19 7" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+              <button title="Excluir" style="background:none;border:none;color:#5a6b73;cursor:pointer;padding:6px 8px;display:flex;" @click="crm.removeFollowup(f.id)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+            </div>
+          </div>
+        </div>
+        <div v-else style="font-size:13px;color:#8696a0;">Nenhum follow-up agendado. Crie um para não perder o lead de vista.</div>
       </div>
 
       <div style="display:grid;grid-template-columns:1fr 1.2fr;gap:18px;margin-top:18px;">
         <div style="background:#111b21;border:1px solid #1c2730;border-radius:18px;padding:22px 24px;">
           <div style="font-size:15px;font-weight:700;margin-bottom:16px;">Detalhes</div>
-          <div style="display:flex;flex-direction:column;gap:15px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-size:13px;color:#8696a0;">Telefone</span><span style="font-size:13.5px;font-weight:600;">{{ c?.phone || '—' }}</span></div>
+          <div style="display:flex;flex-direction:column;gap:13px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;"><span style="font-size:13px;color:#8696a0;flex-shrink:0;">Telefone</span><span style="font-size:13.5px;font-weight:600;">{{ c?.phone || '—' }}</span></div>
             <div style="height:1px;background:#1c2730;" />
-            <div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-size:13px;color:#8696a0;">E-mail</span><span style="font-size:13.5px;font-weight:600;">{{ c?.email || '—' }}</span></div>
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;"><span style="font-size:13px;color:#8696a0;flex-shrink:0;">E-mail</span><input v-model="form.email" placeholder="—" :style="inputStyle" @blur="save('email')" @keydown.enter="(e) => (e.target as HTMLInputElement).blur()"></div>
             <div style="height:1px;background:#1c2730;" />
-            <div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-size:13px;color:#8696a0;">Empresa</span><span style="font-size:13.5px;font-weight:600;">{{ c?.company || '—' }}</span></div>
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;"><span style="font-size:13px;color:#8696a0;flex-shrink:0;">Empresa</span><input v-model="form.company" placeholder="—" :style="inputStyle" @blur="save('company')" @keydown.enter="(e) => (e.target as HTMLInputElement).blur()"></div>
             <div style="height:1px;background:#1c2730;" />
-            <div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-size:13px;color:#8696a0;">Origem</span><span style="font-size:13.5px;font-weight:600;">{{ c?.origin || '—' }}</span></div>
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;"><span style="font-size:13px;color:#8696a0;flex-shrink:0;">Segmento</span><input v-model="form.segmento" placeholder="—" :style="inputStyle" @blur="save('segmento')" @keydown.enter="(e) => (e.target as HTMLInputElement).blur()"></div>
             <div style="height:1px;background:#1c2730;" />
-            <div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-size:13px;color:#8696a0;">Responsável</span><span style="font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:7px;"><span style="width:22px;height:22px;border-radius:50%;background:linear-gradient(135deg,#25D366,#0e8a4f);display:flex;align-items:center;justify-content:center;font-size:10px;color:#062014;">AB</span>{{ c?.responsible || '—' }}</span></div>
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;"><span style="font-size:13px;color:#8696a0;flex-shrink:0;">Origem</span><input v-model="form.origin" placeholder="—" :style="inputStyle" @blur="save('origin')" @keydown.enter="(e) => (e.target as HTMLInputElement).blur()"></div>
             <div style="height:1px;background:#1c2730;" />
-            <div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-size:13px;color:#8696a0;">Probabilidade</span><span style="font-size:13.5px;font-weight:700;color:#25D366;">{{ c?.prob }}%</span></div>
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;"><span style="font-size:13px;color:#8696a0;flex-shrink:0;">Responsável</span><input v-model="form.responsible" placeholder="—" :style="inputStyle" @blur="save('responsible')" @keydown.enter="(e) => (e.target as HTMLInputElement).blur()"></div>
+            <div style="height:1px;background:#1c2730;" />
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;"><span style="font-size:13px;color:#8696a0;flex-shrink:0;">Probabilidade</span><div style="display:flex;align-items:center;gap:4px;"><input v-model="form.prob" type="number" min="0" max="100" placeholder="0" style="background:#202c33;border:1px solid #2a3942;border-radius:9px;padding:8px 11px;color:#25D366;font-family:inherit;font-size:13.5px;font-weight:700;outline:none;width:64px;text-align:right;" @blur="save('prob')" @keydown.enter="(e) => (e.target as HTMLInputElement).blur()"><span style="font-size:13.5px;font-weight:700;color:#25D366;">%</span></div></div>
           </div>
+
+          <div style="font-size:13px;color:#8696a0;margin:18px 0 8px;">Observações</div>
+          <textarea v-model="form.notes" rows="4" placeholder="Anotações sobre o lead, necessidades, contexto…" style="width:100%;background:#202c33;border:1px solid #2a3942;border-radius:10px;padding:10px 12px;color:#e9edef;font-family:inherit;font-size:13px;outline:none;resize:vertical;line-height:1.5;box-sizing:border-box;" @blur="save('notes')" />
         </div>
 
         <div style="background:#111b21;border:1px solid #1c2730;border-radius:18px;padding:22px 24px;">
-          <div style="font-size:15px;font-weight:700;margin-bottom:18px;">Histórico de interações</div>
-          <div v-if="c?.interactions?.length" style="display:flex;flex-direction:column;gap:0;">
-            <div v-for="(it, i) in c.interactions" :key="i" style="display:flex;gap:13px;">
+          <div style="font-size:15px;font-weight:700;margin-bottom:14px;">Histórico de interações</div>
+
+          <div style="display:flex;gap:8px;margin-bottom:18px;">
+            <input v-model="noteText" placeholder="Registrar uma nota / interação…" style="flex:1;background:#202c33;border:1px solid #2a3942;border-radius:10px;padding:10px 12px;color:#e9edef;font-family:inherit;font-size:13px;outline:none;" @keydown.enter="addNote">
+            <button :disabled="savingNote || !noteText.trim()" :style="{ background: '#25D366', border: 'none', color: '#062014', fontFamily: 'inherit', fontSize: '13px', fontWeight: 700, padding: '0 16px', borderRadius: '10px', cursor: (savingNote || !noteText.trim()) ? 'default' : 'pointer', opacity: (savingNote || !noteText.trim()) ? 0.6 : 1 }" @click="addNote">Adicionar</button>
+          </div>
+
+          <div v-if="crm.activities.length" style="display:flex;flex-direction:column;gap:0;">
+            <div v-for="(a, i) in crm.activities" :key="a.id" class="act" style="display:flex;gap:13px;">
               <div style="display:flex;flex-direction:column;align-items:center;">
-                <div :style="{ width: '32px', height: '32px', borderRadius: '50%', background: `${it.color}26`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }"><span :style="{ width: '9px', height: '9px', borderRadius: '50%', background: it.color, display: 'block' }" /></div>
-                <div v-if="i < c.interactions.length - 1" style="width:2px;flex:1;background:#1c2730;margin:4px 0;" />
+                <div :style="{ width: '32px', height: '32px', borderRadius: '50%', background: `${actColor(a.type)}26`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }"><span :style="{ width: '9px', height: '9px', borderRadius: '50%', background: actColor(a.type), display: 'block' }" /></div>
+                <div v-if="i < crm.activities.length - 1" style="width:2px;flex:1;background:#1c2730;margin:4px 0;" />
               </div>
-              <div :style="{ paddingBottom: i < c.interactions.length - 1 ? '20px' : '0' }"><div style="font-size:13.5px;font-weight:600;">{{ it.title }}</div><div style="font-size:12px;color:#8696a0;margin-top:2px;">{{ it.meta }}</div></div>
+              <div :style="{ paddingBottom: i < crm.activities.length - 1 ? '18px' : '0', flex: 1, minWidth: 0 }">
+                <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
+                  <div style="font-size:13.5px;font-weight:600;word-break:break-word;">{{ a.title }}</div>
+                  <button class="delact" title="Excluir" style="background:none;border:none;color:#5a6b73;cursor:pointer;padding:0;flex-shrink:0;display:flex;" @click="c && crm.removeActivity(c.id, a.id)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+                </div>
+                <div v-if="a.body" style="font-size:12.5px;color:#aebac1;margin-top:3px;white-space:pre-wrap;word-break:break-word;">{{ a.body }}</div>
+                <div style="font-size:12px;color:#8696a0;margin-top:2px;">{{ actMeta(a) }}</div>
+              </div>
             </div>
           </div>
-          <div v-else style="font-size:13px;color:#8696a0;">Sem interações registradas ainda.</div>
+          <div v-else-if="!crm.activitiesLoading" style="font-size:13px;color:#8696a0;">Sem interações registradas ainda.</div>
         </div>
       </div>
     </div>
@@ -87,4 +224,9 @@ function labelStyle(i: number) {
 .wabtn:hover { background: #2ee070 !important; }
 .ghost:hover { background: #2a3942 !important; }
 .bc:hover { color: #e9edef !important; }
+.act .delact { opacity: 0; transition: opacity .15s; }
+.act:hover .delact { opacity: 1; }
+.delact:hover { color: #ff6b6b !important; }
+.stagestep:hover { opacity: .8; }
+.stagestep:hover > div:first-child { filter: brightness(1.4); }
 </style>

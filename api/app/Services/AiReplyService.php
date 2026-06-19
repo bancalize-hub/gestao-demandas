@@ -26,11 +26,18 @@ class AiReplyService
         }
 
         $transcript = $conversation->messages()
-            ->where('type', 'text')
-            ->whereNotNull('text')
+            ->where(function ($q) {
+                $q->where(fn ($t) => $t->where('type', 'text')->whereNotNull('text'))
+                    ->orWhere(fn ($v) => $v->where('type', 'voice')->whereNotNull('transcript')->where('transcript', '!=', ''));
+            })
             ->reorder()->orderByRaw('ts IS NULL, ts')->orderBy('id')
-            ->get(['is_out', 'text'])
-            ->map(fn ($m) => ($m->is_out ? 'Atendente' : $conversation->name).': '.$m->text)
+            ->get(['is_out', 'type', 'text', 'transcript'])
+            ->map(function ($m) use ($conversation) {
+                $who = $m->is_out ? 'Atendente' : $conversation->name;
+                $content = $m->type === 'voice' ? '[áudio do cliente] '.$m->transcript : $m->text;
+
+                return $who.': '.$content;
+            })
             ->implode("\n");
 
         if ($transcript === '') {
@@ -49,6 +56,39 @@ class AiReplyService
                 ."sem forçar e sem soar robótico. Só avance quando fizer sentido no contexto.\n\n";
         }
 
+        // Data/hora atual (horário de Brasília) + saudação correta, para a IA não errar
+        // "bom dia/boa tarde/boa noite" (ex.: dizer "boa tarde" às 2 da madrugada).
+        $now = now();
+        $hour = (int) $now->format('G');
+        $saudacao = $hour >= 5 && $hour < 12 ? 'Bom dia' : ($hour >= 12 && $hour < 18 ? 'Boa tarde' : 'Boa noite');
+        $diasSemana = [
+            'Sunday' => 'domingo', 'Monday' => 'segunda-feira', 'Tuesday' => 'terça-feira',
+            'Wednesday' => 'quarta-feira', 'Thursday' => 'quinta-feira', 'Friday' => 'sexta-feira', 'Saturday' => 'sábado',
+        ];
+        $diaSemana = $diasSemana[$now->format('l')] ?? '';
+        $agora = "AGORA: {$diaSemana}, {$now->format('d/m/Y')} às {$now->format('H:i')} (horário de Brasília).\n"
+            ."Se for cumprimentar, a saudação correta para este horário é \"{$saudacao}\". "
+            ."NUNCA use uma saudação que não combine com a hora atual.\n\n";
+
+        // Horários REAIS livres da agenda — para a IA propor reunião sem inventar data/hora.
+        // Best-effort: se não houver Google conectado ou a API falhar, ela só pergunta a preferência.
+        $agendaBlock = '';
+        $agendaRule = '- Para marcar reunião, pergunte ao lead qual dia/horário ele prefere. NUNCA invente datas ou horários específicos.';
+        try {
+            $gUser = \App\Models\User::whereNotNull('google_access_token')->first();
+            if ($gUser && $gUser->hasGoogle()) {
+                $slots = app(GoogleCalendarService::class)->freeSlots($gUser, 60);
+                if ($slots) {
+                    $list = collect($slots)->take(8)->map(fn ($s) => '- '.$s['label'])->implode("\n");
+                    $agendaBlock = "HORÁRIOS REAIS LIVRES NA AGENDA (são os ÚNICOS disponíveis; reunião dura 1 hora):\n{$list}\n\n";
+                    $agendaRule = '- Ao propor reunião, ofereça 2 ou 3 dos HORÁRIOS REAIS LIVRES listados acima, copiando exatamente (dia e hora). NUNCA invente nem ofereça datas/horários fora dessa lista. Cada reunião dura 1 hora.';
+                }
+            }
+        }
+        catch (\Throwable $e) {
+            // sem agenda disponível → mantém a regra de perguntar a preferência
+        }
+
         $task = ($instruction && $previous)
             ? "Você ia mandar esta mensagem:\n\"{$previous}\"\n\nReescreva-a aplicando este ajuste pedido pelo atendente: \"{$instruction}\". Mantenha o estilo, as regras, o conhecimento e o objetivo da etapa."
             : 'Escreva a próxima mensagem do Atendente.';
@@ -57,7 +97,7 @@ class AiReplyService
         Você é o ATENDENTE escrevendo a próxima mensagem para um lead no WhatsApp.
         Lead: {$conversation->name}. Etapa do funil: {$stageName}.
 
-        {$objetivo}{$context}
+        {$agora}{$objetivo}{$context}{$agendaBlock}
         Conversa (Atendente = você; {$conversation->name} = lead):
         {$transcript}
 
@@ -66,9 +106,10 @@ class AiReplyService
         - Use EXATAMENTE o estilo/voz e as regras descritas acima (se houver).
         - Use o conhecimento acima quando fizer sentido; nunca invente preços/políticas.
         - Persiga o OBJETIVO DA ETAPA (se houver) de forma sutil, no ritmo da conversa.
-        - Você NÃO tem acesso à agenda. NUNCA diga que enviou o convite, que marcou/agendou a reunião
-          nem que "está confirmado/agendado". Para marcar, apenas proponha ou pergunte o horário — a
-          confirmação real (com o link do Meet) é enviada automaticamente pelo sistema, não por você.
+        {$agendaRule}
+        - NUNCA diga que enviou o convite, que marcou/agendou a reunião nem que "está confirmado/agendado":
+          a confirmação real (com o link do Meet) é enviada automaticamente pelo sistema, não por você.
+        - Só cumprimente ("{$saudacao}") no início da conversa ou após uma longa pausa; ao saudar, respeite o horário atual indicado acima.
         - Português do Brasil, no máximo 2-3 frases curtas.
         - Sem aspas, sem rótulos — só o texto da mensagem.
         TXT;

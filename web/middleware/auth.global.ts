@@ -1,5 +1,5 @@
 // Gating de autenticação global (Sanctum SPA via composable próprio).
-const PUBLIC_ROUTES = ['/login', '/solicitar', '/reuniao']
+const PUBLIC_ROUTES = ['/login', '/solicitar']
 
 export default defineNuxtRouteMiddleware(async (to) => {
   const isPublic = PUBLIC_ROUTES.some(p => to.path === p || to.path.startsWith(`${p}/`))

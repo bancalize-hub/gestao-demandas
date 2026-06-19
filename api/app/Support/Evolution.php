@@ -27,21 +27,116 @@ class Evolution
     }
 
     /**
+     * Envia mídia (imagem/vídeo/documento) pelo WhatsApp. `$base64` é o conteúdo puro
+     * (sem o prefixo data:). `$mediatype` ∈ image|video|document. Retorna o wa_id (key.id).
+     */
+    public static function sendMedia(string $number, string $base64, string $mimetype, string $fileName, string $caption = '', string $mediatype = 'image'): ?string
+    {
+        $number = preg_replace('/\D/', '', $number);
+        if ($number === '' || $base64 === '') {
+            return null;
+        }
+        try {
+            $payload = [
+                'number' => $number,
+                'mediatype' => $mediatype,
+                'mimetype' => $mimetype,
+                'media' => $base64,
+                'fileName' => $fileName,
+            ];
+            if (trim($caption) !== '') {
+                $payload['caption'] = $caption;
+            }
+            $res = self::http()->timeout(60)->post('/message/sendMedia/'.self::instance(), $payload);
+            if (! $res->successful()) {
+                \Illuminate\Support\Facades\Log::warning('Evolution sendMedia falhou', ['status' => $res->status(), 'body' => mb_substr((string) $res->body(), 0, 300)]);
+
+                return null;
+            }
+
+            return (string) ($res->json('key.id') ?? '');
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Evolution sendMedia exceção', ['e' => $e->getMessage()]);
+
+            return null;
+        }
+    }
+
+    /** Reage a uma mensagem (emoji). `$emoji` vazio remove a reação. Retorna true se ok. */
+    public static function sendReaction(string $number, string $waId, string $remoteJid, bool $fromMe, string $emoji): bool
+    {
+        $number = preg_replace('/\D/', '', $number);
+        if ($number === '' || $waId === '') {
+            return false;
+        }
+        try {
+            $res = self::http()->post('/message/sendReaction/'.self::instance(), [
+                'key' => [
+                    'id' => $waId,
+                    'remoteJid' => $remoteJid ?: ($number.'@s.whatsapp.net'),
+                    'fromMe' => $fromMe,
+                ],
+                'reaction' => $emoji,
+            ]);
+
+            return $res->successful();
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Evolution sendReaction exceção', ['e' => $e->getMessage()]);
+
+            return false;
+        }
+    }
+
+    /** Envia um áudio como NOTA DE VOZ (PTT) pelo WhatsApp. `$base64` é o áudio puro. Retorna o wa_id. */
+    public static function sendAudio(string $number, string $base64): ?string
+    {
+        $number = preg_replace('/\D/', '', $number);
+        if ($number === '' || $base64 === '') {
+            return null;
+        }
+        try {
+            $res = self::http()->timeout(60)->post('/message/sendWhatsAppAudio/'.self::instance(), [
+                'number' => $number,
+                'audio' => $base64,
+            ]);
+            if (! $res->successful()) {
+                \Illuminate\Support\Facades\Log::warning('Evolution sendAudio falhou', ['status' => $res->status(), 'body' => mb_substr((string) $res->body(), 0, 300)]);
+
+                return null;
+            }
+
+            return (string) ($res->json('key.id') ?? '');
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Evolution sendAudio exceção', ['e' => $e->getMessage()]);
+
+            return null;
+        }
+    }
+
+    /**
      * Envia uma mensagem de texto para um número (só dígitos).
      * Retorna o wa_id da mensagem enviada (string; '' se a Evolution não devolveu o id),
      * ou null se o envio falhou. O wa_id é usado para casar com o eco do webhook e não duplicar.
      */
-    public static function sendText(string $number, string $text): ?string
+    public static function sendText(string $number, string $text, ?string $quotedId = null, string $quotedText = ''): ?string
     {
         $number = preg_replace('/\D/', '', $number);
         if ($number === '' || trim($text) === '') {
             return null;
         }
         try {
-            $res = self::http()->post('/message/sendText/'.self::instance(), [
+            $payload = [
                 'number' => $number,
                 'text' => $text,
-            ]);
+            ];
+            // Resposta nativa (quoted): a citação aparece também no WhatsApp do cliente.
+            if ($quotedId) {
+                $payload['quoted'] = [
+                    'key' => ['id' => $quotedId],
+                    'message' => ['conversation' => $quotedText !== '' ? $quotedText : ' '],
+                ];
+            }
+            $res = self::http()->post('/message/sendText/'.self::instance(), $payload);
             if (! $res->successful()) {
                 return null;
             }
@@ -49,6 +144,32 @@ class Evolution
             return (string) ($res->json('key.id') ?? '');
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::warning('Evolution sendText falhou', ['e' => $e->getMessage()]);
+
+            return null;
+        }
+    }
+
+    /**
+     * Baixa a mídia (descriptografada) de uma mensagem pelo wa_id e devolve o base64 cru
+     * (sem o prefixo data URI), ou null se falhar. Usado para transcrever áudios.
+     */
+    public static function mediaBase64(string $waId): ?string
+    {
+        if ($waId === '') {
+            return null;
+        }
+        try {
+            $res = self::http()->timeout(40)->post('/chat/getBase64FromMediaMessage/'.self::instance(), [
+                'message' => ['key' => ['id' => $waId]],
+                'convertToMp4' => false,
+            ]);
+            if (! $res->successful()) {
+                return null;
+            }
+
+            return $res->json('base64') ?: null;
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Evolution mediaBase64 falhou', ['e' => $e->getMessage()]);
 
             return null;
         }

@@ -18,10 +18,35 @@ class ConversationController extends Controller
     {
         // A LISTA carrega só a última mensagem de cada conversa (preview + ✓✓), não as 11k+
         // mensagens de todas — a thread completa vem do endpoint /full ao abrir a conversa.
+        // started_ts = ts da 1ª mensagem (data do 1º contato) — usado no filtro de data do Funil.
         return Conversation::with('lastMessage')
+            ->withMin('messages as started_ts', 'ts')
             ->orderByRaw('last_message_at IS NULL, last_message_at DESC')
             ->orderBy('position')
             ->get();
+    }
+
+    /**
+     * Indicadores do dia. "Leads novos": conversas que receberam mensagem do lead HOJE e que
+     * NÃO tinham nenhuma mensagem antes de hoje (contato que chegou hoje). Fuso de São Paulo.
+     */
+    public function todayStats()
+    {
+        $tz = config('app.timezone', 'America/Sao_Paulo');
+        $start = \Carbon\Carbon::today($tz)->timestamp;
+        $end = \Carbon\Carbon::tomorrow($tz)->timestamp;
+
+        $convs = Conversation::query()
+            ->where('archived', false)
+            ->whereHas('messages', fn ($q) => $q->where('is_out', false)->whereBetween('ts', [$start, $end]))
+            ->whereDoesntHave('messages', fn ($q) => $q->where('ts', '<', $start)->orWhereNull('ts'))
+            ->orderByDesc('last_message_at')
+            ->get(['slug', 'name', 'time']);
+
+        return response()->json([
+            'new_leads' => $convs->count(),
+            'leads' => $convs->map(fn ($c) => ['slug' => $c->slug, 'name' => $c->name, 'time' => $c->time])->values(),
+        ]);
     }
 
     public function update(Request $request, Conversation $conversation)
@@ -31,6 +56,8 @@ class ConversationController extends Controller
         $conversation->update($request->only([
             'unread', 'preview', 'time', 'stage', 'stage_color', 'prob', 'hot', 'online', 'archived', 'tags',
             'deal_value', 'deal_unit', 'name', 'auto_reply',
+            // Ficha do lead (CRM) — edição manual pela ScreenContact.
+            'email', 'company', 'origin', 'responsible', 'role', 'segmento', 'notes', 'custom_fields',
         ]));
 
         // Ligou o atendimento automático: se o lead está aguardando (última mensagem é dele),
@@ -52,30 +79,14 @@ class ConversationController extends Controller
             $conversation->update(['initials' => $ini ?: '#']);
         }
 
-        // Mudou a etapa → sincroniza a etiqueta no WhatsApp Business (sistema → WhatsApp).
-        if ($conversation->wasChanged('stage') && $conversation->phone) {
-            $this->syncStageLabel($conversation, $oldStage, $conversation->stage);
+        // Mudou a etapa → registra na linha do tempo e sincroniza a etiqueta no WhatsApp.
+        if ($conversation->wasChanged('stage')) {
+            $stageName = \App\Models\Stage::where('key', $conversation->stage)->value('name') ?? $conversation->stage;
+            \App\Models\LeadActivity::log($conversation->id, 'etapa', "Movido para “{$stageName}”", null, $request->user()?->id);
+            \App\Services\StageMover::syncWhatsAppLabel($conversation, $oldStage, $conversation->stage);
         }
 
         return $conversation->load('messages');
-    }
-
-    /** Aplica no WhatsApp a etiqueta da nova etapa e remove a da etapa anterior. */
-    private function syncStageLabel(Conversation $conversation, ?string $oldKey, ?string $newKey): void
-    {
-        $number = preg_replace('/\D/', '', (string) $conversation->phone);
-        if ($number === '') {
-            return;
-        }
-        $old = $oldKey ? Stage::where('key', $oldKey)->first() : null;
-        $new = $newKey ? Stage::where('key', $newKey)->first() : null;
-
-        if ($old && $old->wa_label_id) {
-            Evolution::handleLabel($number, $old->wa_label_id, 'remove');
-        }
-        if ($new && $new->wa_label_id) {
-            Evolution::handleLabel($number, $new->wa_label_id, 'add');
-        }
     }
 
     /** Sugestão de próxima resposta — no seu estilo e usando a memória (Claude/assinatura). */

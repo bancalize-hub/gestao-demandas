@@ -57,4 +57,24 @@ return [
         'webhook_token' => env('EVOLUTION_WEBHOOK_TOKEN'),
     ],
 
+    // Lembrete automático de reunião: a IA avisa o cliente pelo WhatsApp antes de começar.
+    'meeting_reminder' => [
+        'enabled' => env('MEETING_REMINDER_ENABLED', true),
+        'lead_minutes' => (int) env('MEETING_REMINDER_LEAD_MINUTES', 60), // quanto antes lembrar (padrão: 1h)
+    ],
+
+    // Transcrição de áudios (voice) do WhatsApp via Groq Whisper (free tier). A IA "ouve"
+    // os áudios do cliente e responde. Sem a chave, a transcrição fica desligada (silencioso).
+    'groq' => [
+        'key' => env('GROQ_API_KEY'),
+        'whisper_model' => env('GROQ_WHISPER_MODEL', 'whisper-large-v3'),
+    ],
+
+    // Automatismos de reunião no funil. As chaves apontam para stages.key (editáveis no /pipeline).
+    'crm' => [
+        'stage_meeting_booked' => env('CRM_STAGE_MEETING_BOOKED', 'proposta'),          // "Reunião Agendada"
+        'stage_meeting_done' => env('CRM_STAGE_MEETING_DONE', 'reuniao-realizada'),      // "Reunião Realizada"
+        'attendance_min_minutes' => (int) env('CRM_ATTENDANCE_MIN_MINUTES', 10),         // tempo mínimo p/ contar presença
+    ],
+
 ];

@@ -28,10 +28,18 @@ class MeetingScheduler
         $slots = $this->google->freeSlots($user, $durationMin);
 
         $transcript = $conversation->messages()
-            ->where('type', 'text')->whereNotNull('text')
+            ->where(function ($q) {
+                $q->where(fn ($t) => $t->where('type', 'text')->whereNotNull('text'))
+                    ->orWhere(fn ($v) => $v->where('type', 'voice')->whereNotNull('transcript')->where('transcript', '!=', ''));
+            })
             ->reorder()->orderByRaw('ts IS NULL, ts')->orderBy('id')
-            ->get(['is_out', 'text'])
-            ->map(fn ($m) => ($m->is_out ? 'Atendente' : $conversation->name).': '.$m->text)
+            ->get(['is_out', 'type', 'text', 'transcript'])
+            ->map(function ($m) use ($conversation) {
+                $who = $m->is_out ? 'Atendente' : $conversation->name;
+                $content = $m->type === 'voice' ? '[áudio do cliente] '.$m->transcript : $m->text;
+
+                return $who.': '.$content;
+            })
             ->implode("\n");
         if ($transcript === '') {
             $transcript = '(sem mensagens ainda — o lead acabou de iniciar a conversa)';
@@ -188,6 +196,29 @@ class MeetingScheduler
             if ($meet) {
                 $message .= "\n\nSegue o link da nossa reunião no Google Meet: {$meet}";
             }
+
+            // Registra a reunião: serve para o lembrete (WhatsApp, se houver telefone) e para a
+            // apuração de presença/resumo depois da reunião (Meet API + read.ai). user_id é a conta
+            // Google que vai consultar a Meet API.
+            \App\Models\Meeting::create([
+                'conversation_id' => $conversation->id,
+                'user_id' => $user->id,
+                'phone' => $conversation->phone,
+                'title' => $event['title'] ?? ($data['title'] ?? null),
+                'starts_at' => $start,
+                'ends_at' => $end,
+                'meet_link' => $meet,
+                'google_event_id' => $event['id'] ?? null,
+                'reminder_lead_minutes' => (int) config('services.meeting_reminder.lead_minutes', 60),
+            ]);
+
+            // Move o lead para "Reunião Agendada" no funil (etiqueta sincroniza no WhatsApp).
+            \App\Services\StageMover::move(
+                $conversation,
+                (string) config('services.crm.stage_meeting_booked', 'proposta'),
+                $user->id,
+                "Reunião agendada para {$slotLabel}",
+            );
 
             return [
                 'scheduled' => true,

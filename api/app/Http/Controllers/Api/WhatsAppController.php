@@ -389,11 +389,56 @@ class WhatsAppController extends Controller
                     $this->ingestMessage($m);
                 }
             }
+        } elseif ($event === 'messages.update' || $event === 'messages.edit') {
+            // Recibo (ack): entregue/lido. Pode vir como objeto único ou lista.
+            $data = $request->input('data', []);
+            $items = (isset($data['keyId']) || isset($data['key']) || isset($data['status'])) ? [$data] : (array_is_list($data) ? $data : [$data]);
+            foreach ($items as $u) {
+                if (is_array($u)) {
+                    $this->ingestStatus($u);
+                }
+            }
         } elseif ($event === 'labels.association') {
             $this->ingestLabelAssociation($request->input('data', []));
         }
 
         return response()->json(['ok' => true]);
+    }
+
+    /** Atualiza o recibo (status) de uma mensagem enviada, a partir do ack do WhatsApp. */
+    private function ingestStatus(array $u): void
+    {
+        $waId = (string) ($u['keyId'] ?? ($u['key']['id'] ?? ($u['message']['key']['id'] ?? '')));
+        $raw = strtoupper((string) ($u['status'] ?? ($u['update']['status'] ?? '')));
+        if ($waId === '' || $raw === '') {
+            return;
+        }
+        $map = [
+            'PENDING' => 'pending', 'ERROR' => 'error',
+            'SERVER_ACK' => 'sent', 'SENT' => 'sent',
+            'DELIVERY_ACK' => 'delivered', 'DELIVERED' => 'delivered',
+            'READ' => 'read', 'PLAYED' => 'read',
+        ];
+        $status = $map[$raw] ?? null;
+        if (! $status) {
+            return;
+        }
+
+        $msg = \App\Models\Message::where('wa_id', $waId)->first();
+        if (! $msg || ! $msg->is_out) {
+            return;
+        }
+        // Nunca regride o recibo (read > delivered > sent > pending).
+        $rank = ['pending' => 0, 'error' => 0, 'sent' => 1, 'delivered' => 2, 'read' => 3];
+        if (($rank[$status] ?? 0) < ($rank[(string) $msg->status] ?? 0)) {
+            return;
+        }
+        $msg->update(['status' => $status]);
+
+        try {
+            \App\Events\CrmUpdated::dispatch('message');
+        } catch (\Throwable $e) {
+        }
     }
 
     /**
@@ -440,6 +485,14 @@ class WhatsAppController extends Controller
             return;
         }
 
+        // Reação (emoji) a uma mensagem — não é mensagem nova; atualiza a mensagem alvo e sai.
+        $rawMsg = $this->unwrap($m['message'] ?? []);
+        if (isset($rawMsg['reactionMessage'])) {
+            $this->ingestReaction($rawMsg['reactionMessage']);
+
+            return;
+        }
+
         $waId = (string) ($key['id'] ?? '');
         if ($waId !== '' && Message::where('wa_id', $waId)->exists()) {
             return;
@@ -459,7 +512,6 @@ class WhatsAppController extends Controller
 
         [$local, $domain] = array_pad(explode('@', $remoteJid, 2), 2, '');
         $isPhone = $domain === 's.whatsapp.net';
-        $slug = 'wa-'.preg_replace('/[^a-z0-9]/i', '', $local);
 
         $realNumber = $isPhone ? $local : null;
         if (! $isPhone) {
@@ -468,6 +520,16 @@ class WhatsAppController extends Controller
                 $realNumber = explode('@', $alt)[0];
             }
         }
+
+        // Chaveia SEMPRE pelo telefone real quando conhecido. O WhatsApp entrega a mesma pessoa
+        // ora pelo @lid (id de privacidade), ora pelo @s.whatsapp.net (telefone) — usar o @lid como
+        // chave criava uma conversa duplicada. Com o telefone do remoteJidAlt, ambas caem na mesma.
+        if ($realNumber) {
+            $local = $realNumber;
+            $remoteJid = $realNumber.'@s.whatsapp.net';
+            $isPhone = true;
+        }
+        $slug = 'wa-'.preg_replace('/[^a-z0-9]/i', '', $local);
 
         $isOut = (bool) ($key['fromMe'] ?? false);
         $ts = (int) ($m['messageTimestamp'] ?? time());
@@ -530,6 +592,8 @@ class WhatsAppController extends Controller
             'type' => $p['type'],
             'is_out' => $isOut,
             'text' => $text,
+            'reply_to' => $p['reply_to'] ?? null,
+            'reply_excerpt' => $p['reply_excerpt'] ?? null,
             'time' => date('H:i', $ts),
             'ts' => $ts ?: null,
             'position' => ((int) $conv->messages()->max('position')) + 1,
@@ -595,8 +659,17 @@ class WhatsAppController extends Controller
         $name = $name ?: ($realNumber ? ('+'.$realNumber) : 'Contato WhatsApp');
 
         $conv = Conversation::firstOrNew(['slug' => $slug]);
-        $conv->name = $name;
-        $conv->initials = $this->initialsOf($name);
+        // NÃO sobrescreve nome posto à mão. Só (re)nomeia se a conversa é nova ou o nome atual
+        // é automático (número/placeholder). Antes, todo re-import resetava o nome manual p/ o número.
+        $cur = trim((string) $conv->name);
+        $nameIsAuto = ! $conv->exists || $cur === ''
+            || preg_match('/^\+?\d+$/', $cur)
+            || str_contains($cur, '@')
+            || in_array(mb_strtolower($cur), ['contato whatsapp', 'você', 'voce', 'you'], true);
+        if ($nameIsAuto) {
+            $conv->name = $name;
+            $conv->initials = $this->initialsOf($name);
+        }
         $conv->color = $conv->color ?: '#6b7cff';
         if ($avatar) {
             $conv->avatar = $avatar;
@@ -704,12 +777,14 @@ class WhatsAppController extends Controller
         $waId = ((string) ($key['id'] ?? '')) ?: null;
         $msg = $this->unwrap($m['message'] ?? []);
 
+        $reply = $this->parseQuoted($msg);
+
         // Texto (cobre mensagem simples e com formatação/citação).
         $body = $msg['conversation']
             ?? $msg['extendedTextMessage']['text']
             ?? null;
         if (is_string($body) && $body !== '') {
-            return ['type' => 'text', 'text' => $body, 'preview' => $body, 'wa_id' => $waId];
+            return ['type' => 'text', 'text' => $body, 'preview' => $body, 'wa_id' => $waId] + $reply;
         }
 
         // Mídia: detecta pelo campo presente no conteúdo (não pelo messageType,
@@ -725,11 +800,53 @@ class WhatsAppController extends Controller
             if (isset($msg[$field]) && is_array($msg[$field])) {
                 $caption = $msg[$field]['caption'] ?? null;
 
-                return ['type' => $type, 'text' => $caption, 'preview' => $caption ?: $label, 'wa_id' => $waId];
+                return ['type' => $type, 'text' => $caption, 'preview' => $caption ?: $label, 'wa_id' => $waId] + $reply;
             }
         }
 
         return null;
+    }
+
+    /** Reação recebida (cliente reagiu): atualiza a reação da mensagem alvo. Emoji vazio remove. */
+    private function ingestReaction(array $rm): void
+    {
+        $targetId = (string) ($rm['key']['id'] ?? '');
+        $emoji = (string) ($rm['text'] ?? '');
+        if ($targetId === '') {
+            return;
+        }
+        $msg = Message::where('wa_id', $targetId)->first();
+        if (! $msg) {
+            return;
+        }
+        $msg->update(['reaction' => $emoji !== '' ? $emoji : null]);
+
+        try {
+            \App\Events\CrmUpdated::dispatch('message');
+        } catch (\Throwable $e) {
+        }
+    }
+
+    /** Extrai a citação (quoted) de uma mensagem recebida: ['reply_to'=>?, 'reply_excerpt'=>?]. */
+    private function parseQuoted(array $msg): array
+    {
+        $ctx = $msg['extendedTextMessage']['contextInfo'] ?? null;
+        foreach (['imageMessage', 'audioMessage', 'videoMessage', 'documentMessage'] as $f) {
+            if (! $ctx && isset($msg[$f]['contextInfo'])) {
+                $ctx = $msg[$f]['contextInfo'];
+            }
+        }
+        if (! is_array($ctx) || empty($ctx['stanzaId'])) {
+            return ['reply_to' => null, 'reply_excerpt' => null];
+        }
+        $qm = $ctx['quotedMessage'] ?? [];
+        $qtext = $qm['conversation']
+            ?? ($qm['extendedTextMessage']['text'] ?? null)
+            ?? ($qm['imageMessage']['caption'] ?? null)
+            ?? ($qm['videoMessage']['caption'] ?? null)
+            ?? (isset($qm['audioMessage']) ? '🎵 Áudio' : (isset($qm['imageMessage']) ? '📷 Imagem' : (isset($qm['documentMessage']) ? '📄 Documento' : '')));
+
+        return ['reply_to' => (string) $ctx['stanzaId'], 'reply_excerpt' => mb_substr((string) $qtext, 0, 180) ?: null];
     }
 
     /**

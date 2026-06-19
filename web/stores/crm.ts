@@ -3,7 +3,7 @@ import { defineStore } from 'pinia'
 // ----- Tipos -----
 export type Screen =
   | 'chat' | 'pipeline' | 'tasks' | 'agenda'
-  | 'meeting' | 'contact' | 'contacts' | 'form' | 'mobile'
+  | 'contact' | 'contacts' | 'form' | 'mobile'
 
 export interface Contact { id: number, name: string, phone: string | null, email: string | null, avatar: string | null, resource_name?: string | null }
 
@@ -12,7 +12,13 @@ export interface Msg {
   type: 'divider' | 'text' | 'voice' | 'file' | 'image' | 'video'
   label?: string | null
   isOut?: boolean
+  status?: string | null // pending|sent|delivered|read|error (recibo da mensagem enviada)
+  waId?: string | null // id da mensagem no WhatsApp (para citar/responder)
+  replyTo?: string | null // wa_id da mensagem citada
+  replyExcerpt?: string | null // trecho da mensagem citada (balão de citação)
+  reaction?: string | null // emoji de reação na mensagem
   text?: string | null
+  transcript?: string | null
   time?: string | null
   ts?: number | null
   dur?: string | null
@@ -22,6 +28,8 @@ export interface Msg {
 
 export interface Tag { label: string, color: string }
 export interface Interaction { title: string, meta: string, color: string }
+export interface Activity { id: number, type: string, title: string, body: string | null, occurred_at: string, user?: { id: number, name: string } | null }
+export interface FollowUp { id: number, title: string, starts_at: string | null, column: string, ai_draft: string | null, ai_draft_at: string | null }
 export interface QuickReply { id: number, label: string, text: string }
 export interface Stage { id?: number, key: string, name: string, color: string, goal?: string | null, wa_label_id?: string | null, position?: number }
 export interface ChatTab { id: number, name: string, stages: string[], position?: number }
@@ -44,6 +52,8 @@ export interface Conversation {
   hot: boolean
   preview: string
   time: string
+  lastMessageAt: string | null
+  startedAt: number | null // ts da 1ª mensagem (data do 1º contato) — filtro de data do Funil
   unread: number
   archived: boolean
   autoReply: boolean
@@ -55,6 +65,8 @@ export interface Conversation {
   company: string
   origin: string
   responsible: string
+  segmento: string
+  notes: string
   interactions: Interaction[]
   thread: Msg[]
 }
@@ -64,7 +76,7 @@ export interface Deal {
   stage: string, hot: boolean, won: boolean, tagStrong: boolean, position: number
 }
 export interface Task {
-  id: number, title: string, client: string, priority: 'baixa' | 'media' | 'alta'
+  id: number, title: string, description: string, client: string, priority: 'baixa' | 'media' | 'alta'
   due: string, type: string, column: string, position: number
 }
 export interface CalEvent {
@@ -79,6 +91,13 @@ export interface CalEvent {
   hangout_link?: string | null
   attendees?: { email: string, name?: string | null, response?: string, organizer?: boolean }[]
   add_meet?: boolean
+  attended?: boolean // cliente comprovadamente compareceu (Meet API) → destaque na agenda
+  no_show?: boolean // presença apurada e o cliente NÃO compareceu → vermelho na agenda
+  checked?: boolean // presença já apurada pelo servidor (senão: aguardando apuração)
+  summary?: string | null // resumo da reunião (read.ai), se houver
+  reminder_sent?: boolean // lembrete de WhatsApp já enviado ao cliente
+  conversation_slug?: string | null // lead vinculado à reunião (abre a ficha ao clicar no card)
+  conversation_name?: string | null
   deal_id?: number | null
   task_id?: number | null
 }
@@ -151,6 +170,54 @@ export function maskPhone(raw: string): string {
   return `+${d}` // outro país/formato — ao menos não mostra o id cru
 }
 
+// Carimbo de data/hora da lista de conversas, estilo WhatsApp:
+// hoje → HH:mm | ontem → "ontem" | últimos 6 dias → dia da semana | mais antigo → DD/MM/AAAA.
+// Recebe o ISO de last_message_at; cai no horário cru (timeStr) se não houver data.
+const WEEKDAYS_PT = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado']
+export function fmtListTime(lastMessageAt: string | null | undefined, timeStr: string): string {
+  if (!lastMessageAt) return timeStr
+  // Sem sufixo de fuso, o servidor já manda no horário local (America/Sao_Paulo).
+  const d = new Date(String(lastMessageAt).replace(' ', 'T'))
+  if (Number.isNaN(d.getTime())) return timeStr
+
+  const now = new Date()
+  const startOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
+  const diffDays = Math.round((startOf(now) - startOf(d)) / 86400000)
+
+  if (diffDays <= 0) return timeStr || d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+  if (diffDays === 1) return 'ontem'
+  if (diffDays <= 6) return WEEKDAYS_PT[d.getDay()]
+  return d.toLocaleDateString('pt-BR') // DD/MM/AAAA
+}
+
+// Temperatura do lead: automática pelo tempo sem interação (última mensagem da conversa),
+// com o 🔥 manual fixando como Quente. "awaiting" = última msg foi do lead (devemos resposta).
+// Limites: Quente ≤2d · Morno 3-5d · Frio >5d.
+export interface LeadTemp { key: 'quente' | 'morno' | 'frio', label: string, color: string, days: number, awaiting: boolean }
+export function leadTemperature(c: { lastMessageAt?: string | null, lastOut?: boolean, hot?: boolean }): LeadTemp {
+  const awaiting = c.lastOut === false // última mensagem foi do lead → aguardando nossa resposta
+  let days = 999
+  if (c.lastMessageAt) {
+    const d = new Date(String(c.lastMessageAt).replace(' ', 'T'))
+    if (!Number.isNaN(d.getTime())) days = Math.max(0, Math.floor((Date.now() - d.getTime()) / 86400000))
+  }
+  const key: 'quente' | 'morno' | 'frio' = c.hot || days <= 2 ? 'quente' : days <= 5 ? 'morno' : 'frio'
+  const meta = {
+    quente: { label: 'Quente', color: '#ff5a3c' },
+    morno: { label: 'Morno', color: '#ffb443' },
+    frio: { label: 'Frio', color: '#53bdeb' },
+  }[key]
+  return { key, label: meta.label, color: meta.color, days, awaiting }
+}
+
+// Rótulo curto de tempo desde a última interação (ex.: "hoje", "há 3d").
+export function sinceLabel(days: number): string {
+  if (days >= 999) return 'sem msg'
+  if (days <= 0) return 'hoje'
+  if (days === 1) return 'ontem'
+  return `há ${days}d`
+}
+
 // Iniciais a partir do nome (1-2 letras).
 function initialsOf(name: string): string {
   const parts = (name || '').trim().split(/\s+/).filter(Boolean)
@@ -179,20 +246,21 @@ function mapConv(c: any): Conversation {
     id: c.slug, name: display, nameSaved, initials: nameSaved ? initialsOf(display) : (c.initials || '#'), color: colorForId(c.slug || c.name || String(c.id)), avatar: c.avatar ?? '', online: !!c.online,
     statusText: c.status_text ?? '', role: c.role ?? '', dealValue: c.deal_value ?? '', dealUnit: c.deal_unit ?? '',
     stage: c.stage ?? '', stageColor: c.stage_color ?? '#8696a0', prob: c.prob ?? 0, hot: !!c.hot,
-    preview: c.preview ?? '', time: c.time ?? '', unread: c.unread ?? 0, archived: !!c.archived, autoReply: !!c.auto_reply, lastOut: c.last_message ? !!c.last_message.is_out : lastIsOut(c.messages), inMemory: !!c.in_memory, tags: c.tags ?? [],
+    preview: c.preview ?? '', time: c.time ?? '', lastMessageAt: c.last_message_at ?? null, startedAt: c.started_ts ?? null, unread: c.unread ?? 0, archived: !!c.archived, autoReply: !!c.auto_reply, lastOut: c.last_message ? !!c.last_message.is_out : lastIsOut(c.messages), inMemory: !!c.in_memory, tags: c.tags ?? [],
     phone: c.phone ?? '', email: c.email ?? '', company: c.company ?? '', origin: c.origin ?? '', responsible: c.responsible ?? '',
+    segmento: c.segmento ?? '', notes: c.notes ?? '',
     interactions: c.interactions ?? [],
     thread: (c.messages ?? []).map(mapMsg),
   }
 }
 function mapMsg(m: any): Msg {
-  return { id: m.id, type: m.type, isOut: !!m.is_out, text: m.text, time: m.time, ts: m.ts ?? null, dur: m.dur, fileName: m.file_name, meta: m.meta, label: m.label }
+  return { id: m.id, type: m.type, isOut: !!m.is_out, status: m.status ?? null, waId: m.wa_id ?? null, replyTo: m.reply_to ?? null, replyExcerpt: m.reply_excerpt ?? null, reaction: m.reaction ?? null, text: m.text, transcript: m.transcript ?? null, time: m.time, ts: m.ts ?? null, dur: m.dur, fileName: m.file_name, meta: m.meta, label: m.label }
 }
 function mapDeal(d: any): Deal {
   return { id: d.id, name: d.name, sub: d.sub ?? '', value: d.value ?? '', tag: d.tag ?? '', stage: d.stage, hot: !!d.hot, won: !!d.won, tagStrong: !!d.tag_strong, position: d.position ?? 0 }
 }
 function mapTask(t: any): Task {
-  return { id: t.id, title: t.title, client: t.client ?? '', priority: t.priority, due: t.due ?? '', type: t.type ?? '', column: t.column, position: t.position ?? 0 }
+  return { id: t.id, title: t.title, description: t.description ?? '', client: t.client ?? '', priority: t.priority, due: t.due ?? '', type: t.type ?? '', column: t.column, position: t.position ?? 0 }
 }
 
 let dragRef: DragRef | null = null
@@ -204,7 +272,6 @@ export const SCREEN_ROUTES: Record<Screen, string> = {
   pipeline: '/funil',
   tasks: '/tarefas',
   agenda: '/agenda',
-  meeting: '/reuniao',
   contact: '/contato',
   contacts: '/contatos',
   form: '/solicitar',
@@ -220,6 +287,9 @@ export const useCrmStore = defineStore('crm', {
   state: () => ({
     screen: 'chat' as Screen,
     activeId: '',
+    // No celular a lista e o chat ocupam a tela toda alternadamente. Este flag diz se o
+    // usuário ABRIU uma conversa (vê o chat) ou está na lista. No desktop é ignorado.
+    chatOpen: false,
     typing: false,
     loading: true,
     threadError: false,
@@ -244,6 +314,17 @@ export const useCrmStore = defineStore('crm', {
     googleEmail: null as string | null,
     events: [] as CalEvent[],
     eventsLoading: false,
+    lastEventsRange: null as { from: string, to: string } | null, // p/ recarregar a agenda em tempo real
+    // ----- Linha do tempo do lead aberto na ficha -----
+    activities: [] as Activity[],
+    activitiesConvId: null as string | null,
+    activitiesLoading: false,
+    // ----- Indicadores do dia (painel do funil) -----
+    newLeadsToday: 0,
+    newLeadsList: [] as { slug: string, name: string, time: string }[],
+    // ----- Follow-ups do lead aberto na ficha -----
+    followups: [] as FollowUp[],
+    followupsConvId: null as string | null,
   }),
 
   getters: {
@@ -349,8 +430,21 @@ export const useCrmStore = defineStore('crm', {
         this.applyConversations(convs)
         this.dealList = deals.map(mapDeal)
         this.connection = 'online'
+        // Recarrega a thread aberta para refletir os recibos (entregue/lido) em tempo real.
+        // Status-only não muda o tamanho da lista, então não causa "pulo" de rolagem.
+        if (this.chatOpen && this.activeId) this.loadFullThread(this.activeId, true)
       }
       catch { this.connection = 'offline' }
+    },
+
+    // Indicadores do dia (leads novos que mandaram msg hoje) — para o painel do funil.
+    async loadTodayStats() {
+      try {
+        const r = await api()<{ new_leads: number, leads: { slug: string, name: string, time: string }[] }>('/api/stats/today')
+        this.newLeadsToday = r.new_leads
+        this.newLeadsList = r.leads || []
+      }
+      catch { /* mantém o último valor */ }
     },
 
     // Carrega o histórico completo da conversa (o sync guarda só as recentes).
@@ -367,6 +461,7 @@ export const useCrmStore = defineStore('crm', {
 
     selectConv(id: string) {
       this.activeId = id
+      this.chatOpen = true
       this.threadError = false
       this.aiSuggestion = ''
       this.loadFullThread(id)
@@ -439,16 +534,70 @@ export const useCrmStore = defineStore('crm', {
       )
     },
 
-    send(text: string) {
+    send(text: string, reply?: { waId?: string | null, excerpt?: string | null }) {
       const t = text.trim()
       const conv = this.activeConv
       if (!t || !conv) return
       const time = agora()
-      conv.thread.push({ type: 'text', isOut: true, text: t, time })
+      const optimistic: Msg = { type: 'text', isOut: true, status: 'pending', text: t, time, replyTo: reply?.waId ?? null, replyExcerpt: reply?.excerpt ?? null }
+      conv.thread.push(optimistic)
       conv.preview = t
       conv.time = time
       conv.unread = 0
-      api()(`/api/conversations/${conv.id}/messages`, { method: 'POST', body: { type: 'text', is_out: true, text: t, time } }).catch(() => {})
+      const body: any = { type: 'text', is_out: true, text: t, time }
+      if (reply?.waId) { body.reply_to = reply.waId; body.reply_excerpt = reply.excerpt ?? '' }
+      api()<any>(`/api/conversations/${conv.id}/messages`, { method: 'POST', body })
+        .then((created) => { optimistic.id = created?.id; optimistic.status = created?.status ?? 'sent' })
+        .catch(() => { optimistic.status = 'error' })
+    },
+
+    // Encaminha uma mensagem para outra conversa. Retorna true se foi.
+    async forwardMessage(targetConvId: string, messageId: number): Promise<boolean> {
+      try {
+        const m = await api()<any>(`/api/conversations/${targetConvId}/forward`, { method: 'POST', body: { message_id: messageId } })
+        const target = this.conversations.find(c => c.id === targetConvId)
+        if (target) {
+          target.preview = m.type === 'text' ? (m.text || '') : (m.type === 'image' ? '📷 Foto' : m.type === 'video' ? '🎬 Vídeo' : m.type === 'voice' ? '🎵 Áudio' : `📄 ${m.file_name || 'arquivo'}`)
+          target.time = m.time
+          if (targetConvId === this.activeId) target.thread.push(mapMsg(m))
+        }
+        return true
+      }
+      catch {
+        return false
+      }
+    },
+
+    // Reage a uma mensagem (emoji). Toggle: reagir com o mesmo emoji remove.
+    react(messageId: number, emoji: string) {
+      const conv = this.activeConv
+      if (!conv) return
+      const m = conv.thread.find(x => x.id === messageId)
+      if (!m) return
+      const next = m.reaction === emoji ? '' : emoji
+      m.reaction = next || null
+      api()(`/api/conversations/${conv.id}/messages/${messageId}/react`, { method: 'POST', body: { emoji: next } }).catch(() => {})
+    },
+
+    // Envia mídia (imagem/vídeo/documento) pelo WhatsApp. Retorna true se foi.
+    async sendMedia(file: File, caption = '', dur = ''): Promise<boolean> {
+      const conv = this.activeConv
+      if (!conv) return false
+      const fd = new FormData()
+      fd.append('file', file)
+      if (caption.trim()) fd.append('caption', caption.trim())
+      if (dur) fd.append('dur', dur)
+      try {
+        const m = await api()<any>(`/api/conversations/${conv.id}/media`, { method: 'POST', body: fd })
+        conv.thread.push({ id: m.id, type: m.type, isOut: true, status: m.status ?? 'sent', text: m.text, time: m.time, ts: m.ts, dur: m.dur, fileName: m.file_name, meta: m.meta })
+        conv.preview = m.type === 'image' ? '📷 Foto' : m.type === 'video' ? '🎬 Vídeo' : `📄 ${m.file_name || 'arquivo'}`
+        conv.time = m.time
+        conv.unread = 0
+        return true
+      }
+      catch {
+        return false
+      }
     },
 
     // Apaga uma mensagem do CRM (otimista; reverte se o servidor recusar).
@@ -516,6 +665,12 @@ export const useCrmStore = defineStore('crm', {
       this.taskList = this.taskList.filter(t => t.id !== id)
       api()(`/api/tasks/${id}`, { method: 'DELETE' }).catch(() => {})
     },
+    async updateTask(id: number, patch: Partial<Task>) {
+      const t = this.taskList.find(x => x.id === id)
+      if (t) Object.assign(t, patch)
+      const updated = await api()<any>(`/api/tasks/${id}`, { method: 'PATCH', body: patch })
+      if (updated && t) Object.assign(t, mapTask(updated))
+    },
 
     // ----- Respostas rápidas -----
     async addQuickReply(payload: { label: string, text: string }) {
@@ -555,6 +710,72 @@ export const useCrmStore = defineStore('crm', {
       c.dealValue = value
       api()(`/api/conversations/${id}`, { method: 'PATCH', body: { deal_value: value } }).catch(() => {})
     },
+    // Edição genérica da ficha do lead (CRM). Recebe os campos do FRONT (camelCase),
+    // aplica otimista no store e converte p/ as colunas do back (snake_case) no PATCH.
+    patchConvFields(id: string, patch: Partial<Conversation>) {
+      const c = this.conversations.find(x => x.id === id)
+      if (!c) return
+      Object.assign(c, patch)
+      const map: Record<string, string> = {
+        email: 'email', company: 'company', origin: 'origin', responsible: 'responsible',
+        role: 'role', segmento: 'segmento', notes: 'notes', prob: 'prob', dealValue: 'deal_value', name: 'name',
+      }
+      const body: Record<string, any> = {}
+      for (const [k, v] of Object.entries(patch)) {
+        if (map[k]) body[map[k]] = v
+      }
+      if (Object.keys(body).length) api()(`/api/conversations/${id}`, { method: 'PATCH', body }).catch(() => {})
+    },
+    // ----- Linha do tempo do lead -----
+    async loadActivities(id: string) {
+      this.activitiesConvId = id
+      this.activitiesLoading = true
+      try {
+        const rows = await api()<Activity[]>(`/api/conversations/${id}/activities`)
+        if (this.activitiesConvId === id) this.activities = rows
+      }
+      catch { if (this.activitiesConvId === id) this.activities = [] }
+      finally { this.activitiesLoading = false }
+    },
+    async addActivity(id: string, payload: { title: string, body?: string, type?: string }) {
+      const created = await api()<Activity>(`/api/conversations/${id}/activities`, { method: 'POST', body: payload })
+      if (this.activitiesConvId === id) this.activities.unshift(created)
+    },
+    removeActivity(id: string, activityId: number) {
+      this.activities = this.activities.filter(a => a.id !== activityId)
+      api()(`/api/conversations/${id}/activities/${activityId}`, { method: 'DELETE' }).catch(() => {})
+    },
+    // ----- Follow-ups (acompanhamento) -----
+    async loadFollowups(id: string) {
+      this.followupsConvId = id
+      try {
+        const rows = await api()<FollowUp[]>(`/api/conversations/${id}/followups`)
+        if (this.followupsConvId === id) this.followups = rows
+      }
+      catch { if (this.followupsConvId === id) this.followups = [] }
+    },
+    async createFollowup(id: string, payload: { title: string, starts_at: string }) {
+      const created = await api()<FollowUp>(`/api/conversations/${id}/followups`, { method: 'POST', body: payload })
+      if (this.followupsConvId === id) this.followups.push(created)
+      // a criação gera uma atividade no back; recarrega a timeline se for o lead aberto
+      if (this.activitiesConvId === id) this.loadActivities(id)
+    },
+    async completeFollowup(id: string, taskId: number) {
+      const f = this.followups.find(x => x.id === taskId)
+      if (f) f.column = 'done'
+      await api()(`/api/followups/${taskId}/complete`, { method: 'PATCH' }).catch(() => {})
+      if (this.activitiesConvId === id) this.loadActivities(id)
+    },
+    removeFollowup(taskId: number) {
+      this.followups = this.followups.filter(x => x.id !== taskId)
+      api()(`/api/tasks/${taskId}`, { method: 'DELETE' }).catch(() => {})
+    },
+    // Leva o rascunho da IA para o composer do chat (o vendedor revisa e envia).
+    useFollowupDraft(id: string, draft: string) {
+      this.aiSuggestion = draft
+      this.activeId = id
+      this.go('chat')
+    },
     // Inicia/abre uma conversa por número (contatos sem histórico no Evolution).
     async startConversation(payload: { number: string, name?: string }) {
       const created = await api()<any>('/api/wpp/start', { method: 'POST', body: payload })
@@ -563,6 +784,7 @@ export const useCrmStore = defineStore('crm', {
       if (idx >= 0) this.conversations[idx] = mapped
       else this.conversations.unshift(mapped)
       this.activeId = mapped.id
+      this.chatOpen = true
       return mapped
     },
 
@@ -606,6 +828,7 @@ export const useCrmStore = defineStore('crm', {
       const conv = target ? this.conversations.find(c => c.phone && c.phone.replace(/\D/g, '').slice(-8) === target) : null
       if (conv) {
         this.activeId = conv.id
+        this.chatOpen = true
         this.loadFullThread(conv.id)
       }
       else if (contact.phone) {
@@ -635,6 +858,7 @@ export const useCrmStore = defineStore('crm', {
       if (idx >= 0) this.conversations[idx] = mapped
       else this.conversations.unshift(mapped)
       this.activeId = mapped.id
+      this.chatOpen = true
       return r
     },
 
@@ -692,6 +916,7 @@ export const useCrmStore = defineStore('crm', {
       const due = payload.due.trim()
       const body = {
         title: desc.length > 70 ? `${desc.slice(0, 70)}…` : desc,
+        description: desc, // texto completo da solicitação — vai pro detalhe da tarefa
         client: name + (company ? ` · ${company}` : ''),
         priority: this.formPriority,
         due: due || 'Sem prazo',
@@ -737,6 +962,7 @@ export const useCrmStore = defineStore('crm', {
     },
     async fetchEvents(fromISO: string, toISO: string) {
       if (!this.googleConnected) return
+      this.lastEventsRange = { from: fromISO, to: toISO }
       this.eventsLoading = true
       try {
         const r = await api()<{ events: CalEvent[] }>(`/api/google/events?from=${encodeURIComponent(fromISO)}&to=${encodeURIComponent(toISO)}`)
@@ -744,6 +970,12 @@ export const useCrmStore = defineStore('crm', {
       }
       catch { /* silencioso */ }
       finally { this.eventsLoading = false }
+    },
+    // Recarrega a agenda no intervalo atual (tempo real: presença/resumo mudaram no servidor).
+    async refreshEvents() {
+      if (!this.googleConnected || !this.lastEventsRange) return
+      const r = await api()<{ events: CalEvent[] }>(`/api/google/events?from=${encodeURIComponent(this.lastEventsRange.from)}&to=${encodeURIComponent(this.lastEventsRange.to)}`).catch(() => null)
+      if (r) this.events = r.events
     },
     async createEvent(payload: Partial<CalEvent>) {
       const created = await api()<CalEvent>('/api/google/events', { method: 'POST', body: payload })

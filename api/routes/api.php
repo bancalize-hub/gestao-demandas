@@ -7,8 +7,10 @@ use App\Http\Controllers\Api\ContactController;
 use App\Http\Controllers\Api\ConversationController;
 use App\Http\Controllers\Api\DealController;
 use App\Http\Controllers\Api\EventController;
+use App\Http\Controllers\Api\FollowUpController;
 use App\Http\Controllers\Api\GoogleAuthController;
 use App\Http\Controllers\Api\LabelController;
+use App\Http\Controllers\Api\LeadActivityController;
 use App\Http\Controllers\Api\MemoryController;
 use App\Http\Controllers\Api\MessageController;
 use App\Http\Controllers\Api\QuickReplyController;
@@ -42,9 +44,23 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/conversations', [ConversationController::class, 'index']);
     Route::patch('/conversations/{conversation}', [ConversationController::class, 'update']);
     Route::post('/conversations/{conversation}/messages', [MessageController::class, 'store']);
+    Route::post('/conversations/{conversation}/media', [MessageController::class, 'storeMedia']);
+    Route::post('/conversations/{conversation}/messages/{message}/react', [MessageController::class, 'react']);
+    Route::post('/conversations/{conversation}/forward', [MessageController::class, 'forward']);
     Route::delete('/conversations/{conversation}/messages/{message}', [MessageController::class, 'destroy']);
     Route::post('/conversations/{conversation}/suggest-reply', [ConversationController::class, 'suggestReply']);
     Route::post('/conversations/{conversation}/schedule-meeting', [ConversationController::class, 'scheduleMeeting']);
+
+    // Linha do tempo do lead (atividades: notas manuais + eventos automáticos).
+    Route::get('/stats/today', [ConversationController::class, 'todayStats']);
+    Route::get('/conversations/{conversation}/activities', [LeadActivityController::class, 'index']);
+    Route::post('/conversations/{conversation}/activities', [LeadActivityController::class, 'store']);
+    Route::delete('/conversations/{conversation}/activities/{activity}', [LeadActivityController::class, 'destroy']);
+
+    // Follow-ups de acompanhamento (tarefas type='followup' ligadas à conversa).
+    Route::get('/conversations/{conversation}/followups', [FollowUpController::class, 'index']);
+    Route::post('/conversations/{conversation}/followups', [FollowUpController::class, 'store']);
+    Route::patch('/followups/{task}/complete', [FollowUpController::class, 'complete']);
 
     // Agente operacional (chat que dirige o Claude Code na VPS). Só logado; tudo auditado.
     Route::get('/agent/sessions', [AgentController::class, 'index']);

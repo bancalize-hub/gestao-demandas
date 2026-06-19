@@ -31,6 +31,10 @@ class GoogleCalendarService
             GoogleCalendar::CALENDAR_EVENTS,
             GoogleCalendar::CALENDAR_READONLY,
             'https://www.googleapis.com/auth/contacts',
+            // Meet REST API: ler participantes/transcrição/resumo das reuniões.
+            \Google\Service\Meet::MEETINGS_SPACE_READONLY,
+            // Gmail (somente leitura): ler os relatórios de reunião do read.ai por e-mail.
+            \Google\Service\Gmail::GMAIL_READONLY,
             'openid',
             'email',
         ]);
@@ -46,6 +50,10 @@ class GoogleCalendarService
     {
         $client = $this->baseClient();
         $client->setState($state);
+        // Força a tela de consentimento (garante refresh_token e a concessão de escopos
+        // recém-adicionados, como o Gmail) e mantém os escopos já concedidos (incremental).
+        $client->setPrompt('consent');
+        $client->setIncludeGrantedScopes(true);
 
         return $client->createAuthUrl();
     }
@@ -124,6 +132,77 @@ class GoogleCalendarService
         return $user->google_calendar_id ?: 'primary';
     }
 
+    /** Serviço da Meet REST API autenticado para o usuário. */
+    public function meet(User $user): \Google\Service\Meet
+    {
+        return new \Google\Service\Meet($this->clientFor($user));
+    }
+
+    /** Serviço do Gmail (leitura) autenticado para o usuário. */
+    public function gmail(User $user): \Google\Service\Gmail
+    {
+        return new \Google\Service\Gmail($this->clientFor($user));
+    }
+
+    /** Bots de anotação que entram na sala — não contam como "o cliente compareceu". */
+    private function isNotetakerBot(string $name): bool
+    {
+        return (bool) preg_match('/read\.?ai|otter|fireflies|fathom|notetaker|meeting notes|tl;dv|tldv/i', $name);
+    }
+
+    /**
+     * Apura a presença real numa reunião do Meet pelo código do link (ex.: "abc-defg-hij").
+     * Casa o conference record cujo início está mais próximo de $start e devolve os participantes
+     * com o tempo (min) em sala. Separa o bot de anotação dos humanos.
+     *
+     * @return array{found:bool, participants:array<int,array{name:string,minutes:int,bot:bool}>}
+     */
+    public function conferenceAttendance(User $user, string $meetingCode, Carbon $start): array
+    {
+        $meet = $this->meet($user);
+        $resp = $meet->conferenceRecords->listConferenceRecords([
+            'filter' => 'space.meeting_code="'.$meetingCode.'"',
+            'pageSize' => 20,
+        ]);
+        $records = $resp->getConferenceRecords() ?? [];
+        if (! $records) {
+            return ['found' => false, 'participants' => []];
+        }
+
+        // Várias reuniões podem ter usado o mesmo link; pega a do horário combinado.
+        $best = null;
+        $bestDiff = PHP_INT_MAX;
+        foreach ($records as $rec) {
+            $rs = $rec->getStartTime() ? Carbon::parse($rec->getStartTime()) : null;
+            $diff = $rs ? abs($rs->diffInSeconds($start)) : PHP_INT_MAX;
+            if ($diff < $bestDiff) {
+                $bestDiff = $diff;
+                $best = $rec;
+            }
+        }
+        // Mais de 6h de diferença do horário marcado: provavelmente não é esta reunião.
+        if (! $best || $bestDiff > 6 * 3600) {
+            return ['found' => false, 'participants' => []];
+        }
+
+        $parts = $meet->conferenceRecords_participants
+            ->listConferenceRecordsParticipants($best->getName(), ['pageSize' => 100])
+            ->getParticipants() ?? [];
+
+        $out = [];
+        foreach ($parts as $p) {
+            $name = $p->getSignedinUser()?->getDisplayName()
+                ?: $p->getAnonymousUser()?->getDisplayName()
+                ?: ($p->getPhoneUser() ? 'Telefone' : 'Desconhecido');
+            $in = $p->getEarliestStartTime() ? Carbon::parse($p->getEarliestStartTime()) : null;
+            $end = $p->getLatestEndTime() ? Carbon::parse($p->getLatestEndTime()) : Carbon::now();
+            $minutes = ($in && $end) ? (int) round($in->diffInSeconds($end) / 60) : 0;
+            $out[] = ['name' => $name, 'minutes' => max(0, $minutes), 'bot' => $this->isNotetakerBot($name)];
+        }
+
+        return ['found' => true, 'participants' => $out];
+    }
+
     /**
      * Eventos do usuário num intervalo, normalizados para o front.
      *
@@ -142,6 +221,28 @@ class GoogleCalendarService
         $out = [];
         foreach ($events->getItems() as $e) {
             $out[] = $this->normalize($e);
+        }
+
+        // Enriquece com dados da reunião do CRM: presença confirmada (destaque na agenda) e
+        // o cliente vinculado (p/ abrir a ficha ao clicar no card).
+        $ids = array_filter(array_column($out, 'id'));
+        if ($ids) {
+            $meetings = \App\Models\Meeting::whereIn('google_event_id', $ids)
+                ->with('conversation:id,slug,name')
+                ->get()
+                ->keyBy('google_event_id');
+            foreach ($out as &$ev) {
+                $m = $meetings->get($ev['id']);
+                $ev['attended'] = (bool) ($m?->attended);
+                // No-show: presença JÁ apurada e o cliente NÃO compareceu → vermelho na agenda.
+                $ev['no_show'] = (bool) ($m && $m->attendance_checked_at !== null && ! $m->attended);
+                $ev['checked'] = (bool) ($m?->attendance_checked_at);            // presença apurada?
+                $ev['summary'] = $m?->summary;                                    // resumo read.ai (se houver)
+                $ev['reminder_sent'] = (bool) ($m && $m->reminder_sent_at && $m->phone); // lembrete WhatsApp enviado?
+                $ev['conversation_slug'] = $m?->conversation?->slug;
+                $ev['conversation_name'] = $m?->conversation?->name;
+            }
+            unset($ev);
         }
 
         return $out;

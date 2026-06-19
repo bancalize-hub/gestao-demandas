@@ -22,7 +22,10 @@ export default defineNuxtPlugin(() => {
   let t: ReturnType<typeof setTimeout> | null = null
   const refresh = () => {
     if (t) clearTimeout(t)
-    t = setTimeout(() => crm.refreshBoards(), 350) // debounce: agrupa rajadas
+    t = setTimeout(() => {
+      crm.refreshBoards()
+      crm.refreshEvents() // mantém a agenda em dia (presença/resumo apurados pelo servidor)
+    }, 350) // debounce: agrupa rajadas
   }
 
   echo.channel('crm').listen('.updated', refresh)

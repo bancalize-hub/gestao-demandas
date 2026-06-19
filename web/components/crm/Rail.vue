@@ -12,7 +12,7 @@ function isActive(s: Screen) {
 
 // No celular a Rail vira uma barra inferior horizontal. Ela some quando uma conversa
 // está aberta no chat, para o teclado/composer ocuparem a tela toda.
-const hideOnMobile = computed(() => isMobile.value && isActive('chat') && !!crm.activeConv)
+const hideOnMobile = computed(() => isMobile.value && isActive('chat') && crm.chatOpen)
 const railStyle = computed(() => isMobile.value
   ? { order: 2, width: '100%', height: '58px', flexShrink: 0, background: '#0a0f12', borderTop: '1px solid #1c2730', display: hideOnMobile.value ? 'none' : 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', padding: '0 4px', gap: '2px', overflowX: 'auto' }
   : { width: '76px', flexShrink: 0, background: '#0a0f12', borderRight: '1px solid #1c2730', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '18px 0', gap: '6px' })

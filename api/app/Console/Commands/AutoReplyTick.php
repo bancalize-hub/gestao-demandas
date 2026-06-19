@@ -6,6 +6,7 @@ use App\Models\Conversation;
 use App\Models\User;
 use App\Services\AiReplyService;
 use App\Services\MeetingScheduler;
+use App\Services\TranscriptionService;
 use App\Support\Evolution;
 use Illuminate\Console\Command;
 
@@ -20,7 +21,7 @@ class AutoReplyTick extends Command
 
     protected $description = 'Responde (e agenda) automaticamente os leads das conversas com atendimento automático ligado';
 
-    public function handle(AiReplyService $ai, MeetingScheduler $scheduler): int
+    public function handle(AiReplyService $ai, MeetingScheduler $scheduler, TranscriptionService $stt): int
     {
         $due = Conversation::where('auto_reply', true)
             ->whereNotNull('auto_reply_due_at')
@@ -37,6 +38,30 @@ class AutoReplyTick extends Command
                 $conv->update(['auto_reply_due_at' => null]);
 
                 continue;
+            }
+
+            // O cliente mandou áudio? Transcreve ANTES de responder (a IA precisa "ouvir").
+            // Transcreve os áudios recentes ainda sem transcrição e, se o último é um áudio
+            // que ainda dá pra tentar, espera o próximo tick em vez de responder no escuro.
+            if ($stt->enabled()) {
+                $pendingVoice = $conv->messages()
+                    ->where('type', 'voice')->where('is_out', false)
+                    ->whereNull('transcript')->where('transcribe_attempts', '<', 5)
+                    ->whereNotNull('wa_id')
+                    ->reorder()->orderByDesc('ts')->orderByDesc('id')->take(5)->get();
+                foreach ($pendingVoice as $v) {
+                    $stt->transcribe($v);
+                }
+
+                if ($last->type === 'voice') {
+                    $fresh = $last->fresh();
+                    if (($fresh->transcript ?? null) === null && (int) $fresh->transcribe_attempts < 5) {
+                        $conv->update(['auto_reply_due_at' => now()->addSeconds(30)]); // ainda transcrevendo
+                        $this->info("auto-reply: aguardando transcrição do áudio (conversa {$conv->id})");
+
+                        continue;
+                    }
+                }
             }
 
             $reply = null;

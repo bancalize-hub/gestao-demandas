@@ -23,6 +23,7 @@ class TaskController extends Controller
     {
         $data = $request->validate([
             'title' => 'required|string',
+            'description' => 'nullable|string',
             'client' => 'nullable|string',
             'priority' => 'nullable|in:baixa,media,alta',
             'due' => 'nullable|string|max:32',
@@ -48,6 +49,7 @@ class TaskController extends Controller
         $data = $request->validate([
             'column' => 'nullable|string|max:16',
             'title' => 'nullable|string',
+            'description' => 'nullable|string',
             'client' => 'nullable|string',
             'priority' => 'nullable|in:baixa,media,alta',
             'due' => 'nullable|string|max:32',

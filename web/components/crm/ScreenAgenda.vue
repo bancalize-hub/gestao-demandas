@@ -94,7 +94,14 @@ onMounted(async () => {
 // ----- Posicionamento dos eventos na grade -----
 interface Positioned { ev: CalEvent, top: number, height: number, color: typeof PALETTE[number], label: string }
 
+// Reunião com presença confirmada do cliente: verde forte, bem destacado.
+const ATTENDED = { bar: '#00E676', bg: 'rgba(0,200,83,.38)', fg: '#b9ffd6' }
+// Cliente NÃO compareceu (presença apurada): vermelho.
+const NOSHOW = { bar: '#ff5a3c', bg: 'rgba(255,90,60,.20)', fg: '#ff9a8a' }
+
 function colorFor(ev: CalEvent) {
+  if (ev.attended) return ATTENDED
+  if (ev.no_show) return NOSHOW
   // Eventos vindos de tarefas do CRM ganham o verde; resto, hash pela id.
   if (ev.task_id) return PALETTE[3]
   let h = 0
@@ -135,7 +142,7 @@ const today = new Date()
 const modalOpen = ref(false)
 const saving = ref(false)
 const editingId = ref<string | null>(null)
-const form = reactive({ title: '', date: '', start: '09:00', end: '10:00', location: '', description: '', deal_id: '' as string | number, guests: '', add_meet: false })
+const form = reactive({ title: '', date: '', start: '09:00', end: '10:00', location: '', description: '', deal_id: '' as string | number, conversation_slug: '', guests: '', add_meet: false })
 // Link do Meet do evento em edição (se já existir).
 const editingMeet = ref<string | null>(null)
 
@@ -151,7 +158,7 @@ function openNew(day?: Date) {
   editingId.value = null
   editingMeet.value = null
   const base = day ?? new Date()
-  Object.assign(form, { title: '', date: ymd(base), start: '09:00', end: '10:00', location: '', description: '', deal_id: '', guests: '', add_meet: false })
+  Object.assign(form, { title: '', date: ymd(base), start: '09:00', end: '10:00', location: '', description: '', deal_id: '', conversation_slug: '', guests: '', add_meet: false })
   modalOpen.value = true
 }
 function openEdit(ev: CalEvent) {
@@ -163,6 +170,7 @@ function openEdit(ev: CalEvent) {
   Object.assign(form, {
     title: ev.title, date: ymd(s), start: hhmm(s), end: hhmm(e),
     location: ev.location ?? '', description: ev.description ?? '', deal_id: ev.deal_id ?? '',
+    conversation_slug: ev.conversation_slug ?? '',
     // Convidados existentes (sem o organizador) viram texto editável.
     guests: (ev.attendees ?? []).filter(a => !a.organizer).map(a => a.email).join(', '),
     add_meet: !!ev.hangout_link,
@@ -170,6 +178,17 @@ function openEdit(ev: CalEvent) {
   modalOpen.value = true
 }
 function closeModal() { modalOpen.value = false }
+
+// Clicar no card abre a FICHA do cliente da reunião. Sem lead vinculado, cai na edição do evento.
+function openClient(ev: CalEvent) {
+  if (ev.conversation_slug) {
+    crm.activeId = ev.conversation_slug
+    crm.go('contact')
+  }
+  else {
+    openEdit(ev)
+  }
+}
 
 async function save() {
   if (!form.title.trim() || !form.date) return
@@ -182,6 +201,7 @@ async function save() {
     starts_at: `${form.date}T${form.start}:00`,
     ends_at: `${form.date}T${form.end}:00`,
     deal_id: form.deal_id ? Number(form.deal_id) : null,
+    conversation_slug: form.conversation_slug || null,
     attendees: parseGuests(form.guests),
     add_meet: form.add_meet,
   }
@@ -200,6 +220,151 @@ async function removeEvent() {
   saving.value = false
   modalOpen.value = false
 }
+
+// ===== Melhorias da agenda =====
+
+// Visão: dia | semana | mês.
+const viewMode = ref<'dia' | 'semana' | 'mes'>('semana')
+const focusedDay = ref(new Date()) // dia em foco na visão "dia"
+
+// Status de uma reunião (só vale p/ eventos com cliente vinculado / Meet).
+type EvStatus = 'compareceu' | 'faltou' | 'aovivo' | 'pendente' | 'futura' | 'simples'
+function evStatus(ev: CalEvent): EvStatus {
+  if (ev.attended) return 'compareceu'
+  if (ev.no_show) return 'faltou'
+  if (!ev.starts_at) return 'simples'
+  const now = Date.now()
+  const s = new Date(ev.starts_at).getTime()
+  const e = ev.ends_at ? new Date(ev.ends_at).getTime() : s + 3600_000
+  if (now >= s && now <= e) return 'aovivo'
+  const isMeeting = !!(ev.hangout_link || ev.conversation_slug)
+  if (e < now && isMeeting && !ev.checked) return 'pendente'
+  return 'futura'
+}
+
+// Legenda exibida no topo.
+const LEGEND = [
+  { label: 'Compareceu', color: '#00E676' },
+  { label: 'Não compareceu', color: '#ff5a3c' },
+  { label: 'Ao vivo', color: '#53bdeb' },
+  { label: 'Aguardando apuração', color: '#ffb443' },
+  { label: 'Agendada', color: '#7c6cf5' },
+]
+
+// RSVP: quantos convidados (fora o organizador) aceitaram.
+function rsvp(ev: CalEvent) {
+  const guests = (ev.attendees ?? []).filter(a => !a.organizer)
+  const yes = guests.filter(a => a.response === 'accepted').length
+  return { total: guests.length, yes }
+}
+
+// Telefone do lead vinculado (p/ botão WhatsApp), via conversa do store.
+function convOf(ev: CalEvent) {
+  return ev.conversation_slug ? crm.conversations.find(c => c.id === ev.conversation_slug) : undefined
+}
+function openWhatsApp(ev: CalEvent) {
+  const c = convOf(ev)
+  if (c) { crm.activeId = c.id; crm.go('chat') }
+}
+
+// Resumo da reunião num popover.
+const summaryFor = ref<CalEvent | null>(null)
+
+// Contadores do dia (barra lateral).
+const dayCounts = computed(() => {
+  const evs = todayEvents.value.filter(e => !e.all_day)
+  let compareceu = 0; let faltou = 0; let pendente = 0
+  for (const e of evs) {
+    const s = evStatus(e)
+    if (s === 'compareceu') compareceu++
+    else if (s === 'faltou') faltou++
+    else if (s === 'pendente') pendente++
+  }
+  return { total: evs.length, compareceu, faltou, pendente }
+})
+
+// ----- Arrastar p/ remarcar (semana/dia) -----
+const dragId = ref<string | null>(null)
+function onEventDragStart(ev: CalEvent, e: DragEvent) {
+  dragId.value = ev.id
+  e.dataTransfer?.setData('text/plain', ev.id)
+  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
+}
+async function onSlotDrop(day: Date, hour: number, e: DragEvent) {
+  const id = dragId.value || e.dataTransfer?.getData('text/plain')
+  dragId.value = null
+  if (!id) return
+  const ev = crm.events.find(x => x.id === id)
+  if (!ev || !ev.starts_at) return
+  // Minuto pelo offset vertical dentro da hora (snap de 15 min).
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  const frac = Math.min(0.999, Math.max(0, (e.clientY - rect.top) / rect.height))
+  const minute = Math.round((frac * 60) / 15) * 15
+  const durMs = (ev.ends_at ? new Date(ev.ends_at).getTime() : new Date(ev.starts_at).getTime() + 3600_000) - new Date(ev.starts_at).getTime()
+  const ns = new Date(day); ns.setHours(hour, minute, 0, 0)
+  const ne = new Date(ns.getTime() + durMs)
+  const iso = (d: Date) => `${ymd(d)}T${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:00`
+  try {
+    await crm.updateEvent(id, { starts_at: iso(ns), ends_at: iso(ne) })
+    banner.value = { type: 'ok', text: 'Reunião remarcada.' }
+  }
+  catch { banner.value = { type: 'erro', text: 'Não consegui remarcar.' } }
+}
+
+// ----- Visão mês -----
+const monthCursor = ref(new Date())
+const monthGrid = computed(() => {
+  const y = monthCursor.value.getFullYear(); const m = monthCursor.value.getMonth()
+  const first = new Date(y, m, 1)
+  const start = startOfWeek(first)
+  return Array.from({ length: 42 }, (_, i) => {
+    const d = new Date(start); d.setDate(start.getDate() + i)
+    return d
+  })
+})
+const monthLabel = computed(() => `${MONTHS[monthCursor.value.getMonth()]} ${monthCursor.value.getFullYear()}`)
+function shiftMonth(delta: number) {
+  const d = new Date(monthCursor.value); d.setMonth(d.getMonth() + delta); monthCursor.value = d
+  const from = new Date(d.getFullYear(), d.getMonth(), 1); from.setDate(from.getDate() - 7)
+  const to = new Date(d.getFullYear(), d.getMonth() + 1, 7)
+  crm.fetchEvents(from.toISOString(), to.toISOString())
+}
+function eventsOfDay(day: Date) {
+  return crm.events.filter(ev => ev.starts_at && sameDay(new Date(ev.starts_at), day) && !ev.all_day)
+    .sort((a, b) => new Date(a.starts_at!).getTime() - new Date(b.starts_at!).getTime())
+}
+// Dias mostrados na grade conforme a visão (semana=7, dia=1).
+const gridDays = computed(() => viewMode.value === 'dia' ? [focusedDay.value] : weekDays.value)
+const gridCols = computed(() => `54px repeat(${gridDays.value.length},1fr)`)
+
+// Rótulo do período conforme a visão.
+const periodLabel = computed(() => {
+  if (viewMode.value === 'mes') return monthLabel.value
+  if (viewMode.value === 'dia') {
+    const d = focusedDay.value
+    return `${DAY_NAMES[d.getDay()]}, ${d.getDate()} de ${MONTHS[d.getMonth()]} ${d.getFullYear()}`
+  }
+  return rangeLabel.value
+})
+
+// Navegação anterior/próximo adaptada à visão.
+function nav(delta: number) {
+  if (viewMode.value === 'mes') { shiftMonth(delta); return }
+  if (viewMode.value === 'dia') {
+    const d = new Date(focusedDay.value); d.setDate(d.getDate() + delta); focusedDay.value = d
+    const from = new Date(d); from.setHours(0, 0, 0, 0)
+    const to = new Date(d); to.setHours(23, 59, 59, 999)
+    crm.fetchEvents(from.toISOString(), to.toISOString())
+    return
+  }
+  shiftWeek(delta)
+}
+function setView(v: 'dia' | 'semana' | 'mes') {
+  viewMode.value = v
+  if (v === 'mes') shiftMonth(0)
+  else if (v === 'dia') { focusedDay.value = new Date(); nav(0) }
+  else loadWeek()
+}
 </script>
 
 <template>
@@ -209,17 +374,26 @@ async function removeEvent() {
       <div style="padding:22px 30px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #1c2730;">
         <div>
           <div style="font-size:23px;font-weight:800;letter-spacing:-.3px;">Agenda</div>
-          <div style="font-size:13.5px;color:#8696a0;margin-top:3px;">{{ rangeLabel }}</div>
+          <div style="font-size:13.5px;color:#8696a0;margin-top:3px;">{{ periodLabel }}</div>
         </div>
         <div v-if="crm.googleConnected" style="display:flex;gap:10px;align-items:center;">
+          <!-- Seletor de visão -->
           <div style="display:flex;background:#202c33;border-radius:10px;overflow:hidden;">
-            <button class="seg" style="border:none;background:transparent;color:#8696a0;padding:8px 11px;cursor:pointer;" @click="shiftWeek(-1)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 6-6 6 6 6" /></svg></button>
-            <button class="seg" style="border:none;background:transparent;color:#8696a0;padding:8px 11px;cursor:pointer;" @click="shiftWeek(1)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 6 6-6 6" /></svg></button>
+            <button v-for="v in (['dia','semana','mes'] as const)" :key="v" class="seg" :style="`border:none;font-family:inherit;font-size:12.5px;font-weight:600;padding:8px 13px;cursor:pointer;${viewMode === v ? 'background:#25D366;color:#062014;' : 'background:transparent;color:#8696a0;'}`" @click="setView(v)">{{ v === 'dia' ? 'Dia' : v === 'semana' ? 'Semana' : 'Mês' }}</button>
           </div>
-          <button class="seg" style="border:none;background:#202c33;border-radius:10px;color:#8696a0;font-family:inherit;font-size:12.5px;font-weight:600;padding:8px 13px;cursor:pointer;" @click="goToday">Hoje</button>
+          <div style="display:flex;background:#202c33;border-radius:10px;overflow:hidden;">
+            <button class="seg" style="border:none;background:transparent;color:#8696a0;padding:8px 11px;cursor:pointer;" @click="nav(-1)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 6-6 6 6 6" /></svg></button>
+            <button class="seg" style="border:none;background:transparent;color:#8696a0;padding:8px 11px;cursor:pointer;" @click="nav(1)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 6 6-6 6" /></svg></button>
+          </div>
+          <button class="seg" style="border:none;background:#202c33;border-radius:10px;color:#8696a0;font-family:inherit;font-size:12.5px;font-weight:600;padding:8px 13px;cursor:pointer;" @click="setView('semana'); goToday()">Hoje</button>
           <span v-if="crm.googleEmail" title="Conta Google conectada" style="font-size:12px;color:#5fb585;background:#16241c;border:1px solid rgba(37,211,102,.25);padding:6px 11px;border-radius:9px;">{{ crm.googleEmail }}</span>
           <button class="wabtn" style="background:#25D366;border:none;color:#062014;font-family:inherit;font-size:13px;font-weight:700;padding:9px 15px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:6px;" @click="openNew()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>Evento</button>
         </div>
+      </div>
+
+      <!-- Legenda das cores -->
+      <div v-if="crm.googleConnected" style="display:flex;flex-wrap:wrap;gap:14px;padding:10px 30px;border-bottom:1px solid #1c2730;">
+        <span v-for="l in LEGEND" :key="l.label" style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:#8696a0;font-weight:600;"><span :style="{ width: '9px', height: '9px', borderRadius: '3px', background: l.color }" />{{ l.label }}</span>
       </div>
 
       <div v-if="banner" :style="`margin:14px 30px 0;padding:10px 14px;border-radius:10px;font-size:13px;font-weight:600;${banner.type === 'ok' ? 'background:#16241c;color:#7ee6a8;border:1px solid rgba(37,211,102,.3);' : 'background:#2a1518;color:#ff9a9a;border:1px solid rgba(255,107,107,.3);'}`">
@@ -238,12 +412,12 @@ async function removeEvent() {
         <button class="wabtn" style="background:#25D366;border:none;color:#062014;font-family:inherit;font-size:14px;font-weight:700;padding:11px 20px;border-radius:11px;cursor:pointer;" @click="crm.connectGoogle()">Conectar com Google</button>
       </div>
 
-      <!-- Grade da semana -->
-      <div v-else style="flex:1;overflow:auto;padding:0 30px 24px;">
+      <!-- Grade da semana / dia -->
+      <div v-else-if="viewMode !== 'mes'" style="flex:1;overflow:auto;padding:0 30px 24px;">
         <!-- Cabeçalho dos dias -->
-        <div style="display:grid;grid-template-columns:54px repeat(7,1fr);position:sticky;top:0;background:#0b141a;z-index:3;padding-top:14px;">
+        <div :style="`display:grid;grid-template-columns:${gridCols};position:sticky;top:0;background:#0b141a;z-index:3;padding-top:14px;`">
           <div />
-          <div v-for="d in weekDays" :key="d.toISOString()" style="text-align:center;padding-bottom:12px;">
+          <div v-for="d in gridDays" :key="d.toISOString()" style="text-align:center;padding-bottom:12px;">
             <div :style="`font-size:11.5px;${isToday(d) ? 'color:#25D366;font-weight:700;' : 'color:#8696a0;'}`">{{ DAY_NAMES[d.getDay()] }}</div>
             <div v-if="isToday(d)" style="width:34px;height:34px;border-radius:50%;background:#25D366;color:#062014;font-size:17px;font-weight:800;display:flex;align-items:center;justify-content:center;margin:2px auto 0;">{{ d.getDate() }}</div>
             <div v-else style="font-size:18px;font-weight:700;margin-top:2px;">{{ d.getDate() }}</div>
@@ -254,24 +428,53 @@ async function removeEvent() {
 
         <!-- Linhas de hora + colunas -->
         <div style="position:relative;">
-          <div v-for="h in HOURS" :key="h" style="display:grid;grid-template-columns:54px repeat(7,1fr);">
+          <div v-for="h in HOURS" :key="h" :style="`display:grid;grid-template-columns:${gridCols};`">
             <div :style="`font-size:11px;color:#8696a0;text-align:right;padding:0 10px;height:${HOUR_H}px;border-top:1px solid #16222a;`">{{ String(h).padStart(2, '0') }}:00</div>
-            <div v-for="d in weekDays" :key="h + d.toISOString()" style="border-top:1px solid #16222a;border-left:1px solid #16222a;cursor:pointer;" @click="openNew(d)" />
+            <div v-for="d in gridDays" :key="h + d.toISOString()" style="border-top:1px solid #16222a;border-left:1px solid #16222a;cursor:pointer;" @click="openNew(d)" @dragover.prevent @drop.prevent="onSlotDrop(d, h, $event)" />
           </div>
 
           <!-- Camada dos eventos posicionados -->
-          <div style="position:absolute;inset:0;display:grid;grid-template-columns:54px repeat(7,1fr);pointer-events:none;">
+          <div :style="`position:absolute;inset:0;display:grid;grid-template-columns:${gridCols};pointer-events:none;`">
             <div />
-            <div v-for="d in weekDays" :key="`col${d.toISOString()}`" style="position:relative;">
+            <div v-for="d in gridDays" :key="`col${d.toISOString()}`" style="position:relative;">
               <div
-                v-for="p in eventsForDay(d)" :key="p.ev.id"
-                :style="`pointer-events:auto;position:absolute;left:3px;right:3px;top:${p.top}px;height:${p.height}px;background:${p.color.bg};border-left:3px solid ${p.color.bar};border-radius:7px;padding:5px 8px;overflow:hidden;cursor:pointer;`"
-                @click="openEdit(p.ev)"
+                v-for="p in eventsForDay(d)" :key="p.ev.id" :class="['evcard', { attended: p.ev.attended, live: evStatus(p.ev) === 'aovivo' }]"
+                draggable="true"
+                :style="p.ev.attended
+                  ? `pointer-events:auto;position:absolute;left:3px;right:3px;top:${p.top}px;height:${p.height}px;background:linear-gradient(135deg,#00E676,#00B84D);border-left:5px solid #00ff95;border-radius:7px;padding:5px 8px;overflow:hidden;cursor:grab;box-shadow:0 2px 14px rgba(0,230,118,.55);`
+                  : `pointer-events:auto;position:absolute;left:3px;right:3px;top:${p.top}px;height:${p.height}px;background:${p.color.bg};border-left:3px solid ${p.color.bar};border-radius:7px;padding:5px 8px;overflow:hidden;cursor:grab;${evStatus(p.ev) === 'aovivo' ? 'box-shadow:0 0 0 2px #53bdeb;' : ''}`"
+                :title="p.ev.conversation_name ? `Abrir ficha de ${p.ev.conversation_name}` : 'Abrir evento'"
+                @click="openClient(p.ev)"
+                @dragstart="onEventDragStart(p.ev, $event)"
               >
-                <div :style="`font-size:12px;font-weight:700;color:${p.color.fg};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;`">{{ p.ev.title }}</div>
-                <div style="font-size:10.5px;color:#8696a0;margin-top:1px;">{{ p.label }}</div>
+                <button class="editpin" title="Editar evento" :style="`position:absolute;top:3px;right:3px;background:rgba(11,20,26,${p.ev.attended ? '.28' : '.6'});border:none;border-radius:6px;padding:2px;cursor:pointer;display:flex;color:${p.ev.attended ? '#06240f' : p.color.fg};`" @click.stop="openEdit(p.ev)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+                <div :style="`font-size:12px;font-weight:${p.ev.attended ? 800 : 700};color:${p.ev.attended ? '#06240f' : p.color.fg};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:16px;`">{{ p.ev.attended ? '✓ ' : (p.ev.no_show ? '✗ ' : (evStatus(p.ev) === 'aovivo' ? '🔴 ' : '')) }}{{ p.ev.title }}</div>
+                <div :style="`font-size:10.5px;margin-top:1px;color:${p.ev.attended ? 'rgba(6,36,15,.8)' : '#8696a0'};font-weight:${p.ev.attended ? 700 : 400};`">{{ p.label }}<span v-if="p.ev.reminder_sent && evStatus(p.ev) === 'futura'" title="Lembrete de WhatsApp enviado"> · 🔔</span></div>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Visão mês -->
+      <div v-else style="flex:1;overflow:auto;padding:14px 30px 24px;">
+        <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:1px;margin-bottom:6px;">
+          <div v-for="dn in DAY_NAMES" :key="dn" style="text-align:center;font-size:11px;color:#8696a0;font-weight:700;padding:4px 0;">{{ dn }}</div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(7,1fr);grid-auto-rows:1fr;gap:6px;">
+          <div
+            v-for="d in monthGrid" :key="d.toISOString()"
+            :style="`min-height:96px;background:${isToday(d) ? 'rgba(37,211,102,.06)' : '#0f181e'};border:1px solid ${isToday(d) ? 'rgba(37,211,102,.4)' : '#16222a'};border-radius:9px;padding:6px;display:flex;flex-direction:column;gap:3px;cursor:pointer;opacity:${d.getMonth() === monthCursor.getMonth() ? 1 : 0.4};`"
+            @click="openNew(d)"
+          >
+            <div :style="`font-size:12px;font-weight:700;${isToday(d) ? 'color:#25D366;' : 'color:#8696a0;'}`">{{ d.getDate() }}</div>
+            <div
+              v-for="ev in eventsOfDay(d).slice(0, 4)" :key="ev.id"
+              :style="`font-size:10.5px;font-weight:600;border-radius:5px;padding:2px 5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:${colorFor(ev).bg};color:${colorFor(ev).fg};border-left:3px solid ${colorFor(ev).bar};`"
+              :title="ev.title"
+              @click.stop="openClient(ev)"
+            >{{ ev.attended ? '✓ ' : (ev.no_show ? '✗ ' : '') }}{{ hm(ev.starts_at) }} {{ ev.title }}</div>
+            <div v-if="eventsOfDay(d).length > 4" style="font-size:10px;color:#8696a0;">+{{ eventsOfDay(d).length - 4 }} mais</div>
           </div>
         </div>
       </div>
@@ -282,19 +485,37 @@ async function removeEvent() {
       <div style="padding:20px 20px 14px;border-bottom:1px solid #1c2730;">
         <div style="font-weight:700;font-size:16px;">Hoje · {{ todayEvents.length }} {{ todayEvents.length === 1 ? 'evento' : 'eventos' }}</div>
         <div style="font-size:12.5px;color:#8696a0;margin-top:2px;">{{ DAY_NAMES[today.getDay()] }}, {{ today.getDate() }} de {{ MONTHS[today.getMonth()] }}</div>
+        <div v-if="dayCounts.total" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;">
+          <span style="font-size:11px;font-weight:700;color:#7ee6a8;background:rgba(37,211,102,.14);padding:3px 8px;border-radius:6px;">✓ {{ dayCounts.compareceu }} compareceu</span>
+          <span v-if="dayCounts.faltou" style="font-size:11px;font-weight:700;color:#ff9a8a;background:rgba(255,90,60,.16);padding:3px 8px;border-radius:6px;">✗ {{ dayCounts.faltou }} faltou</span>
+          <span v-if="dayCounts.pendente" style="font-size:11px;font-weight:700;color:#ffd494;background:rgba(255,180,67,.14);padding:3px 8px;border-radius:6px;">⏳ {{ dayCounts.pendente }} pendente</span>
+        </div>
       </div>
       <div style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:11px;">
         <div v-if="!todayEvents.length" style="font-size:13px;color:#8696a0;text-align:center;margin-top:30px;">Nada agendado para hoje.</div>
         <div
-          v-for="ev in todayEvents" :key="ev.id"
-          style="background:#202c33;border-radius:13px;padding:14px;cursor:pointer;"
-          @click="openEdit(ev)"
+          v-for="ev in todayEvents" :key="ev.id" :class="['evcard', { attended: ev.attended }]"
+          :style="ev.attended
+            ? 'position:relative;background:linear-gradient(135deg,#00E676,#00B84D);border-radius:13px;padding:14px;cursor:pointer;box-shadow:0 2px 16px rgba(0,230,118,.5);'
+            : ev.no_show
+              ? 'position:relative;background:rgba(255,90,60,.18);border:1px solid rgba(255,90,60,.5);border-radius:13px;padding:14px;cursor:pointer;'
+              : 'position:relative;background:#202c33;border-radius:13px;padding:14px;cursor:pointer;'"
+          :title="ev.conversation_name ? `Abrir ficha de ${ev.conversation_name}` : 'Abrir evento'"
+          @click="openClient(ev)"
         >
-          <div style="font-size:11px;font-weight:700;color:#8696a0;">{{ ev.all_day ? 'Dia inteiro' : hm(ev.starts_at) }}</div>
-          <div style="font-weight:700;font-size:14px;margin-top:6px;">{{ ev.title }}</div>
-          <div v-if="ev.location" style="font-size:12px;color:#8696a0;margin-top:3px;">{{ ev.location }}</div>
-          <div v-if="ev.attendees && ev.attendees.length" style="font-size:12px;color:#8696a0;margin-top:3px;">👤 {{ ev.attendees.length }} {{ ev.attendees.length === 1 ? 'convidado' : 'convidados' }}</div>
-          <a v-if="ev.hangout_link" :href="ev.hangout_link" target="_blank" style="display:inline-block;margin-top:8px;font-size:12px;color:#25D366;text-decoration:none;" @click.stop>Entrar na reunião →</a>
+          <button class="editpin" title="Editar evento" :style="`position:absolute;top:10px;right:10px;background:${ev.attended ? 'rgba(6,36,15,.18)' : '#1a262e'};border:none;border-radius:8px;padding:5px;cursor:pointer;display:flex;color:${ev.attended ? '#06240f' : '#aebac1'};`" @click.stop="openEdit(ev)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+          <div :style="`font-size:11px;font-weight:700;color:${ev.attended ? 'rgba(6,36,15,.85)' : (ev.no_show ? '#ff9a8a' : '#8696a0')};`">{{ ev.attended ? '✓ COMPARECEU · ' : (ev.no_show ? '✗ NÃO COMPARECEU · ' : '') }}{{ ev.all_day ? 'Dia inteiro' : hm(ev.starts_at) }}</div>
+          <div :style="`font-weight:800;font-size:14px;margin-top:6px;padding-right:26px;color:${ev.attended ? '#06240f' : '#e9edef'};`">{{ ev.title }}</div>
+          <div v-if="ev.location" :style="`font-size:12px;margin-top:3px;color:${ev.attended ? 'rgba(6,36,15,.8)' : '#8696a0'};`">{{ ev.location }}</div>
+          <div v-if="rsvp(ev).total" :style="`font-size:12px;margin-top:3px;color:${ev.attended ? 'rgba(6,36,15,.8)' : '#8696a0'};`">👤 {{ rsvp(ev).total }} {{ rsvp(ev).total === 1 ? 'convidado' : 'convidados' }}<span v-if="rsvp(ev).yes"> · ✓ {{ rsvp(ev).yes }} confirmou</span></div>
+          <div v-if="ev.reminder_sent && evStatus(ev) === 'futura'" :style="`font-size:11px;margin-top:4px;font-weight:600;color:${ev.attended ? '#06240f' : '#7ee6a8'};`">🔔 Lembrete enviado ao cliente</div>
+          <!-- Ações rápidas -->
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;">
+            <a v-if="ev.hangout_link" :href="ev.hangout_link" target="_blank" :style="`font-size:11.5px;text-decoration:none;font-weight:700;padding:5px 9px;border-radius:8px;background:${ev.attended ? 'rgba(6,36,15,.15)' : '#1a262e'};color:${ev.attended ? '#06240f' : '#25D366'};`" @click.stop>📹 Meet</a>
+            <button v-if="convOf(ev)" :style="`font-size:11.5px;font-weight:700;border:none;cursor:pointer;padding:5px 9px;border-radius:8px;background:${ev.attended ? 'rgba(6,36,15,.15)' : '#1a262e'};color:${ev.attended ? '#06240f' : '#25D366'};`" @click.stop="openWhatsApp(ev)">💬 WhatsApp</button>
+            <button v-if="ev.summary" :style="`font-size:11.5px;font-weight:700;border:none;cursor:pointer;padding:5px 9px;border-radius:8px;background:${ev.attended ? 'rgba(6,36,15,.15)' : '#1a262e'};color:${ev.attended ? '#06240f' : '#9fdcf5'};`" @click.stop="summaryFor = ev">📋 Resumo</button>
+            <button :style="`font-size:11.5px;font-weight:700;border:none;cursor:pointer;padding:5px 9px;border-radius:8px;background:${ev.attended ? 'rgba(6,36,15,.15)' : '#1a262e'};color:${ev.attended ? '#06240f' : '#aebac1'};`" @click.stop="openEdit(ev)">🕑 Remarcar</button>
+          </div>
         </div>
       </div>
       <div style="padding:14px 16px;border-top:1px solid #1c2730;">
@@ -326,6 +547,12 @@ async function removeEvent() {
         </label>
         <a v-if="editingMeet" :href="editingMeet" target="_blank" style="display:block;margin-top:8px;font-size:12.5px;color:#25D366;text-decoration:none;">🎥 {{ editingMeet }}</a>
 
+        <label class="lbl">Lead vinculado (opcional) — liga a reunião à ficha do cliente</label>
+        <select v-model="form.conversation_slug" class="inp">
+          <option value="">— Nenhum —</option>
+          <option v-for="c in crm.conversations" :key="c.id" :value="c.id">{{ c.name }}</option>
+        </select>
+
         <label class="lbl">Negócio vinculado (opcional)</label>
         <select v-model="form.deal_id" class="inp">
           <option value="">— Nenhum —</option>
@@ -342,12 +569,32 @@ async function removeEvent() {
         </div>
       </div>
     </div>
+
+    <!-- Popover: resumo da reunião -->
+    <div v-if="summaryFor" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:55;padding:24px;" @click.self="summaryFor = null">
+      <div style="width:520px;max-width:94vw;max-height:80vh;overflow-y:auto;background:#111b21;border:1px solid #1c2730;border-radius:16px;padding:24px;">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:4px;">
+          <div style="font-size:17px;font-weight:800;">📋 Resumo da reunião</div>
+          <button style="background:none;border:none;color:#8696a0;cursor:pointer;font-size:22px;line-height:1;" @click="summaryFor = null">×</button>
+        </div>
+        <div style="font-size:12.5px;color:#8696a0;margin-bottom:14px;">{{ summaryFor.title }} · {{ hm(summaryFor.starts_at) }}</div>
+        <div style="font-size:13.5px;line-height:1.6;color:#dfe7ea;white-space:pre-wrap;">{{ summaryFor.summary }}</div>
+        <button v-if="summaryFor.conversation_slug" class="wabtn" style="margin-top:18px;background:#25D366;border:none;color:#062014;font-family:inherit;font-size:13px;font-weight:700;padding:9px 16px;border-radius:9px;cursor:pointer;" @click="openClient(summaryFor!); summaryFor = null">Abrir ficha do cliente →</button>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .wabtn:hover { background: #2ee070 !important; }
 .seg:hover { background: #2a3942 !important; }
+.evcard { transition: filter .12s; }
+.evcard:hover { filter: brightness(1.12); }
+.evcard.live { animation: livepulse 1.6s ease-in-out infinite; }
+@keyframes livepulse { 0%, 100% { box-shadow: 0 0 0 2px #53bdeb; } 50% { box-shadow: 0 0 10px 2px rgba(83,189,235,.7); } }
+.editpin { opacity: 0; transition: opacity .12s; }
+.evcard:hover .editpin { opacity: 1; }
+.editpin:hover { filter: brightness(1.3); }
 .lbl { display:block; font-size:11.5px; color:#8696a0; font-weight:600; margin:11px 0 5px; }
 .inp {
   width:100%; box-sizing:border-box; background:#202c33; border:1px solid #2a3942; color:#e9edef;

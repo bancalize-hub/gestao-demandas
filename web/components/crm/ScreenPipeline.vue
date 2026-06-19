@@ -1,7 +1,47 @@
 <script setup lang="ts">
-import { useCrmStore } from '~/stores/crm'
+import { leadTemperature, sinceLabel, useCrmStore } from '~/stores/crm'
 
 const crm = useCrmStore()
+
+// Filtro "esfriando": mostra só os leads morno+frio (fila de follow-up).
+const coolingOnly = ref(false)
+
+// Filtro de DATA por início da conversa (1ª mensagem). Vazio = período total.
+const dateFrom = ref('') // yyyy-mm-dd
+const dateTo = ref('')
+const dateActive = computed(() => !!dateFrom.value || !!dateTo.value)
+
+// Início da conversa (ts em segundos) dentro do período filtrado?
+function inDateRange(startedAt: number | null | undefined): boolean {
+  if (!dateActive.value) return true
+  if (!startedAt) return false
+  const ms = startedAt * 1000
+  if (dateFrom.value) {
+    const f = new Date(`${dateFrom.value}T00:00:00`).getTime()
+    if (ms < f) return false
+  }
+  if (dateTo.value) {
+    const t = new Date(`${dateTo.value}T23:59:59`).getTime()
+    if (ms > t) return false
+  }
+  return true
+}
+function ymdLocal(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+function presetToday() { const d = ymdLocal(new Date()); dateFrom.value = d; dateTo.value = d }
+function presetYesterday() { const d = new Date(); d.setDate(d.getDate() - 1); const s = ymdLocal(d); dateFrom.value = s; dateTo.value = s }
+function preset7d() { const a = new Date(); a.setDate(a.getDate() - 6); dateFrom.value = ymdLocal(a); dateTo.value = ymdLocal(new Date()) }
+function presetMonth() { const n = new Date(); dateFrom.value = ymdLocal(new Date(n.getFullYear(), n.getMonth(), 1)); dateTo.value = ymdLocal(n) }
+function clearDate() { dateFrom.value = ''; dateTo.value = '' }
+// Rótulo curto do filtro ativo (pra legenda do card Conversas).
+const dateLabel = computed(() => {
+  if (!dateActive.value) return ''
+  const fmt = (s: string) => s ? s.split('-').reverse().slice(0, 2).join('/') : ''
+  if (dateFrom.value && dateFrom.value === dateTo.value) return fmt(dateFrom.value)
+  if (dateFrom.value && dateTo.value) return `${fmt(dateFrom.value)}–${fmt(dateTo.value)}`
+  return dateFrom.value ? `a partir de ${fmt(dateFrom.value)}` : `até ${fmt(dateTo.value)}`
+})
 
 // --- Modal de negócio (criar/editar = ficha) ---
 const showNew = ref(false)
@@ -76,12 +116,16 @@ function moveStage(i: number, dir: number) {
 const stats = computed(() => {
   const ds = crm.dealList
   const val = (v: string) => Number.parseInt(String(v || '').replace(/[^\d]/g, ''), 10) || 0
-  const emNeg = ds.filter(d => d.stage === 'negociacao').reduce((a, d) => a + val(d.value), 0)
+  // Conversas no período filtrado (ou todas, se "período total"). Filtro pela data de início (1ª msg).
+  const convs = crm.conversations.filter(c => !c.archived && inDateRange(c.startedAt))
+  // Valor total do pipeline = conversas (do período) + negócios. Negócios só entram em "período total".
+  const totalPipeline = convs.reduce((a, c) => a + val(c.dealValue), 0)
+    + (dateActive.value ? 0 : ds.reduce((a, d) => a + val(d.value), 0))
   const won = ds.filter(d => d.won || d.stage === 'fechado').length
   return {
-    emNeg: emNeg >= 1000 ? `R$ ${(emNeg / 1000).toFixed(1).replace('.', ',')} mil` : `R$ ${emNeg.toLocaleString('pt-BR')}`,
+    totalPipeline: totalPipeline.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }),
     taxa: ds.length ? Math.round((won / ds.length) * 100) : 0,
-    conversas: crm.conversations.length,
+    conversas: convs.length,
     ativos: ds.filter(d => d.stage !== 'fechado').length,
   }
 })
@@ -92,15 +136,45 @@ function delDeal(id: number) {
 
 const val = (v: string) => Number.parseInt(String(v || '').replace(/[^\d]/g, ''), 10) || 0
 
-// Abre o card: conversa vai pro chat; negócio abre a ficha de edição.
+// Valor formatado em reais (sem centavos) p/ exibir no card. Vazio/0 → "R$ 0".
+function fmtMoney(v: string | number) {
+  const n = Number.parseInt(String(v ?? '').replace(/[^\d]/g, ''), 10) || 0
+  return `R$ ${n.toLocaleString('pt-BR')}`
+}
+
+// Edição inline do valor direto no card (clica no valor → edita → Enter/clica fora salva, Esc cancela).
+// Mesmo comportamento do chat. Funciona p/ conversa (setConvValue) e negócio (updateDeal).
+const editingValueKey = ref<string | null>(null)
+const valueDraft = ref('')
+const vFocus = { mounted: (el: HTMLInputElement) => { el.focus(); el.select() } }
+function valueKey(card: any) { return `${card.kind}:${card.id}` }
+function startEditValue(card: any) {
+  editingValueKey.value = valueKey(card)
+  valueDraft.value = String(card.value ?? '').replace(/[^\d]/g, '')
+}
+function saveValue(card: any) {
+  if (editingValueKey.value !== valueKey(card)) return
+  const digits = valueDraft.value.replace(/[^\d]/g, '')
+  editingValueKey.value = null
+  if (card.kind === 'conv') crm.setConvValue(String(card.id), digits)
+  else crm.updateDeal(Number(card.id), { value: digits })
+}
+
+// Abre o card: conversa abre a FICHA do cliente; negócio abre a ficha de edição.
 function openCard(card: any) {
   if (card.kind === 'conv') {
     crm.activeId = card.id
-    crm.go('chat')
+    crm.go('contact')
   }
   else {
     openEdit(card)
   }
+}
+
+// Botão de WhatsApp no card: vai direto para a conversa (chat).
+function openChat(card: any) {
+  crm.activeId = card.id
+  crm.go('chat')
 }
 
 const cols = computed(() => crm.stages.map((st) => {
@@ -110,7 +184,7 @@ const cols = computed(() => crm.stages.map((st) => {
 
   // Conversas (cada conversa = um negócio) na etapa atual.
   const convCards = crm.conversations
-    .filter(c => !c.archived && c.stage === st.key)
+    .filter(c => !c.archived && c.stage === st.key && inDateRange(c.startedAt))
     .map(c => ({
       kind: 'conv' as const,
       id: c.id,
@@ -121,6 +195,8 @@ const cols = computed(() => crm.stages.map((st) => {
       won: isLast,
       tag: c.origin || 'Conversa',
       tagStrong: isLast,
+      // Etapa final (Fechado) não tem temperatura — negócio concluído.
+      temp: isLast ? null : leadTemperature(c),
     }))
 
   // Negócios criados manualmente ("Novo negócio").
@@ -138,11 +214,19 @@ const cols = computed(() => crm.stages.map((st) => {
       won: d.won,
       tag: d.tag,
       tagStrong: d.tagStrong,
+      temp: null as ReturnType<typeof leadTemperature> | null,
     }))
 
-  const cards = [...convCards, ...dealCards].map(card => ({
+  // Filtro "esfriando": só leads morno/frio (deixa de fora quentes e negócios sem temperatura).
+  // Filtro de DATA ativo: mostra só conversas do período (esconde negócios manuais sem data de início).
+  const visible = coolingOnly.value
+    ? convCards.filter(c => c.temp && c.temp.key !== 'quente')
+    : (dateActive.value ? convCards : [...convCards, ...dealCards])
+
+  const cards = visible.map(card => ({
     ...card,
-    cardStyle: { background: card.won ? '#15281f' : (card.hot ? '#202c33' : '#1a262e'), borderRadius: '12px', padding: '13px', cursor: 'grab', borderLeft: `3px solid ${st.color}` },
+    // Borda esquerda na cor da TEMPERATURA (a coluna já indica a etapa); negócios/Fechado usam a cor da etapa.
+    cardStyle: { background: card.won ? '#15281f' : (card.hot ? '#202c33' : '#1a262e'), borderRadius: '12px', padding: '13px', cursor: 'grab', borderLeft: `4px solid ${card.temp ? card.temp.color : st.color}` },
     tagStyle: card.tagStrong
       ? { fontSize: '10.5px', fontWeight: 700, color: '#062014', background: '#25D366', padding: '3px 8px', borderRadius: '6px' }
       : { fontSize: '10.5px', color: '#8696a0', background: '#0b141a', padding: '3px 8px', borderRadius: '6px' },
@@ -167,20 +251,41 @@ const cols = computed(() => crm.stages.map((st) => {
       <div style="display:flex;align-items:center;justify-content:space-between;">
         <div>
           <div style="font-size:23px;font-weight:800;letter-spacing:-.3px;">Funil de vendas</div>
-          <div style="font-size:13.5px;color:#8696a0;margin-top:3px;">Arraste os cards entre as etapas · 10 negócios ativos</div>
+          <div style="display:flex;align-items:center;gap:14px;font-size:12px;color:#8696a0;margin-top:5px;flex-wrap:wrap;">
+            <span>Arraste os cards entre as etapas</span>
+            <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:8px;height:8px;border-radius:50%;background:#ff5a3c;" />Quente <span style="opacity:.7;">≤2d</span></span>
+            <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:8px;height:8px;border-radius:50%;background:#ffb443;" />Morno <span style="opacity:.7;">3–5d</span></span>
+            <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:8px;height:8px;border-radius:50%;background:#53bdeb;" />Frio <span style="opacity:.7;">&gt;5d</span></span>
+          </div>
         </div>
         <div style="display:flex;gap:10px;align-items:center;">
           <div style="display:flex;align-items:center;gap:8px;background:#202c33;border-radius:11px;padding:9px 13px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8696a0" stroke-width="2"><circle cx="11" cy="11" r="7" /><path d="m20 20-3-3" stroke-linecap="round" /></svg><input placeholder="Buscar negócio" style="background:transparent;border:none;outline:none;color:#e9edef;font-family:inherit;font-size:13px;width:130px;"></div>
+          <button :title="coolingOnly ? 'Mostrando só leads esfriando' : 'Mostrar só leads esfriando (morno/frio)'" :style="`border:none;font-family:inherit;font-size:13px;font-weight:600;padding:10px 14px;border-radius:11px;cursor:pointer;display:flex;align-items:center;gap:7px;${coolingOnly ? 'background:#ffb443;color:#3a2a06;' : 'background:#202c33;color:#e9edef;'}`" @click="coolingOnly = !coolingOnly"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 4v8.5a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z" stroke-linejoin="round" /></svg>{{ coolingOnly ? 'Esfriando ✓' : 'Esfriando' }}</button>
           <button style="background:#202c33;border:none;color:#e9edef;font-family:inherit;font-size:13px;font-weight:600;padding:10px 14px;border-radius:11px;cursor:pointer;display:flex;align-items:center;gap:7px;" @click="openStagesModal"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M3 12h18M3 18h18" stroke-linecap="round" /></svg>Editar etapas</button>
           <button class="wabtn" style="background:#25D366;border:none;color:#062014;font-family:inherit;font-size:13.5px;font-weight:700;padding:10px 17px;border-radius:11px;cursor:pointer;display:flex;align-items:center;gap:7px;" @click="openNew"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>Novo negócio</button>
         </div>
       </div>
 
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:22px;">
-        <div style="background:#111b21;border:1px solid #1c2730;border-radius:14px;padding:16px 18px;"><div style="font-size:12.5px;color:#8696a0;">Em negociação</div><div style="font-size:25px;font-weight:800;margin-top:5px;">{{ stats.emNeg }}</div><div style="font-size:11.5px;color:#8696a0;margin-top:4px;font-weight:600;">no estágio Negociação</div></div>
-        <div style="background:#111b21;border:1px solid #1c2730;border-radius:14px;padding:16px 18px;"><div style="font-size:12.5px;color:#8696a0;">Taxa de conversão</div><div style="font-size:25px;font-weight:800;margin-top:5px;">{{ stats.taxa }}%</div><div style="font-size:11.5px;color:#8696a0;margin-top:4px;font-weight:600;">negócios fechados / total</div></div>
-        <div style="background:#111b21;border:1px solid #1c2730;border-radius:14px;padding:16px 18px;"><div style="font-size:12.5px;color:#8696a0;">Conversas</div><div style="font-size:25px;font-weight:800;margin-top:5px;">{{ stats.conversas }}</div><div style="font-size:11.5px;color:#8696a0;margin-top:4px;font-weight:600;">total no CRM</div></div>
-        <div style="background:#111b21;border:1px solid #1c2730;border-radius:14px;padding:16px 18px;"><div style="font-size:12.5px;color:#8696a0;">Negócios ativos</div><div style="font-size:25px;font-weight:800;margin-top:5px;">{{ stats.ativos }}</div><div style="font-size:11.5px;color:#8696a0;margin-top:4px;font-weight:600;">não fechados</div></div>
+      <!-- Filtro de data por início da conversa (1ª mensagem). Padrão: período total. -->
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:18px;background:#111b21;border:1px solid #1c2730;border-radius:12px;padding:10px 13px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8696a0" stroke-width="1.8" style="flex-shrink:0;"><rect x="3" y="4.5" width="18" height="16" rx="2.5" /><path d="M3 9h18M8 2.5v4M16 2.5v4" stroke-linecap="round" /></svg>
+        <span style="font-size:12.5px;color:#8696a0;font-weight:600;">Início:</span>
+        <input v-model="dateFrom" type="date" :max="dateTo || undefined" style="background:#202c33;border:1px solid #2a3942;border-radius:8px;padding:6px 9px;color:#e9edef;font-family:inherit;font-size:12.5px;outline:none;color-scheme:dark;">
+        <span style="font-size:12.5px;color:#8696a0;">até</span>
+        <input v-model="dateTo" type="date" :min="dateFrom || undefined" style="background:#202c33;border:1px solid #2a3942;border-radius:8px;padding:6px 9px;color:#e9edef;font-family:inherit;font-size:12.5px;outline:none;color-scheme:dark;">
+        <button class="datebtn" @click="presetToday">Hoje</button>
+        <button class="datebtn" @click="presetYesterday">Ontem</button>
+        <button class="datebtn" @click="preset7d">7 dias</button>
+        <button class="datebtn" @click="presetMonth">Este mês</button>
+        <button v-if="dateActive" class="datebtn" style="color:#ff8d8d;" @click="clearDate">✕ Limpar</button>
+        <span style="flex:1;" />
+        <span v-if="dateActive" style="font-size:12px;color:#7ee6a8;font-weight:600;">Filtrando: {{ dateLabel }}</span>
+        <span v-else style="font-size:12px;color:#8696a0;">Período total</span>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:14px;">
+        <div style="background:#111b21;border:1px solid #1c2730;border-radius:14px;padding:16px 18px;"><div style="font-size:12.5px;color:#8696a0;">{{ dateActive ? 'Valor no período' : 'Valor total do pipeline' }}</div><div style="font-size:25px;font-weight:800;margin-top:5px;">{{ stats.totalPipeline }}</div><div style="font-size:11.5px;color:#8696a0;margin-top:4px;font-weight:600;">{{ dateActive ? 'conversas iniciadas no período' : 'somando todas as etapas' }}</div></div>
+        <div style="background:#111b21;border:1px solid #1c2730;border-radius:14px;padding:16px 18px;"><div style="font-size:12.5px;color:#8696a0;">Conversas</div><div style="font-size:25px;font-weight:800;margin-top:5px;">{{ stats.conversas }}</div><div style="font-size:11.5px;color:#8696a0;margin-top:4px;font-weight:600;">{{ dateActive ? `iniciadas em ${dateLabel}` : 'total no CRM' }}</div></div>
       </div>
     </div>
 
@@ -205,13 +310,27 @@ const cols = computed(() => crm.stages.map((st) => {
             >
               <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
                 <div style="font-weight:700;font-size:14px;">{{ card.name }}</div>
-                <span v-if="card.kind === 'conv'" title="Conversa" style="font-size:10px;font-weight:700;color:#53bdeb;background:rgba(83,189,235,.15);padding:2px 7px;border-radius:6px;flex-shrink:0;">💬</span>
+                <button v-if="card.kind === 'conv'" class="wachat" title="Abrir conversa no WhatsApp" style="background:rgba(37,211,102,.15);border:none;border-radius:7px;padding:3px 6px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;" @click.stop="openChat(card)"><svg width="15" height="15" viewBox="0 0 24 24" fill="#25D366"><path d="M12.04 2c-5.46 0-9.91 4.45-9.91 9.91 0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38c1.45.79 3.08 1.21 4.74 1.21 5.46 0 9.91-4.45 9.91-9.91S17.5 2 12.04 2zm5.8 14.01c-.24.68-1.42 1.31-1.96 1.36-.5.05-.95.24-3.2-.67-2.7-1.06-4.42-3.82-4.56-4-.13-.18-1.1-1.46-1.1-2.79s.7-1.98.94-2.25c.24-.27.53-.34.7-.34.18 0 .35 0 .5.01.16.01.38-.06.59.45.24.58.81 2 .88 2.14.07.14.12.31.02.49-.09.18-.14.29-.28.45-.14.16-.29.36-.42.48-.14.14-.28.29-.12.57.16.27.71 1.17 1.53 1.9 1.05.94 1.94 1.23 2.21 1.37.27.14.43.12.59-.07.16-.18.68-.79.86-1.06.18-.27.36-.23.61-.14.24.09 1.55.73 1.82.87.27.14.45.2.51.31.07.11.07.64-.17 1.31z" /></svg></button>
                 <span v-if="card.hot" style="font-size:10px;font-weight:700;color:#ff7a45;background:rgba(255,122,69,.15);padding:2px 7px;border-radius:6px;flex-shrink:0;">🔥</span>
                 <svg v-if="card.won" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#25D366" stroke-width="2.5" style="flex-shrink:0;"><path d="m5 13 4 4L19 7" stroke-linecap="round" stroke-linejoin="round" /></svg>
                 <button v-if="card.kind === 'deal'" class="delbtn" title="Excluir" style="background:none;border:none;color:#5a6b73;cursor:pointer;padding:0;flex-shrink:0;display:flex;" @click.stop="delDeal(Number(card.id))"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
               </div>
               <div style="font-size:12px;color:#8696a0;margin-top:2px;">{{ card.sub }}</div>
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-top:11px;"><span style="font-size:13.5px;font-weight:700;color:#25D366;">{{ card.value }}</span><span :style="card.tagStyle">{{ card.tag }}</span></div>
+              <div v-if="card.temp" style="display:flex;align-items:center;gap:6px;margin-top:9px;flex-wrap:wrap;">
+                <span :style="{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '10.5px', fontWeight: 700, color: card.temp.color, background: `${card.temp.color}22`, padding: '2px 8px', borderRadius: '6px' }"><span :style="{ width: '7px', height: '7px', borderRadius: '50%', background: card.temp.color }" />{{ card.temp.label }}</span>
+                <span style="font-size:10.5px;color:#8696a0;">{{ sinceLabel(card.temp.days) }}</span>
+                <span v-if="card.temp.awaiting" title="A última mensagem foi do lead — responda antes que esfrie" style="font-size:10px;font-weight:700;color:#ffd166;background:rgba(255,209,102,.14);padding:2px 7px;border-radius:6px;">⚠️ aguardando você</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-top:11px;gap:8px;">
+                <input
+                  v-if="editingValueKey === `${card.kind}:${card.id}`"
+                  v-model="valueDraft" v-focus inputmode="numeric" title="Enter ou clique fora p/ salvar · Esc cancela"
+                  style="width:96px;background:#0b141a;border:1px solid #25D366;border-radius:6px;padding:2px 7px;font-size:13.5px;font-weight:700;color:#25D366;font-family:inherit;outline:none;"
+                  @click.stop @mousedown.stop @keydown.enter="($event.target as HTMLInputElement).blur()" @keydown.esc="editingValueKey = null" @blur="saveValue(card)"
+                >
+                <span v-else title="Clique para editar o valor" style="font-size:13.5px;font-weight:700;color:#25D366;cursor:text;" @click.stop="startEditValue(card)">{{ fmtMoney(card.value) }}</span>
+                <span :style="card.tagStyle">{{ card.tag }}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -250,13 +369,13 @@ const cols = computed(() => crm.stages.map((st) => {
 
     <!-- modal: editar etapas do funil -->
     <div v-if="showStages" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:50;padding:24px;" @click.self="showStages = false">
-      <div style="width:480px;max-width:100%;background:#111b21;border:1px solid #1c2730;border-radius:18px;padding:26px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+      <div style="width:480px;max-width:100%;max-height:90vh;display:flex;flex-direction:column;background:#111b21;border:1px solid #1c2730;border-radius:18px;padding:26px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;flex-shrink:0;">
           <div style="font-size:19px;font-weight:800;">Etapas do funil</div>
           <button style="background:none;border:none;color:#8696a0;cursor:pointer;font-size:20px;line-height:1;" @click="showStages = false">×</button>
         </div>
-        <div style="font-size:13px;color:#8696a0;margin-bottom:18px;">Estas etapas também são as etiquetas das conversas no chat. Defina um <b style="color:#a89bf9;">objetivo da IA</b> em cada etapa — as sugestões de resposta vão conduzir a conversa rumo a ele.</div>
-        <div style="display:flex;flex-direction:column;gap:10px;">
+        <div style="font-size:13px;color:#8696a0;margin-bottom:18px;flex-shrink:0;">Estas etapas também são as etiquetas das conversas no chat. Defina um <b style="color:#a89bf9;">objetivo da IA</b> em cada etapa — as sugestões de resposta vão conduzir a conversa rumo a ele.</div>
+        <div style="display:flex;flex-direction:column;gap:10px;overflow-y:auto;flex:1;min-height:0;margin:0 -4px;padding:2px 4px;">
           <div v-for="(s, i) in crm.stages" :key="s.id || s.key" style="display:flex;flex-direction:column;gap:8px;background:#202c33;border-radius:10px;padding:10px;">
             <div style="display:flex;align-items:center;gap:8px;">
               <input type="color" :value="s.color" style="width:26px;height:26px;border:none;background:none;cursor:pointer;padding:0;flex-shrink:0;" @input="s.id && crm.updateStage(s.id, { color: ($event.target as HTMLInputElement).value })">
@@ -274,7 +393,7 @@ const cols = computed(() => crm.stages.map((st) => {
               </select>
             </div></div>
         </div>
-        <div style="display:flex;gap:8px;margin-top:14px;">
+        <div style="display:flex;gap:8px;margin-top:14px;flex-shrink:0;">
           <input v-model="newStageName" placeholder="Nova etapa" style="flex:1;background:#202c33;border:1px solid #2a3942;border-radius:10px;padding:10px 12px;color:#e9edef;font-family:inherit;font-size:13.5px;outline:none;" @keydown.enter="addStage">
           <button style="background:#7c6cf5;border:none;color:#fff;font-family:inherit;font-size:13px;font-weight:700;padding:0 18px;border-radius:10px;cursor:pointer;" @click="addStage">Adicionar</button>
         </div>
@@ -289,4 +408,6 @@ const cols = computed(() => crm.stages.map((st) => {
 .card .delbtn { opacity: 0; transition: opacity .15s; }
 .card:hover .delbtn { opacity: 1; }
 .delbtn:hover { color: #ff6b6b !important; }
+.datebtn { background: #202c33; border: none; color: #aebac1; font-family: inherit; font-size: 12px; font-weight: 600; padding: 6px 11px; border-radius: 8px; cursor: pointer; }
+.datebtn:hover { background: #2a3942; color: #e9edef; }
 </style>

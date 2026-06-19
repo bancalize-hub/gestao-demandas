@@ -22,6 +22,7 @@ class Conversation extends Model
         'auto_reply_due_at' => 'datetime',
         'tags' => 'array',
         'interactions' => 'array',
+        'custom_fields' => 'array',
     ];
 
     protected static function booted(): void
@@ -55,6 +56,11 @@ class Conversation extends Model
         };
         static::saved($notify);
         static::deleted($notify);
+    }
+
+    public function activities(): HasMany
+    {
+        return $this->hasMany(LeadActivity::class);
     }
 
     public function messages(): HasMany

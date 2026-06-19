@@ -49,9 +49,13 @@ class EventController extends Controller
             'attendees' => 'sometimes|array',
             'attendees.*' => 'email',
             'add_meet' => 'sometimes|boolean',
+            'conversation_slug' => 'nullable|string',
         ]);
 
-        return response()->json($this->google->createEvent($request->user(), $data), 201);
+        $event = $this->google->createEvent($request->user(), $data);
+        $this->linkMeeting($request->user(), $event, $request->input('conversation_slug'));
+
+        return response()->json($event, 201);
     }
 
     public function update(Request $request, string $event)
@@ -69,9 +73,15 @@ class EventController extends Controller
             'attendees' => 'sometimes|array',
             'attendees.*' => 'email',
             'add_meet' => 'sometimes|boolean',
+            'conversation_slug' => 'nullable|string',
         ]);
 
-        return response()->json($this->google->updateEvent($request->user(), $event, $data));
+        $updated = $this->google->updateEvent($request->user(), $event, $data);
+        if ($request->has('conversation_slug')) {
+            $this->linkMeeting($request->user(), $updated, $request->input('conversation_slug'));
+        }
+
+        return response()->json($updated);
     }
 
     public function destroy(Request $request, string $event)
@@ -81,5 +91,37 @@ class EventController extends Controller
         $this->google->deleteEvent($request->user(), $event);
 
         return response()->json(['message' => 'ok']);
+    }
+
+    /**
+     * Liga (ou desliga) a reunião a um lead criando/atualizando a linha em `meetings`,
+     * para o card da agenda abrir a ficha e o pós-reunião (presença/resumo) processar.
+     */
+    private function linkMeeting(\App\Models\User $user, array $event, ?string $slug): void
+    {
+        if (empty($event['id'])) {
+            return;
+        }
+        $conv = $slug ? \App\Models\Conversation::where('slug', $slug)->first() : null;
+        if (! $conv) {
+            // Desvincula: se havia Meeting criada por este fluxo, solta o lead.
+            \App\Models\Meeting::where('google_event_id', $event['id'])->update(['conversation_id' => null]);
+
+            return;
+        }
+
+        \App\Models\Meeting::updateOrCreate(
+            ['google_event_id' => $event['id']],
+            [
+                'conversation_id' => $conv->id,
+                'user_id' => $user->id,
+                'phone' => $conv->phone,
+                'title' => $event['title'] ?? 'Reunião',
+                'starts_at' => ! empty($event['starts_at']) ? \Carbon\Carbon::parse($event['starts_at']) : null,
+                'ends_at' => ! empty($event['ends_at']) ? \Carbon\Carbon::parse($event['ends_at']) : null,
+                'meet_link' => $event['hangout_link'] ?? null,
+                'reminder_lead_minutes' => (int) config('services.meeting_reminder.lead_minutes', 60),
+            ]
+        );
     }
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useCrmStore } from '~/stores/crm'
+import { fmtListTime, maskPhone, useCrmStore } from '~/stores/crm'
 
 const crm = useCrmStore()
 
@@ -47,13 +47,17 @@ async function saveQR() {
 
 const conv = computed(() => crm.activeConv)
 const isMobile = useIsMobile()
-function backToList() { crm.activeId = '' }
+function backToList() { crm.chatOpen = false }
 const broken = reactive(new Set<string>())
 
 // Polling p/ mensagens novas (tempo real via webhook do WhatsApp).
 // O polling em tempo real é global (layouts/default.vue) — sem timer próprio aqui.
 
 // Editar o valor do negócio pela ficha (lateral direita).
+// Enquanto o campo está em edição usamos um rascunho LOCAL (valueDraft) em vez de
+// ler direto de active.dealValue. Assim o refresh do websocket (que reescreve a
+// conversa inteira) não apaga o que o usuário está digitando. null = não editando.
+const valueDraft = ref<string | null>(null)
 function onEditValue(v: string) {
   const id = conv.value?.id
   if (id) crm.setConvValue(id, v)
@@ -301,7 +305,7 @@ const active = computed(() => {
   if (!c) return EMPTY
   return {
     id: c.id, name: c.name, initials: c.initials, avatar: c.avatar, role: c.role, autoReply: c.autoReply,
-    statusText: c.statusText, statusColor: c.online ? '#25D366' : '#8696a0',
+    phone: maskPhone(c.phone), statusText: c.statusText, statusColor: c.online ? '#25D366' : '#8696a0',
     dealValue: c.dealValue, dealUnit: c.dealUnit || '', stage: c.stage,
     probText: `${c.prob}% de probabilidade de fechamento`,
     stageStyle: { fontSize: '12px', fontWeight: 700, color: c.stageColor, background: `${c.stageColor}22`, padding: '3px 10px', borderRadius: '7px' },
@@ -313,7 +317,7 @@ const active = computed(() => {
 })
 
 const list = computed(() => crm.conversations.map(c => ({
-  id: c.id, name: c.name, initials: c.initials, avatar: c.avatar, preview: c.preview, time: c.time,
+  id: c.id, name: c.name, initials: c.initials, avatar: c.avatar, preview: c.preview, time: fmtListTime(c.lastMessageAt, c.time),
   unread: c.unread, online: c.online, hot: !!c.hot, hasUnread: c.unread > 0, archived: c.archived, inMemory: c.inMemory, tags: c.tags || [], stage: c.stage,
   autoReply: c.autoReply, lastOut: c.lastOut, stageColor: c.stageColor,
   stageName: (crm.stages.find(s => s.key === c.stage)?.name) || c.stage,
@@ -322,12 +326,16 @@ const list = computed(() => crm.conversations.map(c => ({
   dotStyle: { position: 'absolute', bottom: '1px', right: '1px', width: '12px', height: '12px', borderRadius: '50%', background: '#25D366', border: `2.5px solid ${c.id === crm.activeId ? '#202c33' : '#111b21'}` },
 })))
 
+// Base filtrada pela TAB ativa (Todas/SDR/CLOSER/CS). Os contadores de status (Tudo/Não
+// lidas/Arquivadas) e a lista derivam daqui — assim ficam dinâmicos com a tab selecionada.
+const tabBase = computed(() => {
+  const tab = activeTab.value ? crm.chatTabs.find(t => t.id === activeTab.value) : null
+  return tab ? list.value.filter(c => tab.stages.includes(c.stage)) : list.value
+})
+
 const filteredList = computed(() => {
   const q = search.value.trim().toLowerCase()
-  const tab = activeTab.value ? crm.chatTabs.find(t => t.id === activeTab.value) : null
-  return list.value.filter((c) => {
-    // Tab por etiqueta (independente, combina com os filtros abaixo).
-    if (tab && !tab.stages.includes(c.stage)) return false
+  return tabBase.value.filter((c) => {
     if (filter.value === 'arquivadas') {
       if (!c.archived) return false
     }
@@ -341,10 +349,10 @@ const filteredList = computed(() => {
 })
 
 const counts = computed(() => ({
-  tudo: list.value.filter(c => !c.archived).length,
-  unread: list.value.filter(c => c.hasUnread && !c.archived).length,
-  minhas: list.value.filter(c => !c.archived).length,
-  arquivadas: list.value.filter(c => c.archived).length,
+  tudo: tabBase.value.filter(c => !c.archived).length,
+  unread: tabBase.value.filter(c => c.hasUnread && !c.archived).length,
+  minhas: tabBase.value.filter(c => !c.archived).length,
+  arquivadas: tabBase.value.filter(c => c.archived).length,
 }))
 
 const dividerStyle = { alignSelf: 'center', background: '#1c2a33', color: '#8696a0', fontSize: '11px', fontWeight: 600, padding: '5px 13px', borderRadius: '8px', margin: '8px 0 6px' }
@@ -364,10 +372,41 @@ function dayLabel(ts: number) {
   return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`
 }
 
+const unreadDividerStyle = { alignSelf: 'center', background: 'rgba(37,211,102,.14)', color: '#7ee6a8', fontSize: '11px', fontWeight: 700, padding: '5px 14px', borderRadius: '8px', margin: '8px 0 6px' }
+
+// Recibo (tick) por status: relógio (pendente) · 1 traço (enviado) · 2 traços (entregue) · 2 azuis (lido).
+function msgTick(status?: string | null) {
+  switch (status) {
+    case 'pending': return { kind: 'clock', color: '#8696a0' }
+    case 'sent': return { kind: 'one', color: '#8696a0' }
+    case 'delivered': return { kind: 'two', color: '#8696a0' }
+    case 'read': return { kind: 'two', color: '#53bdeb' }
+    case 'error': return { kind: 'err', color: '#ff6b6b' }
+    default: return { kind: 'two', color: '#8696a0' } // legado (sem status): assume entregue
+  }
+}
+
 const thread = computed(() => {
+  const raw = conv.value?.thread || []
+  const q = threadSearch.value.trim().toLowerCase()
+  // Busca dentro da conversa: mostra só as mensagens que casam (divisores de data recalculam).
+  const msgs = q
+    ? raw.filter((m: any) => m.type !== 'divider' && `${m.text || ''} ${m.transcript || ''}`.toLowerCase().includes(q))
+    : raw
+  // Linha "não lidas": antes das últimas N mensagens (N = não lidas ao abrir). Some durante a busca.
+  const unreadStart = (!q && unreadMark.value > 0 && unreadMark.value < msgs.length) ? msgs.length - unreadMark.value : -1
+
   const out: any[] = []
   let lastDay: string | null = null
-  for (const m of (conv.value?.thread || [])) {
+  let prevIsOut: boolean | null = null
+  let prevTs = 0
+  let idx = 0
+  for (const m of msgs) {
+    if (idx === unreadStart) {
+      out.push({ isDivider: true, label: `${unreadMark.value} não lida${unreadMark.value > 1 ? 's' : ''}`, dividerStyle: unreadDividerStyle, key: 'unread' })
+      prevIsOut = null
+    }
+    idx++
     // Divisória de data quando o dia muda (ignora itens sem ts, ex.: dividers já existentes).
     if (m.type !== 'divider' && m.ts) {
       const d = new Date(m.ts * 1000)
@@ -375,38 +414,269 @@ const thread = computed(() => {
       if (k !== lastDay) {
         lastDay = k
         out.push({ isDivider: true, label: dayLabel(m.ts), dividerStyle, key: `d-${k}` })
+        prevIsOut = null
       }
     }
     const isOut = !!m.isOut
     const baseBg = isOut ? '#005c4b' : '#202c33'
     const align = isOut ? 'flex-end' : 'flex-start'
+    // Agrupa mensagens consecutivas do mesmo lado em até 5 min (espaçamento menor, estilo WhatsApp).
+    const grouped = prevIsOut === isOut && !!m.ts && (m.ts - prevTs) < 300
+    prevIsOut = isOut
+    prevTs = m.ts || prevTs
     out.push({
-      ...m, isOut,
+      ...m, isOut, grouped, tick: msgTick(m.status),
       isDivider: m.type === 'divider', isText: m.type === 'text',
       isImage: m.type === 'image', isVoice: m.type === 'voice', isVideo: m.type === 'video', isFile: m.type === 'file',
       isMedia: m.type === 'image' || m.type === 'voice' || m.type === 'video' || m.type === 'file',
       avColor: conv.value?.color, avInitials: conv.value?.initials,
       dividerStyle,
-      bubbleText: { position: 'relative', alignSelf: align, maxWidth: isMobile.value ? '82%' : '64%', background: baseBg, padding: '9px 13px', borderRadius: isOut ? '9px 9px 2px 9px' : '9px 9px 9px 2px' },
-      bubbleMedia: { position: 'relative', alignSelf: align, maxWidth: isMobile.value ? '82%' : '64%', background: baseBg, padding: '8px', borderRadius: '9px' },
+      bubbleText: { position: 'relative', alignSelf: align, maxWidth: isMobile.value ? '82%' : '64%', background: baseBg, padding: '9px 13px', borderRadius: isOut ? '9px 9px 2px 9px' : '9px 9px 9px 2px', marginTop: grouped ? '2px' : '8px' },
+      bubbleMedia: { position: 'relative', alignSelf: align, maxWidth: isMobile.value ? '82%' : '64%', background: baseBg, padding: '8px', borderRadius: '9px', marginTop: grouped ? '2px' : '8px' },
     })
   }
   return out
 })
 
-function send() {
+// Texto digitado? (controla a troca do botão mic ↔ enviar, estilo WhatsApp).
+const hasInput = ref(false)
+
+// Cresce o textarea conforme digita (até ~130px), estilo WhatsApp.
+function autogrow() {
   const el = inputRef.value
   if (!el) return
+  el.style.height = 'auto'
+  el.style.height = `${Math.min(el.scrollHeight, 130)}px`
+  hasInput.value = !!el.value.trim()
+}
+
+async function send() {
+  const el = inputRef.value
+  if (!el) return
+  // Anexo pendente: envia o arquivo (a legenda é o texto digitado).
+  if (pendingFile.value) {
+    if (sendingMedia.value) return
+    sendingMedia.value = true
+    const f = pendingFile.value
+    const cap = el.value
+    const ok = await crm.sendMedia(f, cap)
+    sendingMedia.value = false
+    if (ok) {
+      el.value = ''
+      el.style.height = 'auto'
+      hasInput.value = false
+      cancelAttach()
+      await nextTick()
+      scrollDown()
+      const last = thread.value[thread.value.length - 1]
+      if (last?.id && last.isMedia) loadMedia(last.id)
+    }
+    else {
+      memoToast.value = 'Falha ao enviar a mídia — tente de novo'
+      setTimeout(() => { memoToast.value = '' }, 2200)
+    }
+    return
+  }
   const t = el.value
+  // Citação nativa: manda o trecho como quoted (aparece como resposta no WhatsApp do cliente).
+  const reply = replyTo.value
+    ? { waId: replyTo.value.waId, excerpt: (replyTo.value.text || '').slice(0, 180) }
+    : undefined
   el.value = ''
-  crm.send(t)
+  el.style.height = 'auto'
+  hasInput.value = false
+  replyTo.value = null
+  crm.send(t, reply)
 }
 function onKeyDown(e: KeyboardEvent) {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
 }
 function useAISuggestion() {
   const el = inputRef.value
-  if (el && crm.aiSuggestion) { el.value = crm.aiSuggestion; el.focus() }
+  if (el && crm.aiSuggestion) { el.value = crm.aiSuggestion; el.focus(); nextTick(autogrow) }
+}
+
+// ---- Tier 1: emoji · responder · menu de contexto · lightbox · busca na thread ----
+const EMOJIS = ['😀', '😁', '😂', '🤣', '😊', '😍', '😘', '😎', '🤩', '🥳', '🙂', '😉', '😅', '🤔', '😬', '🥲', '😢', '😡', '🙏', '👍', '👎', '👌', '🙌', '👏', '💪', '🤝', '🔥', '✨', '🎉', '✅', '❌', '⚠️', '💰', '📅', '📌', '🚀', '💡', '❤️', '🧡', '💚', '💙', '💜', '👀', '💬', '⏰', '📲', '🫶', '😄']
+const REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏']
+const showEmoji = ref(false)
+function insertEmoji(e: string) {
+  const el = inputRef.value
+  if (!el) return
+  const s = el.selectionStart ?? el.value.length
+  const en = el.selectionEnd ?? el.value.length
+  el.value = el.value.slice(0, s) + e + el.value.slice(en)
+  const pos = s + e.length
+  el.focus()
+  nextTick(() => { el.selectionStart = el.selectionEnd = pos; autogrow() })
+}
+
+// Menu de contexto por mensagem (Responder / Copiar / Apagar).
+const msgMenu = ref<number | string | null>(null)
+function toggleMsgMenu(m: any, i: number) {
+  const k = m.id ?? `i${i}`
+  msgMenu.value = msgMenu.value === k ? null : k
+}
+async function copyMsg(m: any) {
+  try {
+    await navigator.clipboard.writeText(m.text || '')
+    memoToast.value = 'Mensagem copiada'
+    setTimeout(() => { memoToast.value = '' }, 1500)
+  }
+  catch {}
+  msgMenu.value = null
+}
+
+// Responder/citar.
+const replyTo = ref<{ id?: number, waId?: string | null, text: string, isOut: boolean } | null>(null)
+function startReply(m: any) {
+  const txt = m.text || (m.isVoice ? '🎵 Áudio' : m.isImage ? '📷 Imagem' : m.isVideo ? '🎬 Vídeo' : m.isFile ? '📄 Arquivo' : '')
+  replyTo.value = { id: m.id, waId: m.waId ?? null, text: txt, isOut: !!m.isOut }
+  msgMenu.value = null
+  inputRef.value?.focus()
+}
+
+// Lightbox (imagem/vídeo em tela cheia).
+const lightbox = ref<string | null>(null)
+
+// Encaminhar mensagem para outra conversa.
+const forwardMsg = ref<any | null>(null)
+const forwardSearch = ref('')
+const forwardSending = ref(false)
+function startForward(m: any) {
+  forwardMsg.value = m
+  forwardSearch.value = ''
+  msgMenu.value = null
+}
+const forwardList = computed(() => {
+  const q = forwardSearch.value.trim().toLowerCase()
+  return crm.conversations
+    .filter(c => !c.archived && (!q || `${c.name} ${c.phone}`.toLowerCase().includes(q)))
+    .slice(0, 50)
+})
+async function doForward(convId: string) {
+  if (forwardSending.value || !forwardMsg.value) return
+  forwardSending.value = true
+  const ok = await crm.forwardMessage(convId, forwardMsg.value.id)
+  forwardSending.value = false
+  forwardMsg.value = null
+  memoToast.value = ok ? 'Mensagem encaminhada ✓' : 'Falha ao encaminhar'
+  setTimeout(() => { memoToast.value = '' }, 1800)
+}
+
+// Fecha emoji e menu de contexto ao clicar fora (os gatilhos usam @click.stop).
+function closeOverlays() { showEmoji.value = false; msgMenu.value = null }
+onMounted(() => document.addEventListener('click', closeOverlays))
+onUnmounted(() => document.removeEventListener('click', closeOverlays))
+
+// Anexo (foto/vídeo/documento) pendente antes de enviar.
+const fileInput = ref<HTMLInputElement | null>(null)
+const pendingFile = ref<File | null>(null)
+const pendingPreview = ref<string | null>(null)
+const sendingMedia = ref(false)
+function pickFile() { fileInput.value?.click() }
+function onFileChosen(e: Event) {
+  const input = e.target as HTMLInputElement
+  const f = input.files?.[0]
+  input.value = ''
+  if (!f) return
+  pendingFile.value = f
+  pendingPreview.value = f.type.startsWith('image/') ? URL.createObjectURL(f) : null
+  inputRef.value?.focus()
+}
+function cancelAttach() {
+  if (pendingPreview.value) URL.revokeObjectURL(pendingPreview.value)
+  pendingFile.value = null
+  pendingPreview.value = null
+}
+function fmtSize(n: number) {
+  return n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`
+}
+
+// ---- Gravação de áudio (nota de voz) ----
+const recording = ref(false)
+const recSeconds = ref(0)
+let mediaRecorder: MediaRecorder | null = null
+let recChunks: Blob[] = []
+let recTimer: ReturnType<typeof setInterval> | null = null
+let recStream: MediaStream | null = null
+const recLabel = computed(() => `${String(Math.floor(recSeconds.value / 60)).padStart(2, '0')}:${String(recSeconds.value % 60).padStart(2, '0')}`)
+
+async function startRec() {
+  if (recording.value || sendingMedia.value) return
+  try {
+    recStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+  }
+  catch {
+    memoToast.value = 'Permita o microfone para gravar'
+    setTimeout(() => { memoToast.value = '' }, 2200)
+    return
+  }
+  recChunks = []
+  const mime = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : ''
+  mediaRecorder = new MediaRecorder(recStream, mime ? { mimeType: mime } : undefined)
+  mediaRecorder.ondataavailable = (e: BlobEvent) => { if (e.data.size) recChunks.push(e.data) }
+  mediaRecorder.start()
+  recording.value = true
+  recSeconds.value = 0
+  recTimer = setInterval(() => { recSeconds.value++ }, 1000)
+}
+function stopTracks() {
+  if (recTimer) { clearInterval(recTimer); recTimer = null }
+  recStream?.getTracks().forEach(t => t.stop())
+  recStream = null
+}
+function cancelRec() {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') { mediaRecorder.onstop = null; mediaRecorder.stop() }
+  stopTracks()
+  recording.value = false
+  recChunks = []
+}
+function sendRec() {
+  const mr = mediaRecorder
+  if (!mr) return
+  const dur = recLabel.value
+  mr.onstop = async () => {
+    stopTracks()
+    recording.value = false
+    const blob = new Blob(recChunks, { type: mr.mimeType || 'audio/webm' })
+    recChunks = []
+    if (blob.size < 800) return // gravação curta demais — descarta
+    const ext = (mr.mimeType || '').includes('ogg') ? 'ogg' : 'webm'
+    const file = new File([blob], `audio-${Date.now()}.${ext}`, { type: mr.mimeType || 'audio/webm' })
+    sendingMedia.value = true
+    const ok = await crm.sendMedia(file, '', dur)
+    sendingMedia.value = false
+    if (ok) {
+      await nextTick()
+      scrollDown()
+      const last = thread.value[thread.value.length - 1]
+      if (last?.id && last.isMedia) loadMedia(last.id)
+    }
+    else {
+      memoToast.value = 'Falha ao enviar o áudio'
+      setTimeout(() => { memoToast.value = '' }, 2200)
+    }
+  }
+  if (mr.state !== 'inactive') mr.stop()
+}
+onUnmounted(() => { if (recording.value) cancelRec() })
+
+// Busca dentro da conversa.
+const showThreadSearch = ref(false)
+const threadSearch = ref('')
+function toggleThreadSearch() {
+  showThreadSearch.value = !showThreadSearch.value
+  if (!showThreadSearch.value) threadSearch.value = ''
+}
+
+// Marca de "não lidas": guarda quantas estavam por ler ao abrir a conversa.
+const unreadMark = ref(0)
+function openConv(c: any) {
+  unreadMark.value = c.unread || 0
+  crm.selectConv(c.id)
+  menuFor.value = ''
+  stageFor.value = ''
 }
 
 // Rola para o fim quando a thread cresce / troca de conversa.
@@ -436,7 +706,7 @@ watch(() => crm.activeId, () => {
 <template>
   <div style="flex:1;display:flex;min-width:0;">
     <!-- lista de conversas -->
-    <div :style="{ width: isMobile ? '100%' : '340px', flexShrink: 0, background: '#111b21', borderRight: '1px solid #1c2730', flexDirection: 'column', display: (isMobile && conv) ? 'none' : 'flex' }">
+    <div :style="{ width: isMobile ? '100%' : '340px', flexShrink: 0, background: '#111b21', borderRight: '1px solid #1c2730', flexDirection: 'column', display: (isMobile && crm.chatOpen) ? 'none' : 'flex' }">
       <div style="padding:18px 18px 12px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
           <div style="font-size:19px;font-weight:800;letter-spacing:-.2px;">Conversas</div>
@@ -478,7 +748,7 @@ watch(() => crm.activeId, () => {
 
         <template v-else>
           <div v-if="!filteredList.length" style="padding:30px 14px;text-align:center;color:#8696a0;font-size:13px;">Nenhuma conversa encontrada</div>
-          <div v-for="c in filteredList" :key="c.id" :style="c.rowStyle" class="convrow" @click="crm.selectConv(c.id); menuFor = ''; stageFor = ''">
+          <div v-for="c in filteredList" :key="c.id" :style="c.rowStyle" class="convrow" @click="openConv(c)">
             <div :style="c.avatarStyle">
               <img v-if="c.avatar && !broken.has(c.id)" :src="c.avatar" referrerpolicy="no-referrer" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" @error="broken.add(c.id)">
               <template v-else>{{ c.initials }}</template>
@@ -524,7 +794,7 @@ watch(() => crm.activeId, () => {
     </div>
 
     <!-- thread -->
-    <div :style="{ position:'relative', flex:1, flexDirection:'column', minWidth:0, background:'#0b141a', backgroundImage:'radial-gradient(circle at 20% 30%,rgba(37,211,102,.04),transparent 40%),radial-gradient(circle at 80% 70%,rgba(124,108,245,.04),transparent 40%)', display: (isMobile && !conv) ? 'none' : 'flex' }">
+    <div :style="{ position:'relative', flex:1, flexDirection:'column', minWidth:0, background:'#0b141a', backgroundImage:'radial-gradient(circle at 20% 30%,rgba(37,211,102,.04),transparent 40%),radial-gradient(circle at 80% 70%,rgba(124,108,245,.04),transparent 40%)', display: (isMobile && !crm.chatOpen) ? 'none' : 'flex' }">
       <div v-if="crm.isOffline" style="display:flex;align-items:center;gap:9px;background:rgba(255,180,67,.13);color:#ffce80;font-size:12.5px;font-weight:600;padding:9px 22px;border-bottom:1px solid rgba(255,180,67,.22);">
         <span style="width:8px;height:8px;border-radius:50%;background:#ffb443;animation:recpulse 1.2s infinite;" />Sem conexão — tentando reconectar…
       </div>
@@ -539,13 +809,19 @@ watch(() => crm.activeId, () => {
           <template v-else>{{ active.initials }}</template>
         </div>
         <div style="flex:1;min-width:0;">
-          <div style="font-weight:700;font-size:15.5px;">{{ active.name }}</div>
-          <div :style="{ fontSize: '12px', color: active.statusColor }">{{ active.statusText }}</div>
+          <div style="font-weight:700;font-size:15.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ active.name }}</div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span v-if="active.phone" style="font-size:12.5px;color:#aebac1;">{{ active.phone }}</span>
+            <span v-if="active.statusText" :style="{ fontSize: '11.5px', color: active.statusColor }">{{ active.statusText }}</span>
+          </div>
         </div>
         <div style="display:flex;gap:7px;align-items:center;">
           <div v-if="!isMobile" style="display:flex;gap:6px;margin-right:6px;">
             <span v-for="(t, i) in active.tags" :key="i" :style="t.style">{{ t.label }}</span>
           </div>
+          <button class="iconbtn" :title="showThreadSearch ? 'Fechar busca' : 'Buscar nesta conversa'" :style="`width:38px;height:38px;border-radius:11px;border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;${showThreadSearch ? 'background:#25D366;color:#062014;' : 'background:#202c33;color:#e9edef;'}`" @click="toggleThreadSearch">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7" /><path d="m20 20-3-3" stroke-linecap="round" /></svg>
+          </button>
           <div style="position:relative;">
             <button class="iconbtn" title="Etiquetas" style="width:38px;height:38px;border-radius:11px;border:none;background:#202c33;color:#e9edef;display:flex;align-items:center;justify-content:center;cursor:pointer;" @click.stop="showLabels = !showLabels">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7.2-7.2A2 2 0 0 1 2.8 12V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.4.6l7.4 7.4a2 2 0 0 1 0 2.8Z" stroke-linejoin="round" /><circle cx="7.5" cy="7.5" r="1.4" fill="currentColor" stroke="none" /></svg>
@@ -568,18 +844,20 @@ watch(() => crm.activeId, () => {
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18M9 16l2 2 4-4" stroke-linecap="round" stroke-linejoin="round" /></svg>
             Agendar
           </button>
-          <button v-if="!isMobile" class="iconbtn" style="width:38px;height:38px;border-radius:11px;border:none;background:#202c33;color:#e9edef;display:flex;align-items:center;justify-content:center;cursor:pointer;" @click="navigateTo('/reuniao/' + (conv?.id || 'sala'))">
-            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2.5" y="6" width="13" height="12" rx="2.5" /><path d="M15.5 10l6-3.2v10.4l-6-3.2" /></svg>
-          </button>
-          <button v-if="!isMobile" class="iconbtn" style="width:38px;height:38px;border-radius:11px;border:none;background:#202c33;color:#e9edef;display:flex;align-items:center;justify-content:center;cursor:pointer;">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3-8.6A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.4-1.2a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2Z" /></svg>
-          </button>
         </div>
+      </div>
+
+      <!-- busca dentro da conversa -->
+      <div v-if="showThreadSearch" style="display:flex;align-items:center;gap:10px;padding:9px 22px;background:#0b141a;border-bottom:1px solid #1c2730;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8696a0" stroke-width="2" style="flex-shrink:0;"><circle cx="11" cy="11" r="7" /><path d="m20 20-3-3" stroke-linecap="round" /></svg>
+        <input v-model="threadSearch" placeholder="Buscar mensagens nesta conversa" style="flex:1;background:transparent;border:none;outline:none;color:#e9edef;font-family:inherit;font-size:13.5px;">
+        <span v-if="threadSearch.trim()" style="font-size:12px;color:#8696a0;flex-shrink:0;">{{ thread.filter(m => !m.isDivider).length }} resultado(s)</span>
+        <button title="Fechar" style="background:none;border:none;color:#8696a0;cursor:pointer;font-size:18px;line-height:1;flex-shrink:0;" @click="toggleThreadSearch">✕</button>
       </div>
 
       <!-- mensagens -->
       <div style="position:relative;flex:1;display:flex;flex-direction:column;min-height:0;">
-        <div ref="msgsRef" :style="{ flex: 1, overflowY: 'auto', padding: isMobile ? '14px 12px 14px' : '24px 18% 18px', display: 'flex', flexDirection: 'column', gap: '9px' }" @scroll="onScroll">
+        <div ref="msgsRef" :style="{ flex: 1, overflowY: 'auto', padding: isMobile ? '14px 12px 14px' : '24px 18% 18px', display: 'flex', flexDirection: 'column', gap: '0', backgroundImage: 'radial-gradient(rgba(255,255,255,.02) 1px, transparent 1px)', backgroundSize: '22px 22px' }" @scroll="onScroll">
         <template v-if="crm.loading">
           <div style="align-self:center;width:70px;height:20px;border-radius:8px;background:#1c2a33;animation:pulse 1.4s infinite;margin-bottom:6px;" />
           <div style="align-self:flex-start;width:46%;height:54px;border-radius:9px;background:#1c2730;animation:pulse 1.4s infinite;" />
@@ -600,22 +878,39 @@ watch(() => crm.activeId, () => {
         <template v-else>
           <template v-for="(m, i) in thread" :key="i">
             <div v-if="m.isDivider" :style="m.dividerStyle">{{ m.label }}</div>
-            <div v-else-if="m.isText" class="bubble" :style="m.bubbleText">
-              <button v-if="m.id" class="del-btn" :style="{ [m.isOut ? 'left' : 'right']: '-9px' }" title="Apagar mensagem" @click.stop="removeMsg(m)">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            <div v-else-if="m.isText" class="bubble" :style="m.bubbleText" @dblclick="startReply(m)">
+              <button v-if="m.id" class="msgmenu-btn" :style="{ [m.isOut ? 'left' : 'right']: '-9px' }" title="Opções" @click.stop="toggleMsgMenu(m, i)">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="12" cy="19" r="1.8" /></svg>
               </button>
-              <div style="font-size:14px;line-height:1.42;word-break:break-word;overflow-wrap:anywhere;">{{ m.text }}</div>
+              <div v-if="m.replyExcerpt" style="border-left:3px solid #25D366;background:rgba(0,0,0,.18);border-radius:5px;padding:5px 9px;margin-bottom:5px;font-size:12.5px;color:#aebac1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">↩ {{ m.replyExcerpt }}</div>
+              <div style="font-size:14px;line-height:1.42;word-break:break-word;overflow-wrap:anywhere;white-space:pre-wrap;">{{ m.text }}</div>
               <div style="display:flex;align-items:center;justify-content:flex-end;gap:4px;margin-top:3px;">
                 <span style="font-size:10.5px;color:#8696a0;">{{ m.time }}</span>
-                <svg v-if="m.isOut" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#53bdeb" stroke-width="2.4"><path d="m4 13 3.5 3.5L14 8M11 16l1.5 1.5L20 9" /></svg>
+                <template v-if="m.isOut">
+                  <svg v-if="m.tick.kind === 'clock'" width="15" height="15" viewBox="0 0 24 24" fill="none" :stroke="m.tick.color" stroke-width="2"><circle cx="12" cy="12" r="9" /><path d="M12 7.5V12l3 2" stroke-linecap="round" /></svg>
+                  <svg v-else-if="m.tick.kind === 'one'" width="16" height="16" viewBox="0 0 24 24" fill="none" :stroke="m.tick.color" stroke-width="2.4"><path d="m5 13 4 4L19 7" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                  <svg v-else-if="m.tick.kind === 'err'" width="15" height="15" viewBox="0 0 24 24" fill="none" :stroke="m.tick.color" stroke-width="2"><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16v.2" stroke-linecap="round" /></svg>
+                  <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" :stroke="m.tick.color" stroke-width="2.4"><path d="m4 13 3.5 3.5L14 8M11 16l1.5 1.5L20 9" /></svg>
+                </template>
+              </div>
+              <span v-if="m.reaction" class="react-badge" :style="{ [m.isOut ? 'right' : 'left']: '8px' }">{{ m.reaction }}</span>
+              <div v-if="msgMenu === (m.id ?? ('i' + i))" class="msg-ctx" :style="{ [m.isOut ? 'right' : 'left']: '4px' }" @click.stop>
+                <div v-if="m.id" class="react-row">
+                  <button v-for="e in REACTIONS" :key="e" class="reactbtn" :class="{ on: m.reaction === e }" @click="crm.react(m.id, e); msgMenu = null">{{ e }}</button>
+                </div>
+                <button class="ctxitem" @click="startReply(m)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 14 4 9l5-5M4 9h11a5 5 0 0 1 5 5v3" stroke-linecap="round" stroke-linejoin="round" /></svg>Responder</button>
+                <button v-if="m.id" class="ctxitem" @click="startForward(m)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 14l5-5-5-5M20 9H9a5 5 0 0 0-5 5v3" stroke-linecap="round" stroke-linejoin="round" /></svg>Encaminhar</button>
+                <button class="ctxitem" @click="copyMsg(m)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>Copiar</button>
+                <button v-if="m.id" class="ctxitem danger" @click="removeMsg(m); msgMenu = null"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14" stroke-linecap="round" stroke-linejoin="round" /></svg>Apagar</button>
               </div>
             </div>
-            <div v-else-if="m.isMedia" class="bubble" :style="m.bubbleMedia">
-              <button v-if="m.id" class="del-btn" :style="{ [m.isOut ? 'left' : 'right']: '-9px' }" title="Apagar mensagem" @click.stop="removeMsg(m)">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            <div v-else-if="m.isMedia" class="bubble" :style="m.bubbleMedia" @dblclick="startReply(m)">
+              <button v-if="m.id" class="msgmenu-btn" :style="{ [m.isOut ? 'left' : 'right']: '-9px' }" title="Opções" @click.stop="toggleMsgMenu(m, i)">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="12" cy="19" r="1.8" /></svg>
               </button>
+              <div v-if="m.replyExcerpt" style="border-left:3px solid #25D366;background:rgba(0,0,0,.18);border-radius:5px;padding:5px 9px;margin-bottom:6px;font-size:12.5px;color:#aebac1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">↩ {{ m.replyExcerpt }}</div>
               <template v-if="media[m.id]">
-                <img v-if="m.isImage" :src="media[m.id]" style="max-width:260px;width:100%;border-radius:7px;display:block;">
+                <img v-if="m.isImage" :src="media[m.id]" title="Ampliar" style="max-width:260px;width:100%;border-radius:7px;display:block;cursor:zoom-in;" @click="lightbox = media[m.id]">
                 <video v-else-if="m.isVideo" :src="media[m.id]" controls style="max-width:260px;width:100%;border-radius:7px;display:block;" />
                 <audio v-else-if="m.isVoice" :src="media[m.id]" controls style="width:230px;display:block;" />
                 <a v-else :href="media[m.id]" :download="m.fileName || 'arquivo'" style="display:flex;align-items:center;gap:10px;background:rgba(0,0,0,.18);border-radius:7px;padding:10px 12px;color:#e9edef;text-decoration:none;font-size:13px;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#a7d4c5" stroke-width="1.8"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14" stroke-linecap="round" stroke-linejoin="round" /></svg>Baixar arquivo</a>
@@ -625,13 +920,29 @@ watch(() => crm.activeId, () => {
                 <span style="flex:1;text-align:left;">{{ mediaLoading[m.id] ? 'Carregando…' : (m.isImage ? 'Ver imagem' : m.isVoice ? 'Tocar áudio' : m.isVideo ? 'Ver vídeo' : 'Baixar arquivo') }}</span>
               </button>
               <div v-if="m.text" style="font-size:13.5px;line-height:1.4;margin-top:6px;padding:0 2px;word-break:break-word;overflow-wrap:anywhere;">{{ m.text }}</div>
+              <div v-if="m.isVoice && m.transcript" style="font-size:12.5px;line-height:1.4;margin-top:6px;padding:0 2px;color:#cfd9de;font-style:italic;word-break:break-word;overflow-wrap:anywhere;">📝 {{ m.transcript }}</div>
               <div style="display:flex;align-items:center;justify-content:flex-end;gap:4px;margin-top:4px;padding-right:2px;">
                 <span style="font-size:10.5px;color:#8696a0;">{{ m.time }}</span>
-                <svg v-if="m.isOut" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#53bdeb" stroke-width="2.4"><path d="m4 13 3.5 3.5L14 8M11 16l1.5 1.5L20 9" /></svg>
+                <template v-if="m.isOut">
+                  <svg v-if="m.tick.kind === 'clock'" width="15" height="15" viewBox="0 0 24 24" fill="none" :stroke="m.tick.color" stroke-width="2"><circle cx="12" cy="12" r="9" /><path d="M12 7.5V12l3 2" stroke-linecap="round" /></svg>
+                  <svg v-else-if="m.tick.kind === 'one'" width="16" height="16" viewBox="0 0 24 24" fill="none" :stroke="m.tick.color" stroke-width="2.4"><path d="m5 13 4 4L19 7" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                  <svg v-else-if="m.tick.kind === 'err'" width="15" height="15" viewBox="0 0 24 24" fill="none" :stroke="m.tick.color" stroke-width="2"><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16v.2" stroke-linecap="round" /></svg>
+                  <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" :stroke="m.tick.color" stroke-width="2.4"><path d="m4 13 3.5 3.5L14 8M11 16l1.5 1.5L20 9" /></svg>
+                </template>
+              </div>
+              <span v-if="m.reaction" class="react-badge" :style="{ [m.isOut ? 'right' : 'left']: '8px' }">{{ m.reaction }}</span>
+              <div v-if="msgMenu === (m.id ?? ('i' + i))" class="msg-ctx" :style="{ [m.isOut ? 'right' : 'left']: '4px' }" @click.stop>
+                <div v-if="m.id" class="react-row">
+                  <button v-for="e in REACTIONS" :key="e" class="reactbtn" :class="{ on: m.reaction === e }" @click="crm.react(m.id, e); msgMenu = null">{{ e }}</button>
+                </div>
+                <button class="ctxitem" @click="startReply(m)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 14 4 9l5-5M4 9h11a5 5 0 0 1 5 5v3" stroke-linecap="round" stroke-linejoin="round" /></svg>Responder</button>
+                <button v-if="m.id" class="ctxitem" @click="startForward(m)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 14l5-5-5-5M20 9H9a5 5 0 0 0-5 5v3" stroke-linecap="round" stroke-linejoin="round" /></svg>Encaminhar</button>
+                <button v-if="m.text" class="ctxitem" @click="copyMsg(m)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>Copiar</button>
+                <button v-if="m.id" class="ctxitem danger" @click="removeMsg(m); msgMenu = null"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14" stroke-linecap="round" stroke-linejoin="round" /></svg>Apagar</button>
               </div>
             </div>
           </template>
-          <div v-if="crm.typing" style="align-self:flex-start;background:#202c33;padding:13px 16px;border-radius:9px 9px 9px 2px;display:flex;gap:4px;align-items:center;">
+          <div v-if="crm.typing" style="align-self:flex-start;margin-top:8px;background:#202c33;padding:13px 16px;border-radius:9px 9px 9px 2px;display:flex;gap:4px;align-items:center;">
             <span style="width:6px;height:6px;border-radius:50%;background:#8696a0;animation:typing 1.2s infinite;" /><span style="width:6px;height:6px;border-radius:50%;background:#8696a0;animation:typing 1.2s infinite .2s;" /><span style="width:6px;height:6px;border-radius:50%;background:#8696a0;animation:typing 1.2s infinite .4s;" />
           </div>
         </template>
@@ -659,13 +970,54 @@ watch(() => crm.activeId, () => {
       </div>
 
       <!-- composer -->
-      <div :style="{ padding: isMobile ? '10px 12px 12px' : '13px 22px 18px' }">
-        <div style="display:flex;align-items:flex-end;gap:10px;background:#202c33;border-radius:15px;padding:7px 9px 7px 13px;">
-          <button v-if="!isMobile" style="width:36px;height:36px;border-radius:50%;border:none;background:transparent;color:#8696a0;display:flex;align-items:center;justify-content:center;cursor:pointer;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 9.5a1 1 0 1 0 0-.1M15 9.5a1 1 0 1 0 0-.1M8.5 14.5a4.5 4.5 0 0 0 7 0" stroke-linecap="round" /><circle cx="12" cy="12" r="9.5" /></svg></button>
-          <button v-if="!isMobile" style="width:36px;height:36px;border-radius:50%;border:none;background:transparent;color:#8696a0;display:flex;align-items:center;justify-content:center;cursor:pointer;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21.4 11.05 12.25 20.2a5.5 5.5 0 0 1-7.78-7.78l8.49-8.49a3.67 3.67 0 0 1 5.19 5.19l-8.5 8.49a1.83 1.83 0 0 1-2.59-2.59l7.78-7.78" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+      <div :style="{ padding: isMobile ? '10px 12px 12px' : '13px 22px 18px', position: 'relative' }">
+        <!-- barra de citação (responder) -->
+        <div v-if="replyTo" style="display:flex;align-items:stretch;gap:0;background:#202c33;border-radius:11px 11px 0 0;margin-bottom:-6px;overflow:hidden;">
+          <div style="width:4px;background:#25D366;flex-shrink:0;" />
+          <div style="flex:1;min-width:0;padding:8px 12px;">
+            <div style="font-size:12px;font-weight:700;color:#25D366;">{{ replyTo.isOut ? 'Você' : active.name }}</div>
+            <div style="font-size:12.5px;color:#aebac1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ replyTo.text }}</div>
+          </div>
+          <button title="Cancelar" style="background:none;border:none;color:#8696a0;cursor:pointer;padding:0 12px;font-size:17px;" @click="replyTo = null">✕</button>
+        </div>
+
+        <!-- pré-visualização do anexo -->
+        <div v-if="pendingFile" style="display:flex;align-items:center;gap:11px;background:#202c33;border-radius:11px 11px 0 0;border-bottom:1px solid #1c2730;margin-bottom:-6px;padding:9px 12px;">
+          <img v-if="pendingPreview" :src="pendingPreview" style="width:46px;height:46px;border-radius:8px;object-fit:cover;flex-shrink:0;">
+          <div v-else style="width:46px;height:46px;border-radius:8px;background:#0b141a;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:22px;">{{ pendingFile.type.startsWith('video/') ? '🎬' : '📄' }}</div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:13px;font-weight:600;color:#e9edef;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ pendingFile.name }}</div>
+            <div style="font-size:11.5px;color:#8696a0;">{{ fmtSize(pendingFile.size) }} · adicione uma legenda (opcional)</div>
+          </div>
+          <button title="Remover anexo" style="background:none;border:none;color:#8696a0;cursor:pointer;font-size:17px;flex-shrink:0;" @click="cancelAttach">✕</button>
+        </div>
+
+        <!-- seletor de emoji -->
+        <div v-if="showEmoji" style="position:absolute;bottom:100%;left:22px;z-index:20;background:#233138;border:1px solid #2a3942;border-radius:14px;padding:10px;width:300px;box-shadow:0 12px 32px rgba(0,0,0,.5);display:flex;flex-wrap:wrap;gap:2px;" @click.stop>
+          <button v-for="e in EMOJIS" :key="e" style="background:none;border:none;font-size:21px;line-height:1;padding:5px;border-radius:8px;cursor:pointer;" class="emojibtn" @click="insertEmoji(e)">{{ e }}</button>
+        </div>
+
+        <input ref="fileInput" type="file" accept="image/*,video/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip" style="display:none;" @change="onFileChosen">
+
+        <!-- gravando nota de voz -->
+        <div v-if="recording" style="display:flex;align-items:center;gap:12px;background:#202c33;border-radius:15px;padding:9px 12px;">
+          <button title="Cancelar gravação" style="width:40px;height:40px;border-radius:50%;border:none;background:transparent;color:#ff6b6b;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;" @click="cancelRec"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+          <span style="width:11px;height:11px;border-radius:50%;background:#ff5a3c;flex-shrink:0;animation:recpulse 1.1s infinite;" />
+          <span style="font-size:15px;font-weight:700;color:#e9edef;font-variant-numeric:tabular-nums;">{{ recLabel }}</span>
+          <span style="flex:1;font-size:13px;color:#8696a0;">Gravando áudio… toque no ✓ para enviar</span>
+          <button title="Enviar áudio" style="width:42px;height:42px;border-radius:50%;border:none;background:#25D366;color:#062014;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;box-shadow:0 4px 12px rgba(37,211,102,.3);" @click="sendRec"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="m5 13 4 4L19 7" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+        </div>
+
+        <div v-else style="display:flex;align-items:flex-end;gap:10px;background:#202c33;border-radius:15px;padding:7px 9px 7px 13px;">
+          <button v-if="!isMobile" :title="showEmoji ? 'Fechar emojis' : 'Emojis'" :style="`width:36px;height:36px;border-radius:50%;border:none;background:transparent;display:flex;align-items:center;justify-content:center;cursor:pointer;${showEmoji ? 'color:#25D366;' : 'color:#8696a0;'}`" @click.stop="showEmoji = !showEmoji"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 9.5a1 1 0 1 0 0-.1M15 9.5a1 1 0 1 0 0-.1M8.5 14.5a4.5 4.5 0 0 0 7 0" stroke-linecap="round" /><circle cx="12" cy="12" r="9.5" /></svg></button>
+          <button title="Anexar foto, vídeo ou documento" style="width:36px;height:36px;border-radius:50%;border:none;background:transparent;color:#8696a0;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;" @click="pickFile"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21.4 11.05 12.25 20.2a5.5 5.5 0 0 1-7.78-7.78l8.49-8.49a3.67 3.67 0 0 1 5.19 5.19l-8.5 8.49a1.83 1.83 0 0 1-2.59-2.59l7.78-7.78" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
           <button class="agbtn" title="Agendar reunião com IA" style="height:36px;border-radius:18px;border:none;background:rgba(37,211,102,.14);color:#25D366;display:flex;align-items:center;gap:6px;padding:0 13px;cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:700;flex-shrink:0;" @click="agendarReuniao"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18M9 16l2 2 4-4" stroke-linecap="round" stroke-linejoin="round" /></svg>Agendar</button>
-          <textarea ref="inputRef" placeholder="Digite uma mensagem" rows="1" style="flex:1;background:transparent;border:none;outline:none;resize:none;color:#e9edef;font-family:inherit;font-size:14px;padding:9px 0;line-height:1.4;" @keydown="onKeyDown" />
-          <button style="width:42px;height:42px;border-radius:50%;border:none;background:#25D366;color:#062014;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;box-shadow:0 4px 12px rgba(37,211,102,.3);" @click="send"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21.85 12 3.4 3.6l.05 6.53L17 12 3.45 13.87z" /></svg></button>
+          <textarea ref="inputRef" :placeholder="pendingFile ? 'Legenda (opcional)…' : 'Digite uma mensagem'" rows="1" style="flex:1;background:transparent;border:none;outline:none;resize:none;color:#e9edef;font-family:inherit;font-size:14px;padding:9px 0;line-height:1.4;max-height:130px;" @keydown="onKeyDown" @input="autogrow" />
+          <button v-if="!hasInput && !pendingFile" title="Gravar áudio" style="width:42px;height:42px;border-radius:50%;border:none;background:#25D366;color:#062014;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;box-shadow:0 4px 12px rgba(37,211,102,.3);" @click="startRec"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8.5 21h7" stroke-linecap="round" /></svg></button>
+          <button v-else :disabled="sendingMedia" :style="`width:42px;height:42px;border-radius:50%;border:none;background:#25D366;color:#062014;display:flex;align-items:center;justify-content:center;cursor:${sendingMedia ? 'default' : 'pointer'};flex-shrink:0;box-shadow:0 4px 12px rgba(37,211,102,.3);opacity:${sendingMedia ? 0.6 : 1};`" @click="send">
+            <svg v-if="sendingMedia" class="spin" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 1 1-6.2-8.5" stroke-linecap="round" /></svg>
+            <svg v-else width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21.85 12 3.4 3.6l.05 6.53L17 12 3.45 13.87z" /></svg>
+          </button>
         </div>
       </div>
     </div>
@@ -685,9 +1037,9 @@ watch(() => crm.activeId, () => {
           <input v-model="nameDraft" :placeholder="active.name" autofocus style="background:#202c33;border:1px solid #2a3942;border-radius:8px;padding:6px 10px;color:#e9edef;font-family:inherit;font-size:14px;font-weight:700;text-align:center;outline:none;width:170px;" @keydown.enter="saveName" @keydown.esc="editingName = false">
           <button title="Salvar" style="background:#25D366;border:none;color:#062014;border-radius:8px;width:30px;height:30px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;" @click="saveName"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="m5 13 4 4L19 7" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
         </div>
-        <div style="font-size:13px;color:#8696a0;margin-top:2px;">{{ active.role }}</div>
+        <div v-if="active.phone" style="font-size:13.5px;color:#aebac1;margin-top:3px;font-weight:600;">{{ active.phone }}</div>
+        <div v-if="active.role" style="font-size:13px;color:#8696a0;margin-top:2px;">{{ active.role }}</div>
         <div style="display:flex;gap:8px;justify-content:center;margin-top:14px;">
-          <button class="ghost" style="flex:1;background:#202c33;border:none;color:#e9edef;font-family:inherit;font-size:12.5px;font-weight:600;padding:9px;border-radius:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3-8.6A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.4-1.2a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2Z" /></svg>Ligar</button>
           <button class="ghost" style="flex:1;background:#202c33;border:none;color:#e9edef;font-family:inherit;font-size:12.5px;font-weight:600;padding:9px;border-radius:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;" @click="crm.go('contact')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="3.4" /><path d="M5.5 20a6.5 6.5 0 0 1 13 0" stroke-linecap="round" /></svg>Ficha</button>
         </div>
       </div>
@@ -697,7 +1049,7 @@ watch(() => crm.activeId, () => {
         <div style="background:#202c33;border-radius:12px;padding:14px;">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
             <span style="font-size:13px;color:#8696a0;flex-shrink:0;">Valor</span>
-            <input :value="active.dealValue" placeholder="R$ 0" title="Editar valor do negócio" style="width:130px;text-align:right;background:#111b21;border:1px solid #2a3942;border-radius:8px;padding:5px 9px;font-size:16px;font-weight:800;color:#25D366;font-family:inherit;outline:none;" @change="onEditValue(($event.target as HTMLInputElement).value)" @keydown.enter="($event.target as HTMLInputElement).blur()" >
+            <input :value="valueDraft ?? active.dealValue" placeholder="R$ 0" title="Editar valor do negócio" style="width:130px;text-align:right;background:#111b21;border:1px solid #2a3942;border-radius:8px;padding:5px 9px;font-size:16px;font-weight:800;color:#25D366;font-family:inherit;outline:none;" @focus="valueDraft = active.dealValue" @input="valueDraft = ($event.target as HTMLInputElement).value" @change="onEditValue(($event.target as HTMLInputElement).value)" @blur="valueDraft = null" @keydown.enter="($event.target as HTMLInputElement).blur()" >
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;margin-top:11px;"><span style="font-size:13px;color:#8696a0;">Estágio</span><span :style="active.stageStyle">{{ active.stage }}</span></div>
           <div style="margin-top:12px;height:5px;border-radius:4px;background:#0b141a;overflow:hidden;"><div :style="active.progStyle" /></div>
@@ -735,6 +1087,33 @@ watch(() => crm.activeId, () => {
     </div>
 
     <div v-if="memoToast" style="position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:60;background:#2a3942;color:#e9edef;font-size:13px;font-weight:600;padding:11px 20px;border-radius:11px;box-shadow:0 8px 24px rgba(0,0,0,.45);">{{ memoToast }}</div>
+
+    <!-- Encaminhar: escolher conversa de destino -->
+    <div v-if="forwardMsg" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:80;padding:20px;" @click.self="forwardMsg = null">
+      <div style="width:420px;max-width:100%;max-height:80vh;display:flex;flex-direction:column;background:#111b21;border:1px solid #1c2730;border-radius:18px;padding:18px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-shrink:0;">
+          <div style="font-size:16px;font-weight:800;">Encaminhar para…</div>
+          <button style="background:none;border:none;color:#8696a0;cursor:pointer;font-size:20px;line-height:1;" @click="forwardMsg = null">✕</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:9px;background:#202c33;border-radius:10px;padding:8px 11px;margin-bottom:11px;flex-shrink:0;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8696a0" stroke-width="2"><circle cx="11" cy="11" r="7" /><path d="m20 20-3-3" stroke-linecap="round" /></svg>
+          <input v-model="forwardSearch" placeholder="Buscar conversa" style="flex:1;background:transparent;border:none;outline:none;color:#e9edef;font-family:inherit;font-size:13.5px;">
+        </div>
+        <div style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:2px;">
+          <div v-if="!forwardList.length" style="font-size:13px;color:#8696a0;text-align:center;padding:20px;">Nenhuma conversa encontrada.</div>
+          <button v-for="c in forwardList" :key="c.id" class="mitem" :disabled="forwardSending" style="display:flex;align-items:center;gap:11px;background:none;border:none;color:#e9edef;font-family:inherit;font-size:14px;padding:9px 10px;border-radius:10px;cursor:pointer;text-align:left;width:100%;" @click="doForward(c.id)">
+            <span :style="{ width: '38px', height: '38px', borderRadius: '50%', background: c.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '14px', flexShrink: 0 }">{{ c.initials }}</span>
+            <span style="flex:1;min-width:0;"><span style="display:block;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ c.name }}</span><span style="display:block;font-size:12px;color:#8696a0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ c.preview }}</span></span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Lightbox: imagem em tela cheia -->
+    <div v-if="lightbox" style="position:fixed;inset:0;background:rgba(0,0,0,.9);display:flex;align-items:center;justify-content:center;z-index:80;cursor:zoom-out;" @click="lightbox = null">
+      <img :src="lightbox" style="max-width:92vw;max-height:92vh;border-radius:8px;object-fit:contain;box-shadow:0 10px 40px rgba(0,0,0,.6);">
+      <button title="Fechar" style="position:absolute;top:18px;right:22px;background:rgba(255,255,255,.12);border:none;color:#fff;width:42px;height:42px;border-radius:50%;cursor:pointer;font-size:22px;line-height:1;" @click.stop="lightbox = null">✕</button>
+    </div>
 
     <!-- Modal: importar conversa (.txt) -->
     <div v-if="showImport" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:60;padding:24px;" @click.self="showImport = false">
@@ -892,7 +1271,22 @@ watch(() => crm.activeId, () => {
 .lbl2 { display:block; font-size:11.5px; color:#8696a0; font-weight:600; margin-bottom:5px; }
 .spin { animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+@keyframes recpulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
 .bubble .del-btn { position: absolute; top: -10px; width: 23px; height: 23px; border-radius: 50%; border: none; background: #2a3942; color: #ff6b6b; cursor: pointer; display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity .15s; box-shadow: 0 2px 6px rgba(0,0,0,.4); z-index: 2; }
 .bubble:hover .del-btn { opacity: 1; }
 .bubble .del-btn:hover { background: #3a4a54; }
+/* botão de opções (menu de contexto) da mensagem */
+.bubble .msgmenu-btn { position: absolute; top: -10px; width: 23px; height: 23px; border-radius: 50%; border: none; background: #2a3942; color: #cfd6db; cursor: pointer; display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity .15s; box-shadow: 0 2px 6px rgba(0,0,0,.4); z-index: 3; }
+.bubble:hover .msgmenu-btn { opacity: 1; }
+.bubble .msgmenu-btn:hover { background: #3a4a54; }
+.msg-ctx { position: absolute; top: 100%; margin-top: 4px; z-index: 20; background: #233138; border: 1px solid #2a3942; border-radius: 10px; padding: 5px; min-width: 150px; box-shadow: 0 12px 30px rgba(0,0,0,.5); display: flex; flex-direction: column; }
+.ctxitem { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; background: none; border: none; color: #e9edef; font-family: inherit; font-size: 13px; padding: 8px 10px; border-radius: 7px; cursor: pointer; }
+.ctxitem:hover { background: #2a3942; }
+.ctxitem.danger { color: #ff8d8d; }
+.emojibtn:hover { background: #2a3942; }
+.react-row { display: flex; gap: 2px; padding: 2px 2px 6px; margin-bottom: 4px; border-bottom: 1px solid #2a3942; }
+.reactbtn { background: none; border: none; font-size: 20px; line-height: 1; padding: 4px 5px; border-radius: 8px; cursor: pointer; }
+.reactbtn:hover { background: #2a3942; transform: scale(1.15); }
+.reactbtn.on { background: rgba(37,211,102,.2); }
+.react-badge { position: absolute; bottom: -11px; background: #233138; border: 2px solid #111b21; border-radius: 11px; padding: 1px 5px; font-size: 12px; line-height: 1.3; box-shadow: 0 2px 5px rgba(0,0,0,.4); z-index: 2; }
 </style>

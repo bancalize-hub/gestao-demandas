@@ -5,9 +5,11 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Conversation;
 use App\Models\Message;
+use App\Models\WaAccount;
 use Illuminate\Http\Request;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Str;
 
 class WhatsAppController extends Controller
 {
@@ -18,40 +20,71 @@ class WhatsAppController extends Controller
             ->timeout(20);
     }
 
-    private function instance(): string
+    /** Instância-alvo: a passada, ou a principal (config) por padrão. */
+    private function instance(?string $instance = null): string
     {
-        return (string) config('services.evolution.instance');
+        return $instance ?: (string) config('services.evolution.instance');
     }
+
+    /** Conta-alvo da requisição (?account=<id> ou body account_id); default = principal. */
+    private function account(Request $request): WaAccount
+    {
+        $id = $request->input('account_id', $request->query('account'));
+        if ($id) {
+            return WaAccount::findOrFail((int) $id);
+        }
+        $primary = WaAccount::primary();
+        abort_unless($primary, 404, 'Conta principal não configurada.');
+
+        return $primary;
+    }
+
+    /** URL do webhook (mesmo endpoint compartilhado; a instância vem no payload). */
+    private function webhookUrl(): string
+    {
+        return rtrim((string) config('app.url'), '/').'/api/wpp/webhook?token='.config('services.evolution.webhook_token');
+    }
+
+    /** Eventos do webhook que o app consome (espelha a instância principal). */
+    private const WEBHOOK_EVENTS = ['MESSAGES_UPSERT', 'MESSAGES_SET', 'MESSAGES_UPDATE', 'LABELS_ASSOCIATION', 'LABELS_EDIT'];
 
     private function ensureAdmin(Request $request): void
     {
         abort_unless((bool) $request->user()?->is_admin, 403, 'Apenas administradores.');
     }
 
-    /** Estado da conexão (open | connecting | close) + número conectado. */
+    /** Estado da conexão (open | connecting | close) + número conectado. Aceita ?account=<id>. */
     public function status(Request $request)
     {
         $this->ensureAdmin($request);
 
-        $state = $this->evo()->get("/instance/connectionState/{$this->instance()}")
+        $account = $this->account($request);
+        $inst = $account->instance;
+
+        $state = $this->evo()->get("/instance/connectionState/{$inst}")
             ->json('instance.state') ?? 'close';
 
         $number = null;
         if ($state === 'open') {
-            $list = $this->evo()->get('/instance/fetchInstances', ['instanceName' => $this->instance()])->json();
+            $list = $this->evo()->get('/instance/fetchInstances', ['instanceName' => $inst])->json();
             $jid = $list[0]['ownerJid'] ?? null;
             $number = $jid ? explode('@', $jid)[0] : null;
+        }
+
+        // Mantém o cache da conta atualizado (usado na lista de números).
+        if ($account->state !== $state || ($number && $account->phone !== $number)) {
+            $account->update(['state' => $state, 'phone' => $number ?: $account->phone]);
         }
 
         return response()->json(['state' => $state, 'number' => $number]);
     }
 
-    /** QR code (base64) para parear. */
+    /** QR code (base64) para parear. Aceita ?account=<id>. */
     public function qr(Request $request)
     {
         $this->ensureAdmin($request);
 
-        $res = $this->evo()->get("/instance/connect/{$this->instance()}");
+        $res = $this->evo()->get('/instance/connect/'.$this->account($request)->instance);
 
         return response()->json([
             'base64' => $res->json('base64'),
@@ -59,7 +92,7 @@ class WhatsAppController extends Controller
         ]);
     }
 
-    /** Código de pareamento (alternativa ao QR): WhatsApp > conectar com número. */
+    /** Código de pareamento (alternativa ao QR): WhatsApp > conectar com número. Aceita ?account=<id>. */
     public function pair(Request $request)
     {
         $this->ensureAdmin($request);
@@ -67,17 +100,115 @@ class WhatsAppController extends Controller
         $data = $request->validate(['number' => 'required|string']);
         $number = preg_replace('/\D/', '', $data['number']);
 
-        $res = $this->evo()->get("/instance/connect/{$this->instance()}", ['number' => $number]);
+        $res = $this->evo()->get('/instance/connect/'.$this->account($request)->instance, ['number' => $number]);
 
         return response()->json(['pairingCode' => $res->json('pairingCode')]);
     }
 
-    /** Desconecta o WhatsApp (logout do aparelho). */
+    /** Desconecta o WhatsApp (logout do aparelho). Aceita ?account=<id>. */
     public function logout(Request $request)
     {
         $this->ensureAdmin($request);
 
-        $this->evo()->delete("/instance/logout/{$this->instance()}");
+        $account = $this->account($request);
+        $this->evo()->delete('/instance/logout/'.$account->instance);
+        $account->update(['state' => 'close']);
+
+        return response()->json(['message' => 'ok']);
+    }
+
+    /** Lista todos os números (contas) com estado de conexão ao vivo. Principal primeiro. */
+    public function accounts(Request $request)
+    {
+        $this->ensureAdmin($request);
+
+        $accounts = WaAccount::orderByRaw("role = 'primary' DESC")->orderBy('id')->get();
+
+        foreach ($accounts as $a) {
+            $state = $this->evo()->get("/instance/connectionState/{$a->instance}")
+                ->json('instance.state') ?? 'close';
+            $patch = [];
+            if ($state !== $a->state) {
+                $patch['state'] = $state;
+            }
+            if ($state === 'open' && ! $a->phone) {
+                $list = $this->evo()->get('/instance/fetchInstances', ['instanceName' => $a->instance])->json();
+                $jid = $list[0]['ownerJid'] ?? null;
+                if ($jid) {
+                    $patch['phone'] = explode('@', $jid)[0];
+                }
+            }
+            if ($patch) {
+                $a->update($patch);
+            }
+            $a->remaining_today = $a->remainingToday();
+        }
+
+        return response()->json(['accounts' => $accounts]);
+    }
+
+    /** Cria um novo número de prospecção (instância na Evolution + webhook). */
+    public function createAccount(Request $request)
+    {
+        $this->ensureAdmin($request);
+
+        $data = $request->validate([
+            'name' => 'required|string|max:80',
+            'daily_cap' => 'nullable|integer|min:1|max:1000',
+        ]);
+
+        // Nome de instância único e seguro (slug + sufixo aleatório).
+        $instance = (Str::slug($data['name']) ?: 'numero').'-'.Str::lower(Str::random(5));
+
+        $res = $this->evo()->timeout(40)->post('/instance/create', [
+            'instanceName' => $instance,
+            'integration' => 'WHATSAPP-BAILEYS',
+            'qrcode' => true,
+        ]);
+        abort_unless($res->successful(), 502, 'Falha ao criar a instância na Evolution.');
+
+        // Registra o webhook (mesmos eventos da principal) apontando pro endpoint compartilhado.
+        $this->evo()->post("/webhook/set/{$instance}", [
+            'webhook' => [
+                'enabled' => true,
+                'url' => $this->webhookUrl(),
+                'webhookByEvents' => false,
+                'webhookBase64' => false,
+                'events' => self::WEBHOOK_EVENTS,
+            ],
+        ]);
+
+        $account = WaAccount::create([
+            'name' => $data['name'],
+            'instance' => $instance,
+            'role' => 'outreach',
+            'is_active' => true,
+            'daily_cap' => $data['daily_cap'] ?? 40,
+            'state' => 'connecting',
+        ]);
+
+        return response()->json($account, 201);
+    }
+
+    /** Remove um número de prospecção (logout + delete na Evolution). O principal é protegido. */
+    public function destroyAccount(Request $request, WaAccount $account)
+    {
+        $this->ensureAdmin($request);
+        abort_if($account->isPrimary(), 422, 'Não é possível remover o número principal.');
+
+        // Best-effort na Evolution: desconecta e apaga a instância.
+        try {
+            $this->evo()->delete("/instance/logout/{$account->instance}");
+        } catch (\Throwable $e) {
+        }
+        try {
+            $this->evo()->delete("/instance/delete/{$account->instance}");
+        } catch (\Throwable $e) {
+        }
+
+        // Conversas dessa origem permanecem no histórico, mas sem vínculo de conta.
+        $account->conversations()->update(['wa_account_id' => null]);
+        $account->delete();
 
         return response()->json(['message' => 'ok']);
     }

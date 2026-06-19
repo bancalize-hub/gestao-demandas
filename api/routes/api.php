@@ -138,4 +138,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/wpp/media/{message}', [WhatsAppController::class, 'media']);
     Route::get('/conversations/{conversation}/full', [WhatsAppController::class, 'loadFull']);
     Route::delete('/wpp/logout', [WhatsAppController::class, 'logout']);
+    // Múltiplos números (contas): listar / criar (prospecção) / remover.
+    Route::get('/wpp/accounts', [WhatsAppController::class, 'accounts']);
+    Route::post('/wpp/accounts', [WhatsAppController::class, 'createAccount']);
+    Route::delete('/wpp/accounts/{account}', [WhatsAppController::class, 'destroyAccount']);
 });

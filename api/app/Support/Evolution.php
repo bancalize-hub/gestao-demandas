@@ -15,22 +15,23 @@ class Evolution
             ->timeout(20);
     }
 
-    private static function instance(): string
+    /** Resolve a instância: a passada explicitamente, ou a principal (config) por padrão. */
+    private static function instance(?string $instance = null): string
     {
-        return (string) config('services.evolution.instance');
+        return $instance ?: (string) config('services.evolution.instance');
     }
 
     /** Lista as etiquetas do WhatsApp Business conectado. */
-    public static function findLabels(): array
+    public static function findLabels(?string $instance = null): array
     {
-        return self::http()->get('/label/findLabels/'.self::instance())->json() ?? [];
+        return self::http()->get('/label/findLabels/'.self::instance($instance))->json() ?? [];
     }
 
     /**
      * Envia mídia (imagem/vídeo/documento) pelo WhatsApp. `$base64` é o conteúdo puro
      * (sem o prefixo data:). `$mediatype` ∈ image|video|document. Retorna o wa_id (key.id).
      */
-    public static function sendMedia(string $number, string $base64, string $mimetype, string $fileName, string $caption = '', string $mediatype = 'image'): ?string
+    public static function sendMedia(string $number, string $base64, string $mimetype, string $fileName, string $caption = '', string $mediatype = 'image', ?string $instance = null): ?string
     {
         $number = preg_replace('/\D/', '', $number);
         if ($number === '' || $base64 === '') {
@@ -47,7 +48,7 @@ class Evolution
             if (trim($caption) !== '') {
                 $payload['caption'] = $caption;
             }
-            $res = self::http()->timeout(60)->post('/message/sendMedia/'.self::instance(), $payload);
+            $res = self::http()->timeout(60)->post('/message/sendMedia/'.self::instance($instance), $payload);
             if (! $res->successful()) {
                 \Illuminate\Support\Facades\Log::warning('Evolution sendMedia falhou', ['status' => $res->status(), 'body' => mb_substr((string) $res->body(), 0, 300)]);
 
@@ -63,14 +64,14 @@ class Evolution
     }
 
     /** Reage a uma mensagem (emoji). `$emoji` vazio remove a reação. Retorna true se ok. */
-    public static function sendReaction(string $number, string $waId, string $remoteJid, bool $fromMe, string $emoji): bool
+    public static function sendReaction(string $number, string $waId, string $remoteJid, bool $fromMe, string $emoji, ?string $instance = null): bool
     {
         $number = preg_replace('/\D/', '', $number);
         if ($number === '' || $waId === '') {
             return false;
         }
         try {
-            $res = self::http()->post('/message/sendReaction/'.self::instance(), [
+            $res = self::http()->post('/message/sendReaction/'.self::instance($instance), [
                 'key' => [
                     'id' => $waId,
                     'remoteJid' => $remoteJid ?: ($number.'@s.whatsapp.net'),
@@ -88,14 +89,14 @@ class Evolution
     }
 
     /** Envia um áudio como NOTA DE VOZ (PTT) pelo WhatsApp. `$base64` é o áudio puro. Retorna o wa_id. */
-    public static function sendAudio(string $number, string $base64): ?string
+    public static function sendAudio(string $number, string $base64, ?string $instance = null): ?string
     {
         $number = preg_replace('/\D/', '', $number);
         if ($number === '' || $base64 === '') {
             return null;
         }
         try {
-            $res = self::http()->timeout(60)->post('/message/sendWhatsAppAudio/'.self::instance(), [
+            $res = self::http()->timeout(60)->post('/message/sendWhatsAppAudio/'.self::instance($instance), [
                 'number' => $number,
                 'audio' => $base64,
             ]);
@@ -118,7 +119,7 @@ class Evolution
      * Retorna o wa_id da mensagem enviada (string; '' se a Evolution não devolveu o id),
      * ou null se o envio falhou. O wa_id é usado para casar com o eco do webhook e não duplicar.
      */
-    public static function sendText(string $number, string $text, ?string $quotedId = null, string $quotedText = ''): ?string
+    public static function sendText(string $number, string $text, ?string $quotedId = null, string $quotedText = '', ?string $instance = null): ?string
     {
         $number = preg_replace('/\D/', '', $number);
         if ($number === '' || trim($text) === '') {
@@ -136,7 +137,7 @@ class Evolution
                     'message' => ['conversation' => $quotedText !== '' ? $quotedText : ' '],
                 ];
             }
-            $res = self::http()->post('/message/sendText/'.self::instance(), $payload);
+            $res = self::http()->post('/message/sendText/'.self::instance($instance), $payload);
             if (! $res->successful()) {
                 return null;
             }
@@ -153,13 +154,13 @@ class Evolution
      * Baixa a mídia (descriptografada) de uma mensagem pelo wa_id e devolve o base64 cru
      * (sem o prefixo data URI), ou null se falhar. Usado para transcrever áudios.
      */
-    public static function mediaBase64(string $waId): ?string
+    public static function mediaBase64(string $waId, ?string $instance = null): ?string
     {
         if ($waId === '') {
             return null;
         }
         try {
-            $res = self::http()->timeout(40)->post('/chat/getBase64FromMediaMessage/'.self::instance(), [
+            $res = self::http()->timeout(40)->post('/chat/getBase64FromMediaMessage/'.self::instance($instance), [
                 'message' => ['key' => ['id' => $waId]],
                 'convertToMp4' => false,
             ]);
@@ -176,14 +177,14 @@ class Evolution
     }
 
     /** Aplica ('add') ou remove ('remove') uma etiqueta de um chat. Best-effort. */
-    public static function handleLabel(string $number, string $labelId, string $action): bool
+    public static function handleLabel(string $number, string $labelId, string $action, ?string $instance = null): bool
     {
         $number = preg_replace('/\D/', '', $number);
         if ($number === '' || $labelId === '') {
             return false;
         }
         try {
-            $res = self::http()->post('/label/handleLabel/'.self::instance(), [
+            $res = self::http()->post('/label/handleLabel/'.self::instance($instance), [
                 'number' => $number,
                 'labelId' => $labelId,
                 'action' => $action,

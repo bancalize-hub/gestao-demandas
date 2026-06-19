@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Conversation extends Model
@@ -56,6 +57,11 @@ class Conversation extends Model
         };
         static::saved($notify);
         static::deleted($notify);
+    }
+
+    public function account(): BelongsTo
+    {
+        return $this->belongsTo(WaAccount::class, 'wa_account_id');
     }
 
     public function activities(): HasMany

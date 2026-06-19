@@ -1,10 +1,119 @@
 <script setup lang="ts">
 import { useCrmStore } from '~/stores/crm'
 
+interface Account {
+  id: number
+  name: string
+  instance: string
+  phone: string | null
+  role: 'primary' | 'outreach'
+  state: 'open' | 'connecting' | 'close'
+  is_active: boolean
+  daily_cap: number
+  warmup_day: number
+  sent_today: number
+  remaining_today?: number
+}
+
 const api = useApi()
 const crm = useCrmStore()
 
-// Sincronização das conversas
+const accounts = ref<Account[]>([])
+const loading = ref(true)
+
+async function loadAccounts() {
+  try {
+    const r = await api<{ accounts: Account[] }>('/api/wpp/accounts')
+    accounts.value = r.accounts
+  }
+  catch { /* */ }
+  finally { loading.value = false }
+}
+
+// ---- Conexão (QR / código) de um número específico ----
+const connectingId = ref<number | null>(null)
+const qr = ref('')
+const qrLoading = ref(false)
+const pairNumber = ref('')
+const pairCode = ref('')
+const pairLoading = ref(false)
+const pairError = ref('')
+
+async function openConnect(acc: Account) {
+  connectingId.value = acc.id
+  qr.value = ''
+  pairCode.value = ''
+  pairNumber.value = ''
+  pairError.value = ''
+  await loadQr()
+}
+function closeConnect() {
+  connectingId.value = null
+  qr.value = ''
+}
+async function loadQr() {
+  if (connectingId.value == null) return
+  qrLoading.value = true
+  try {
+    const r = await api<{ base64: string | null }>(`/api/wpp/qr?account=${connectingId.value}`)
+    qr.value = r.base64 || ''
+  }
+  catch { /* */ }
+  finally { qrLoading.value = false }
+}
+async function getPairCode() {
+  if (connectingId.value == null) return
+  const num = pairNumber.value.replace(/\D/g, '')
+  if (num.length < 12) { pairError.value = 'Informe o número com DDI+DDD (ex: 5511987654321).'; return }
+  pairError.value = ''
+  pairLoading.value = true
+  pairCode.value = ''
+  try {
+    const r = await api<{ pairingCode: string | null }>(`/api/wpp/pair?account=${connectingId.value}&number=${num}`)
+    pairCode.value = r.pairingCode || ''
+    if (!pairCode.value) pairError.value = 'Não foi possível gerar o código. Tente o QR.'
+  }
+  catch { pairError.value = 'Falha ao gerar o código.' }
+  finally { pairLoading.value = false }
+}
+
+// ---- Adicionar / remover número ----
+const adding = ref(false)
+const newName = ref('')
+const newCap = ref(40)
+const addOpen = ref(false)
+async function addAccount() {
+  const name = newName.value.trim()
+  if (!name || adding.value) return
+  adding.value = true
+  try {
+    const acc = await api<Account>('/api/wpp/accounts', { method: 'POST', body: { name, daily_cap: newCap.value } })
+    newName.value = ''
+    addOpen.value = false
+    await loadAccounts()
+    const created = accounts.value.find(a => a.id === acc.id)
+    if (created) openConnect(created) // já abre o QR para conectar
+  }
+  catch (e: any) { alert(e?.response?._data?.message || 'Falha ao criar o número.') }
+  finally { adding.value = false }
+}
+async function removeAccount(acc: Account) {
+  if (!confirm(`Remover o número "${acc.name}"? As conversas dele ficam no histórico, mas a instância é apagada.`)) return
+  try {
+    await api(`/api/wpp/accounts/${acc.id}`, { method: 'DELETE' })
+    if (connectingId.value === acc.id) closeConnect()
+    await loadAccounts()
+  }
+  catch (e: any) { alert(e?.response?._data?.message || 'Falha ao remover.') }
+}
+async function disconnect(acc: Account) {
+  if (!confirm(`Desconectar o WhatsApp de "${acc.name}"?`)) return
+  try { await api(`/api/wpp/logout?account=${acc.id}`, { method: 'DELETE' }) }
+  catch { /* */ }
+  await loadAccounts()
+}
+
+// ---- Sincronizar / importar (somente número principal) ----
 const syncing = ref(false)
 const syncMsg = ref('')
 async function syncWpp() {
@@ -17,15 +126,9 @@ async function syncWpp() {
     syncMsg.value = `${r.imported} conversas importadas. Abrindo o chat…`
     setTimeout(() => navigateTo('/'), 900)
   }
-  catch {
-    syncMsg.value = 'Falha ao sincronizar.'
-  }
-  finally {
-    syncing.value = false
-  }
+  catch { syncMsg.value = 'Falha ao sincronizar.' }
+  finally { syncing.value = false }
 }
-
-// Importar um número específico (conversa completa)
 const impNumber = ref('')
 const importing = ref(false)
 const impMsg = ref('')
@@ -40,99 +143,36 @@ async function importOne() {
     impMsg.value = 'Conversa importada. Abrindo o chat…'
     setTimeout(() => navigateTo('/'), 800)
   }
-  catch (e: any) {
-    impMsg.value = e?.response?._data?.message || 'Falha ao importar.'
-  }
-  finally {
-    importing.value = false
-  }
+  catch (e: any) { impMsg.value = e?.response?._data?.message || 'Falha ao importar.' }
+  finally { importing.value = false }
 }
 
-const state = ref<'open' | 'connecting' | 'close'>('connecting')
-const number = ref<string | null>(null)
-const qr = ref('')
-const loading = ref(true)
-const qrLoading = ref(false)
-
-// Pareamento por código
-const pairNumber = ref('')
-const pairCode = ref('')
-const pairLoading = ref(false)
-const pairError = ref('')
-
-let statusTimer: ReturnType<typeof setInterval> | null = null
+let timer: ReturnType<typeof setInterval> | null = null
 let qrTimer: ReturnType<typeof setInterval> | null = null
-
-const connected = computed(() => state.value === 'open')
-
-async function loadStatus() {
-  try {
-    const r = await api<{ state: typeof state.value, number: string | null }>('/api/wpp/status')
-    state.value = r.state
-    number.value = r.number
-  }
-  catch { /* */ }
-  loading.value = false
-  if (connected.value) {
-    qr.value = ''
-    if (qrTimer) { clearInterval(qrTimer); qrTimer = null }
-  }
-  else if (!qrTimer) {
-    startQr()
-  }
-}
-
-async function loadQr() {
-  if (connected.value) return
-  qrLoading.value = true
-  try {
-    const r = await api<{ base64: string | null }>('/api/wpp/qr')
-    qr.value = r.base64 || ''
-  }
-  catch { /* */ }
-  finally { qrLoading.value = false }
-}
-
-function startQr() {
-  loadQr()
-  qrTimer = setInterval(loadQr, 12000)
-}
-
-async function getPairCode() {
-  const num = pairNumber.value.replace(/\D/g, '')
-  if (num.length < 12) { pairError.value = 'Informe o número com DDI+DDD (ex: 5511987654321).'; return }
-  pairError.value = ''
-  pairLoading.value = true
-  pairCode.value = ''
-  try {
-    const r = await api<{ pairingCode: string | null }>(`/api/wpp/pair?number=${num}`)
-    pairCode.value = r.pairingCode || ''
-    if (!pairCode.value) pairError.value = 'Não foi possível gerar o código. Tente o QR.'
-  }
-  catch {
-    pairError.value = 'Falha ao gerar o código.'
-  }
-  finally { pairLoading.value = false }
-}
-
-async function disconnect() {
-  if (!confirm('Desconectar o WhatsApp deste número?')) return
-  try { await api('/api/wpp/logout', { method: 'DELETE' }) }
-  catch { /* */ }
-  state.value = 'connecting'
-  number.value = null
-  await loadQr()
-  if (!qrTimer) startQr()
-}
-
 onMounted(() => {
-  loadStatus()
-  statusTimer = setInterval(loadStatus, 4000)
+  loadAccounts()
+  timer = setInterval(loadAccounts, 4000)
+  qrTimer = setInterval(() => { if (connectingId.value != null) loadQr() }, 12000)
 })
 onBeforeUnmount(() => {
-  if (statusTimer) clearInterval(statusTimer)
+  if (timer) clearInterval(timer)
   if (qrTimer) clearInterval(qrTimer)
 })
+
+// Fecha o QR sozinho quando o número conecta.
+watch(accounts, (list) => {
+  if (connectingId.value != null) {
+    const a = list.find(x => x.id === connectingId.value)
+    if (a && a.state === 'open') closeConnect()
+  }
+})
+
+function stateLabel(s: string) {
+  return s === 'open' ? 'Conectado' : (s === 'connecting' ? 'Aguardando conexão' : 'Desconectado')
+}
+function stateColor(s: string) {
+  return s === 'open' ? '#25D366' : (s === 'connecting' ? '#ffb443' : '#ff6b6b')
+}
 </script>
 
 <template>
@@ -142,77 +182,102 @@ onBeforeUnmount(() => {
         <svg width="18" height="18" viewBox="0 0 24 24" fill="#0b141a"><path d="M12 3c-4.97 0-9 3.58-9 8 0 2.5 1.3 4.7 3.3 6.1L5.5 21l3.6-1.5c.9.25 1.9.4 2.9.4 4.97 0 9-3.58 9-8s-4.03-8.9-9-8.9Z" /></svg>
       </div>
       <div>
-        <div style="font-weight:800;font-size:15px;">WhatsApp</div>
-        <div style="font-size:12px;color:#8696a0;">Conexão do número · somente administradores</div>
+        <div style="font-weight:800;font-size:15px;">Números do WhatsApp</div>
+        <div style="font-size:12px;color:#8696a0;">Principal atende anúncios · números de prospecção fazem disparo · somente administradores</div>
       </div>
     </div>
 
-    <div style="flex:1;display:flex;align-items:flex-start;justify-content:center;padding:38px 24px 60px;">
-      <div style="width:480px;max-width:100%;">
+    <div style="flex:1;display:flex;align-items:flex-start;justify-content:center;padding:28px 24px 60px;">
+      <div style="width:560px;max-width:100%;display:flex;flex-direction:column;gap:16px;">
         <div v-if="loading" style="background:#111b21;border:1px solid #1c2730;border-radius:18px;padding:40px;text-align:center;color:#8696a0;font-size:14px;">Carregando…</div>
 
-        <!-- conectado -->
-        <template v-else-if="connected">
-          <div style="background:#111b21;border:1px solid #1c2730;border-radius:18px;padding:30px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:12px;">
-            <div style="width:64px;height:64px;border-radius:50%;background:rgba(37,211,102,.14);display:flex;align-items:center;justify-content:center;"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#25D366" stroke-width="2.4"><path d="m5 13 4 4L19 7" stroke-linecap="round" stroke-linejoin="round" /></svg></div>
-            <div style="font-size:19px;font-weight:800;">WhatsApp conectado</div>
-            <div v-if="number" style="font-size:14px;color:#aebac1;">Número: <b style="color:#e9edef;">+{{ number }}</b></div>
-            <button style="margin-top:4px;background:rgba(255,77,77,.12);border:1px solid rgba(255,77,77,.3);color:#ff8d8d;font-family:inherit;font-size:13px;font-weight:700;padding:9px 18px;border-radius:10px;cursor:pointer;" @click="disconnect">Desconectar</button>
-          </div>
+        <template v-else>
+          <!-- cartões de cada número -->
+          <div v-for="acc in accounts" :key="acc.id" style="background:#111b21;border:1px solid #1c2730;border-radius:18px;padding:22px;">
+            <div style="display:flex;align-items:center;gap:12px;">
+              <div style="width:44px;height:44px;border-radius:12px;background:rgba(37,211,102,.12);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                <span :style="{ width: '12px', height: '12px', borderRadius: '50%', background: stateColor(acc.state) }" />
+              </div>
+              <div style="flex:1;min-width:0;">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                  <span style="font-weight:800;font-size:15.5px;">{{ acc.name }}</span>
+                  <span :style="{ fontSize: '10.5px', fontWeight: 700, padding: '2px 8px', borderRadius: '20px', background: acc.role === 'primary' ? 'rgba(124,108,245,.18)' : 'rgba(37,211,102,.14)', color: acc.role === 'primary' ? '#a89bf9' : '#25D366' }">
+                    {{ acc.role === 'primary' ? 'Principal · anúncios + IA' : 'Prospecção' }}
+                  </span>
+                </div>
+                <div style="font-size:12.5px;color:#8696a0;margin-top:2px;">
+                  <span :style="{ color: stateColor(acc.state) }">{{ stateLabel(acc.state) }}</span>
+                  <template v-if="acc.phone"> · <b style="color:#aebac1;">+{{ acc.phone }}</b></template>
+                  <template v-if="acc.role === 'outreach' && acc.state === 'open'">
+                    · enviados hoje: {{ acc.sent_today }}<template v-if="acc.warmup_day < 5"> · 🔥 aquecendo (dia {{ acc.warmup_day }})</template>
+                  </template>
+                </div>
+              </div>
+              <div style="display:flex;gap:8px;flex-shrink:0;">
+                <button v-if="acc.state !== 'open' && connectingId !== acc.id" style="background:#25D366;border:none;color:#062014;font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 14px;border-radius:9px;cursor:pointer;" @click="openConnect(acc)">Conectar</button>
+                <button v-if="acc.state === 'open'" style="background:rgba(255,77,77,.1);border:1px solid rgba(255,77,77,.25);color:#ff8d8d;font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 12px;border-radius:9px;cursor:pointer;" @click="disconnect(acc)">Desconectar</button>
+                <button v-if="acc.role !== 'primary'" title="Remover número" style="background:none;border:1px solid #2a3942;color:#6a7c86;font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 11px;border-radius:9px;cursor:pointer;" @click="removeAccount(acc)">✕</button>
+              </div>
+            </div>
 
-          <!-- sincronizar / importar conversas -->
-          <div style="margin-top:18px;background:#111b21;border:1px solid #1c2730;border-radius:18px;padding:26px;">
-            <div style="font-size:16px;font-weight:800;">Conversas</div>
-            <div style="font-size:13px;color:#8696a0;margin-top:4px;line-height:1.5;">Traga as conversas reais do WhatsApp para o chat. Isso <b style="color:#aebac1;">remove as conversas de exemplo</b> e importa as mais recentes.</div>
+            <!-- painel de conexão (QR + código) deste número -->
+            <div v-if="connectingId === acc.id" style="margin-top:18px;border-top:1px solid #1c2730;padding-top:18px;">
+              <div style="font-size:13px;color:#8696a0;line-height:1.5;margin-bottom:12px;">No WhatsApp do número: <b style="color:#aebac1;">Aparelhos conectados → Conectar um aparelho</b> e leia o QR.</div>
+              <div style="margin:0 auto;width:230px;height:230px;background:#fff;border-radius:14px;display:flex;align-items:center;justify-content:center;overflow:hidden;">
+                <img v-if="qr" :src="qr" alt="QR" style="width:100%;height:100%;object-fit:contain;">
+                <span v-else style="color:#667;font-size:13px;">{{ qrLoading ? 'Gerando QR…' : 'Aguardando QR…' }}</span>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:14px;">
+                <button style="flex:1;background:#202c33;border:none;color:#e9edef;font-family:inherit;font-size:12.5px;font-weight:600;padding:10px;border-radius:10px;cursor:pointer;" @click="loadQr">Gerar novo QR</button>
+                <button style="flex:1;background:#202c33;border:none;color:#8696a0;font-family:inherit;font-size:12.5px;font-weight:600;padding:10px;border-radius:10px;cursor:pointer;" @click="closeConnect">Fechar</button>
+              </div>
+              <div style="margin-top:14px;">
+                <div style="font-size:12px;font-weight:700;color:#aebac1;margin-bottom:8px;">Ou conecte com o número (código)</div>
+                <div style="display:flex;gap:8px;">
+                  <input v-model="pairNumber" placeholder="5511987654321" style="flex:1;background:#202c33;border:1px solid #2a3942;border-radius:10px;padding:10px 12px;color:#e9edef;font-family:inherit;font-size:13.5px;outline:none;" @keydown.enter="getPairCode">
+                  <button :disabled="pairLoading" style="background:#7c6cf5;border:none;color:#fff;font-family:inherit;font-size:13px;font-weight:700;padding:0 16px;border-radius:10px;cursor:pointer;white-space:nowrap;" @click="getPairCode">{{ pairLoading ? '…' : 'Gerar código' }}</button>
+                </div>
+                <div v-if="pairError" style="margin-top:8px;font-size:12.5px;color:#ff8d8d;">{{ pairError }}</div>
+                <div v-if="pairCode" style="margin-top:12px;text-align:center;background:#202c33;border-radius:11px;padding:12px;font-size:25px;font-weight:800;letter-spacing:4px;color:#25D366;font-family:monospace;">{{ pairCode }}</div>
+              </div>
+            </div>
 
-            <button :disabled="syncing" :style="{ width: '100%', marginTop: '16px', background: '#25D366', border: 'none', color: '#062014', fontFamily: 'inherit', fontSize: '14px', fontWeight: 700, padding: '13px', borderRadius: '12px', cursor: syncing ? 'default' : 'pointer', opacity: syncing ? 0.7 : 1 }" @click="syncWpp">
-              {{ syncing ? 'Sincronizando…' : 'Sincronizar conversas do WhatsApp' }}
-            </button>
-            <div v-if="syncMsg" style="margin-top:10px;font-size:12.5px;color:#a89bf9;text-align:center;">{{ syncMsg }}</div>
-
-            <div style="margin-top:18px;border-top:1px solid #1c2730;padding-top:16px;">
-              <div style="font-size:12.5px;font-weight:700;color:#aebac1;margin-bottom:9px;">Importar um número específico (histórico completo)</div>
-              <div style="display:flex;gap:8px;">
-                <input v-model="impNumber" placeholder="5511987654321" style="flex:1;background:#202c33;border:1px solid #2a3942;border-radius:10px;padding:10px 12px;color:#e9edef;font-family:inherit;font-size:13.5px;outline:none;" @keydown.enter="importOne">
-                <button :disabled="importing" :style="{ background: '#202c33', border: 'none', color: '#e9edef', fontFamily: 'inherit', fontSize: '13px', fontWeight: 700, padding: '0 16px', borderRadius: '10px', cursor: importing ? 'default' : 'pointer', whiteSpace: 'nowrap' }" @click="importOne">{{ importing ? '…' : 'Importar' }}</button>
+            <!-- principal conectado: sincronizar / importar conversas -->
+            <div v-if="acc.role === 'primary' && acc.state === 'open'" style="margin-top:18px;border-top:1px solid #1c2730;padding-top:18px;">
+              <button :disabled="syncing" :style="{ width: '100%', background: '#25D366', border: 'none', color: '#062014', fontFamily: 'inherit', fontSize: '13.5px', fontWeight: 700, padding: '12px', borderRadius: '11px', cursor: syncing ? 'default' : 'pointer', opacity: syncing ? 0.7 : 1 }" @click="syncWpp">
+                {{ syncing ? 'Sincronizando…' : 'Sincronizar conversas do WhatsApp' }}
+              </button>
+              <div v-if="syncMsg" style="margin-top:9px;font-size:12.5px;color:#a89bf9;text-align:center;">{{ syncMsg }}</div>
+              <div style="margin-top:14px;display:flex;gap:8px;">
+                <input v-model="impNumber" placeholder="Importar nº específico: 5511987654321" style="flex:1;background:#202c33;border:1px solid #2a3942;border-radius:10px;padding:10px 12px;color:#e9edef;font-family:inherit;font-size:13px;outline:none;" @keydown.enter="importOne">
+                <button :disabled="importing" style="background:#202c33;border:none;color:#e9edef;font-family:inherit;font-size:13px;font-weight:700;padding:0 16px;border-radius:10px;cursor:pointer;white-space:nowrap;" @click="importOne">{{ importing ? '…' : 'Importar' }}</button>
               </div>
               <div v-if="impMsg" style="margin-top:8px;font-size:12.5px;color:#a89bf9;">{{ impMsg }}</div>
             </div>
           </div>
+
+          <!-- adicionar número de prospecção -->
+          <div style="background:#111b21;border:1px dashed #2a3942;border-radius:18px;padding:20px;">
+            <template v-if="!addOpen">
+              <button style="width:100%;background:#202c33;border:none;color:#e9edef;font-family:inherit;font-size:13.5px;font-weight:700;padding:12px;border-radius:11px;cursor:pointer;" @click="addOpen = true">+ Adicionar número de prospecção</button>
+            </template>
+            <template v-else>
+              <div style="font-size:14px;font-weight:800;margin-bottom:10px;">Novo número de prospecção</div>
+              <input v-model="newName" placeholder="Apelido (ex.: Prospecção 1)" style="width:100%;background:#202c33;border:1px solid #2a3942;border-radius:10px;padding:11px 12px;color:#e9edef;font-family:inherit;font-size:13.5px;outline:none;box-sizing:border-box;" @keydown.enter="addAccount">
+              <div style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12.5px;color:#8696a0;flex-wrap:wrap;">
+                Teto diário de envios:
+                <input v-model.number="newCap" type="number" min="1" max="1000" style="width:80px;background:#202c33;border:1px solid #2a3942;border-radius:8px;padding:7px 9px;color:#e9edef;font-family:inherit;font-size:13px;outline:none;">
+                <span style="font-size:11.5px;">(começa baixo e sobe com o aquecimento)</span>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:14px;">
+                <button :disabled="adding || !newName.trim()" :style="{ flex: 1, background: '#25D366', border: 'none', color: '#062014', fontFamily: 'inherit', fontSize: '13.5px', fontWeight: 700, padding: '11px', borderRadius: '10px', cursor: (adding || !newName.trim()) ? 'default' : 'pointer', opacity: (adding || !newName.trim()) ? 0.6 : 1 }" @click="addAccount">{{ adding ? 'Criando…' : 'Criar e conectar' }}</button>
+                <button style="background:#202c33;border:none;color:#8696a0;font-family:inherit;font-size:13px;font-weight:600;padding:0 16px;border-radius:10px;cursor:pointer;" @click="addOpen = false">Cancelar</button>
+              </div>
+            </template>
+          </div>
+
+          <div style="font-size:11.5px;color:#5f6f78;line-height:1.5;padding:0 4px;">⚠️ Integração não-oficial: use números dedicados para prospecção. Disparo em massa tem risco de bloqueio — os limites e o aquecimento ajudam a reduzir, mas não eliminam.</div>
         </template>
-
-        <!-- pareamento (QR) -->
-        <div v-else style="background:#111b21;border:1px solid #1c2730;border-radius:18px;padding:30px;">
-          <div style="font-size:19px;font-weight:800;">Conectar WhatsApp</div>
-          <div style="font-size:13.5px;color:#8696a0;margin-top:5px;line-height:1.5;">Abra o WhatsApp no celular → <b style="color:#aebac1;">Aparelhos conectados</b> → <b style="color:#aebac1;">Conectar um aparelho</b> e aponte para o QR abaixo.</div>
-
-          <div style="margin:22px auto 0;width:260px;height:260px;background:#fff;border-radius:14px;display:flex;align-items:center;justify-content:center;overflow:hidden;">
-            <img v-if="qr" :src="qr" alt="QR WhatsApp" style="width:100%;height:100%;object-fit:contain;">
-            <span v-else style="color:#667;font-size:13px;">{{ qrLoading ? 'Gerando QR…' : 'Aguardando QR…' }}</span>
-          </div>
-
-          <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-top:18px;font-size:12.5px;color:#8696a0;">
-            <span style="width:8px;height:8px;border-radius:50%;background:#ffb443;animation:none;" />
-            {{ state === 'connecting' ? 'Aguardando leitura do QR…' : 'Desconectado' }}
-          </div>
-
-          <button style="width:100%;margin-top:18px;background:#202c33;border:none;color:#e9edef;font-family:inherit;font-size:13px;font-weight:600;padding:11px;border-radius:11px;cursor:pointer;" @click="loadQr">Gerar novo QR</button>
-
-          <div style="margin-top:18px;border-top:1px solid #1c2730;padding-top:16px;">
-            <div style="font-size:12.5px;font-weight:700;color:#aebac1;margin-bottom:9px;">Ou conecte com o número</div>
-            <div style="display:flex;gap:8px;">
-              <input v-model="pairNumber" placeholder="5511987654321" style="flex:1;background:#202c33;border:1px solid #2a3942;border-radius:10px;padding:10px 12px;color:#e9edef;font-family:inherit;font-size:13.5px;outline:none;" @keydown.enter="getPairCode">
-              <button :disabled="pairLoading" :style="{ background: '#7c6cf5', border: 'none', color: '#fff', fontFamily: 'inherit', fontSize: '13px', fontWeight: 700, padding: '0 16px', borderRadius: '10px', cursor: pairLoading ? 'default' : 'pointer', whiteSpace: 'nowrap' }" @click="getPairCode">{{ pairLoading ? '…' : 'Gerar código' }}</button>
-            </div>
-            <div v-if="pairError" style="margin-top:8px;font-size:12.5px;color:#ff8d8d;">{{ pairError }}</div>
-            <div v-if="pairCode" style="margin-top:13px;text-align:center;background:#202c33;border-radius:11px;padding:14px;">
-              <div style="font-size:12px;color:#8696a0;line-height:1.45;">No WhatsApp: <b style="color:#aebac1;">Aparelhos conectados → Conectar um aparelho → "Conectar com número"</b> e digite:</div>
-              <div style="font-size:27px;font-weight:800;letter-spacing:4px;color:#25D366;margin-top:9px;font-family:monospace;">{{ pairCode }}</div>
-            </div>
-          </div>
-
-          <div style="margin-top:16px;font-size:11.5px;color:#5f6f78;line-height:1.5;border-top:1px solid #1c2730;padding-top:14px;">⚠️ Use um número dedicado. É integração não-oficial e há risco de bloqueio do número pelo WhatsApp.</div>
-        </div>
       </div>
     </div>
   </div>

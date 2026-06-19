@@ -38,7 +38,7 @@ class MessageController extends Controller
         if (($data['is_out'] ?? false) && $data['type'] === 'text' && ! empty($data['text'])
             && $conversation->origin === 'WhatsApp' && $conversation->phone) {
             try {
-                $waId = Evolution::sendText((string) $conversation->phone, (string) $data['text'], $data['reply_to'] ?? null, (string) ($data['reply_excerpt'] ?? ''));
+                $waId = Evolution::sendText((string) $conversation->phone, (string) $data['text'], $data['reply_to'] ?? null, (string) ($data['reply_excerpt'] ?? ''), instance: $conversation->account?->instance);
             } catch (\Throwable $e) {
                 report($e);
             }
@@ -97,9 +97,10 @@ class MessageController extends Controller
             return response()->json(['message' => 'Conversa sem WhatsApp vinculado para enviar mídia.'], 422);
         }
 
+        $inst = $conversation->account?->instance;
         $waId = $isAudio
-            ? Evolution::sendAudio((string) $conversation->phone, $base64)
-            : Evolution::sendMedia((string) $conversation->phone, $base64, $mime, $orig, $caption, $mediatype);
+            ? Evolution::sendAudio((string) $conversation->phone, $base64, instance: $inst)
+            : Evolution::sendMedia((string) $conversation->phone, $base64, $mime, $orig, $caption, $mediatype, instance: $inst);
         if (! $waId) {
             return response()->json(['message' => 'Falha ao enviar a mídia pelo WhatsApp. Tente novamente.'], 502);
         }
@@ -143,6 +144,8 @@ class MessageController extends Controller
             return response()->json(['message' => 'Conversa de destino sem WhatsApp vinculado.'], 422);
         }
         $phone = (string) $conversation->phone;
+        $inst = $conversation->account?->instance;          // número de destino (de onde sai)
+        $srcInst = $src->conversation?->account?->instance;  // número de origem (de onde se baixa a mídia)
         $now = time();
         $base = [
             'is_out' => true,
@@ -157,7 +160,7 @@ class MessageController extends Controller
             if (trim((string) $src->text) === '') {
                 return response()->json(['message' => 'Nada para encaminhar.'], 422);
             }
-            $waId = Evolution::sendText($phone, (string) $src->text);
+            $waId = Evolution::sendText($phone, (string) $src->text, instance: $inst);
             if (! $waId) {
                 return response()->json(['message' => 'Falha ao encaminhar.'], 502);
             }
@@ -171,7 +174,7 @@ class MessageController extends Controller
         if (! $src->wa_id) {
             return response()->json(['message' => 'Mídia original indisponível para encaminhar.'], 422);
         }
-        $b64 = Evolution::mediaBase64((string) $src->wa_id);
+        $b64 = Evolution::mediaBase64((string) $src->wa_id, instance: $srcInst);
         if (! $b64) {
             return response()->json(['message' => 'Não consegui baixar a mídia original.'], 502);
         }
@@ -180,11 +183,11 @@ class MessageController extends Controller
         $fileName = $src->file_name ?: 'arquivo';
 
         if ($src->type === 'voice') {
-            $waId = Evolution::sendAudio($phone, $b64);
+            $waId = Evolution::sendAudio($phone, $b64, instance: $inst);
         }
         else {
             $mediatype = $src->type === 'image' ? 'image' : ($src->type === 'video' ? 'video' : 'document');
-            $waId = Evolution::sendMedia($phone, $b64, $mime, $fileName, (string) ($src->text ?? ''), $mediatype);
+            $waId = Evolution::sendMedia($phone, $b64, $mime, $fileName, (string) ($src->text ?? ''), $mediatype, instance: $inst);
         }
         if (! $waId) {
             return response()->json(['message' => 'Falha ao encaminhar a mídia.'], 502);
@@ -206,7 +209,7 @@ class MessageController extends Controller
         $emoji = (string) ($data['emoji'] ?? '');
 
         if ($message->wa_id && $conversation->origin === 'WhatsApp' && $conversation->phone) {
-            Evolution::sendReaction((string) $conversation->phone, (string) $message->wa_id, (string) $conversation->wa_jid, (bool) $message->is_out, $emoji);
+            Evolution::sendReaction((string) $conversation->phone, (string) $message->wa_id, (string) $conversation->wa_jid, (bool) $message->is_out, $emoji, instance: $conversation->account?->instance);
         }
 
         $message->update(['reaction' => $emoji !== '' ? $emoji : null]);

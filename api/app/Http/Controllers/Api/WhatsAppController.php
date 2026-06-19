@@ -511,13 +511,17 @@ class WhatsAppController extends Controller
 
         $event = $request->input('event');
 
+        // De qual número (instância) veio o evento. A principal (vertice) resolve para a conta
+        // primary; números de prospecção resolvem para a conta outreach correspondente.
+        $account = WaAccount::byInstance($request->input('instance')) ?? WaAccount::primary();
+
         // messages.upsert = mensagem nova; messages.set = lote de histórico (sync full history).
         if ($event === 'messages.upsert' || $event === 'messages.set') {
             $data = $request->input('data', []);
             $messages = isset($data['key']) ? [$data] : ($data['messages'] ?? []);
             foreach ($messages as $m) {
                 if (is_array($m)) {
-                    $this->ingestMessage($m);
+                    $this->ingestMessage($m, $account);
                 }
             }
         } elseif ($event === 'messages.update' || $event === 'messages.edit') {
@@ -608,8 +612,9 @@ class WhatsAppController extends Controller
         $conv->save();
     }
 
-    public function ingestMessage(array $m): void
+    public function ingestMessage(array $m, ?WaAccount $account = null): void
     {
+        $account ??= WaAccount::primary();
         $key = $m['key'] ?? [];
         $remoteJid = (string) ($key['remoteJid'] ?? '');
         if ($remoteJid === '' || str_ends_with($remoteJid, '@g.us') || str_contains($remoteJid, 'broadcast')) {
@@ -677,6 +682,8 @@ class WhatsAppController extends Controller
             $conv->initials = $this->initialsOf($name);
             $conv->color = '#6b7cff';
             $conv->position = (int) (Conversation::max('position') ?? 0) + 1;
+            // Carimba a origem (qual número recebeu) já na criação.
+            $conv->wa_account_id = $account?->id;
         } elseif (! $isOut && $validPush && preg_match('/^\+?\d+$/', (string) $conv->name)) {
             // Tinha só o número como nome — assim que o WhatsApp mandar o nome real, usa.
             $conv->name = $push;
@@ -685,6 +692,8 @@ class WhatsAppController extends Controller
         $conv->origin = 'WhatsApp';
         $conv->phone = $conv->phone ?: ($realNumber ? '+'.$realNumber : null);
         $conv->wa_jid = $conv->wa_jid ?: $remoteJid;
+        // Conversa antiga sem origem definida → carimba com a conta que recebeu agora.
+        $conv->wa_account_id = $conv->wa_account_id ?: $account?->id;
         $conv->preview = mb_substr($p['preview'], 0, 80);
         $conv->time = $this->humanDate($ts);
         $conv->last_message_at = date('Y-m-d H:i:s', $ts);
@@ -692,7 +701,8 @@ class WhatsAppController extends Controller
             $conv->unread = (int) $conv->unread + 1;
             // Atendimento automático ligado: agenda uma resposta da IA. Cada nova mensagem do
             // lead empurra o prazo (debounce) para não responder no meio de uma rajada.
-            if ($conv->auto_reply) {
+            // SÓ no número principal (anúncios): prospecção é atendida por humano.
+            if ($conv->auto_reply && (! $account || $account->isPrimary())) {
                 $conv->auto_reply_due_at = now()->addSeconds(10);
             }
         } else {
@@ -732,8 +742,9 @@ class WhatsAppController extends Controller
     }
 
     /** Busca mensagens de um JID no Evolution e grava como conversa+thread. */
-    private function importConversation(string $remoteJid, int $maxPages, ?int $keepLast = null, ?string $name = null, ?string $avatar = null): ?Conversation
+    private function importConversation(string $remoteJid, int $maxPages, ?int $keepLast = null, ?string $name = null, ?string $avatar = null, ?WaAccount $account = null): ?Conversation
     {
+        $account ??= WaAccount::primary();
         [$local, $domain] = array_pad(explode('@', $remoteJid, 2), 2, '');
         $isPhone = $domain === 's.whatsapp.net';
         $slug = 'wa-'.preg_replace('/[^a-z0-9]/i', '', $local);
@@ -807,6 +818,7 @@ class WhatsAppController extends Controller
         }
         $conv->phone = $realNumber ? ('+'.$realNumber) : null;
         $conv->wa_jid = $remoteJid;
+        $conv->wa_account_id = $conv->wa_account_id ?: $account?->id;
         $conv->origin = 'WhatsApp';
         $conv->status_text = 'via WhatsApp';
         $conv->online = false;

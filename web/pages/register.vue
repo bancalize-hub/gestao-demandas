@@ -3,6 +3,17 @@ definePageMeta({ layout: 'blank' })
 
 const { register } = useAuth()
 
+// Marca da empresa dona da instância (logo + cor) p/ personalizar o cadastro.
+const brand = ref<{ name?: string, brand_color?: string | null, logo_light_url?: string | null, logo_dark_url?: string | null } | null>(null)
+onMounted(async () => {
+  try {
+    brand.value = await useApi()('/api/public/branding')
+    applyBrand(brand.value?.brand_color)
+    setFavicon(brand.value?.logo_light_url || brand.value?.logo_dark_url)
+  }
+  catch {}
+})
+
 const company = ref('')
 const name = ref('')
 const email = ref('')
@@ -33,11 +44,8 @@ async function submit() {
 <template>
   <div style="flex:1;display:flex;align-items:center;justify-content:center;padding:24px;background-image:radial-gradient(circle at 20% 30%,rgba(var(--accent-rgb),.05),transparent 42%),radial-gradient(circle at 80% 70%,rgba(124,108,245,.05),transparent 42%);">
     <div style="width:400px;max-width:100%;">
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:26px;justify-content:center;">
-        <div style="width:46px;height:46px;border-radius:14px;background:var(--accent);display:flex;align-items:center;justify-content:center;box-shadow:0 6px 16px rgba(var(--accent-rgb),.35);">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="var(--accent-ink)"><path d="M12 3c-4.97 0-9 3.58-9 8 0 2.5 1.3 4.7 3.3 6.1L5.5 21l3.6-1.5c.9.25 1.9.4 2.9.4 4.97 0 9-3.58 9-8s-4.03-8.9-9-8.9Z" /></svg>
-        </div>
-        <span style="font-size:21px;font-weight:800;letter-spacing:-.3px;">Vértice CRM</span>
+      <div style="display:flex;justify-content:center;margin-bottom:26px;">
+        <BrandLogo :company="brand" fallback-name="Vértice CRM" :height="48" />
       </div>
 
       <form style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:30px;display:flex;flex-direction:column;gap:16px;" @submit.prevent="submit">

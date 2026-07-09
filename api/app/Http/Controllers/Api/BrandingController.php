@@ -102,6 +102,23 @@ class BrandingController extends Controller
         ]);
     }
 
+    /**
+     * Marca da empresa PRINCIPAL (dona da instância) — usada nas páginas
+     * públicas de login/cadastro, que não têm empresa no contexto. Convenção:
+     * a primeira empresa ativa (menor id) é a dona da instância.
+     */
+    public function primaryBranding()
+    {
+        $company = Company::where('is_active', true)->orderBy('id')->first();
+
+        return response()->json([
+            'name' => $company?->name,
+            'brand_color' => $company?->brand_color,
+            'logo_light_url' => $company?->logo_light_url,
+            'logo_dark_url' => $company?->logo_dark_url,
+        ]);
+    }
+
     private function payload(Company $company): array
     {
         return [

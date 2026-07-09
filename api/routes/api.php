@@ -33,6 +33,8 @@ Route::post('/solicitacoes', [TaskController::class, 'store']);
 
 // --- Público: branding da empresa por slug (cor + logos) p/ o portal do cliente ---
 Route::get('/public/branding/{slug}', [BrandingController::class, 'publicBranding']);
+// --- Público: marca da empresa PRINCIPAL (dona da instância) p/ login/cadastro ---
+Route::get('/public/branding', [BrandingController::class, 'primaryBranding']);
 
 // --- Público: webhook do Evolution (protegido por token na query) ---
 Route::post('/wpp/webhook', [WhatsAppController::class, 'webhook']);

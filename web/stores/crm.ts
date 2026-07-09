@@ -353,25 +353,19 @@ export const useCrmStore = defineStore('crm', {
   actions: {
     async init() {
       this.loading = true
+      const client = api()
+      // CRÍTICO p/ a lista de chat aparecer: conversas + estágios + abas.
+      // O resto (deals/tasks/quick-replies/contatos) carrega em background depois,
+      // sem travar a tela — antes as 7 chamadas bloqueavam o render juntas.
       try {
-        const client = api()
-        const [convs, deals, tasks, qr, stages, tabs, contacts] = await Promise.all([
+        const [convs, stages, tabs] = await Promise.all([
           client<any[]>(`/api/conversations`),
-          client<any[]>(`/api/deals`),
-          client<any[]>(`/api/tasks`),
-          client<QuickReply[]>(`/api/quick-replies`),
           client<Stage[]>(`/api/stages`),
           client<ChatTab[]>(`/api/chat-tabs`),
-          client<Contact[]>(`/api/contacts`),
         ])
         this.conversations = convs.map(mapConv)
-        this.dealList = deals.map(mapDeal)
-        this.taskList = tasks.map(mapTask)
-        this.quickReplies = qr
         if (stages.length) this.stages = stages
         this.chatTabs = (tabs || []).map(t => ({ ...t, stages: t.stages || [] }))
-        this.contacts = contacts || []
-        this.linkContactNames()
         this.connection = 'online'
         if (!this.conversations.find(c => c.id === this.activeId))
           this.activeId = this.conversations[0]?.id ?? ''
@@ -380,8 +374,15 @@ export const useCrmStore = defineStore('crm', {
         this.connection = 'offline'
       }
       finally {
-        setTimeout(() => { this.loading = false }, 300)
+        this.loading = false
       }
+
+      // SECUNDÁRIO: em background, não bloqueia a lista.
+      client<any[]>(`/api/deals`).then(d => { this.dealList = d.map(mapDeal) }).catch(() => {})
+      client<any[]>(`/api/tasks`).then(t => { this.taskList = t.map(mapTask) }).catch(() => {})
+      client<QuickReply[]>(`/api/quick-replies`).then((q) => { this.quickReplies = q }).catch(() => {})
+      // Contatos nomeiam conversas: ao chegar, re-linka os nomes (número → nome real).
+      client<Contact[]>(`/api/contacts`).then((c) => { this.contacts = c || []; this.linkContactNames() }).catch(() => {})
     },
 
     go(screen: Screen) {

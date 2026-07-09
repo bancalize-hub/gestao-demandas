@@ -19,7 +19,9 @@ class ConversationController extends Controller
         // A LISTA carrega só a última mensagem de cada conversa (preview + ✓✓), não as 11k+
         // mensagens de todas — a thread completa vem do endpoint /full ao abrir a conversa.
         // started_ts = ts da 1ª mensagem (data do 1º contato) — usado no filtro de data do Funil.
-        return Conversation::with('lastMessage')
+        // A lista só usa is_out/id da última msg (preview/time vêm da própria conversa),
+        // então carregamos SÓ essas colunas — evita puxar text/transcript/meta de 275 msgs (~454KB→~50KB).
+        return Conversation::with(['lastMessage' => fn ($q) => $q->select('messages.id', 'messages.conversation_id', 'messages.is_out', 'messages.ts')])
             ->withMin('messages as started_ts', 'ts')
             ->orderByRaw('last_message_at IS NULL, last_message_at DESC')
             ->orderBy('position')

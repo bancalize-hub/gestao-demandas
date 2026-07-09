@@ -1,19 +1,19 @@
 /* Sistema de tema (claro padrão + escuro) — gerado a partir do mapa de tokens.
    O acento (--accent*) tem default aqui, mas é sobrescrito em runtime pela marca da empresa. */
 :root {
-  --c-bg: #e9edf0;
-  --c-bg-deep: #dfe4e8;
-  --c-bg-deepest: #d4dade;
-  --c-surface-0: #eef2f4;
+  --c-bg: #f0f2f5;
+  --c-bg-deep: #e0e4e8;
+  --c-bg-deepest: #cfd6db;
+  --c-surface-0: #eef1f4;
   --c-surface-1: #f7f9fb;
   --c-surface-2: #ffffff;
-  --c-surface-3: #eceff2;
-  --c-border: #e4e8eb;
-  --c-border-strong: #d1d7db;
+  --c-surface-3: #eceff1;
+  --c-border: #e4e7eb;
+  --c-border-strong: #cfd6db;
   --c-text: #111b21;
   --c-text-secondary: #3b4a54;
-  --c-text-muted: #5b6a72;
-  --c-text-faint: #5f6f78;
+  --c-text-muted: #667781;
+  --c-text-faint: #7a8696;
   --accent: #25d366;
   --accent-hi: color-mix(in srgb, var(--accent), white 15%);
   --accent-deep: color-mix(in srgb, var(--accent), black 20%);
@@ -23,7 +23,7 @@
   --accent-ink-rgb: 6,36,15;
   --c-accent-surf: #e7f7ee;
   --c-bubble-out: #d9fdd3;
-  --c-bubble-out-muted: #43705d;
+  --c-bubble-out-muted: #5a8f7c;
   --c-on-accent: #ffffff;
   --c-shadow-rgb: 0,0,0;
   --c-hairline-rgb: 0,0,0;

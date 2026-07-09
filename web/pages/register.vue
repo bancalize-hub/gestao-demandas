@@ -35,7 +35,7 @@ async function submit() {
     <div style="width:400px;max-width:100%;">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:26px;justify-content:center;">
         <div style="width:46px;height:46px;border-radius:14px;background:var(--accent);display:flex;align-items:center;justify-content:center;box-shadow:0 6px 16px rgba(var(--accent-rgb),.35);">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="var(--c-bg-deep)"><path d="M12 3c-4.97 0-9 3.58-9 8 0 2.5 1.3 4.7 3.3 6.1L5.5 21l3.6-1.5c.9.25 1.9.4 2.9.4 4.97 0 9-3.58 9-8s-4.03-8.9-9-8.9Z" /></svg>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="var(--accent-ink)"><path d="M12 3c-4.97 0-9 3.58-9 8 0 2.5 1.3 4.7 3.3 6.1L5.5 21l3.6-1.5c.9.25 1.9.4 2.9.4 4.97 0 9-3.58 9-8s-4.03-8.9-9-8.9Z" /></svg>
         </div>
         <span style="font-size:21px;font-weight:800;letter-spacing:-.3px;">Vértice CRM</span>
       </div>

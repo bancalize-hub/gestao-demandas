@@ -1,15 +1,15 @@
 /* Sistema de tema (claro padrão + escuro) — gerado a partir do mapa de tokens.
    O acento (--accent*) tem default aqui, mas é sobrescrito em runtime pela marca da empresa. */
 :root {
-  --c-bg: #f0f2f5;
-  --c-bg-deep: #e0e4e8;
-  --c-bg-deepest: #cfd6db;
-  --c-surface-0: #eef1f4;
-  --c-surface-1: #f7f9fb;
+  --c-bg: #f4f6fa;
+  --c-bg-deep: #eef1f4;
+  --c-bg-deepest: #e4e7eb;
+  --c-surface-0: #f5f6f8;
+  --c-surface-1: #f9fafc;
   --c-surface-2: #ffffff;
-  --c-surface-3: #eceff1;
+  --c-surface-3: #eef1f4;
   --c-border: #e4e7eb;
-  --c-border-strong: #cfd6db;
+  --c-border-strong: #dbe1e6;
   --c-text: #111b21;
   --c-text-secondary: #3b4a54;
   --c-text-muted: #667781;

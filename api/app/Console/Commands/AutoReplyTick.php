@@ -8,6 +8,7 @@ use App\Services\AiReplyService;
 use App\Services\MeetingScheduler;
 use App\Services\TranscriptionService;
 use App\Support\Evolution;
+use App\Support\Tenancy;
 use Illuminate\Console\Command;
 
 /**
@@ -23,15 +24,24 @@ class AutoReplyTick extends Command
 
     public function handle(AiReplyService $ai, MeetingScheduler $scheduler, TranscriptionService $stt): int
     {
+        $tenancy = app(Tenancy::class);
+
+        // Consulta global (sem tenant vinculado): conversas vencidas de TODAS as empresas.
         $due = Conversation::where('auto_reply', true)
             ->whereNotNull('auto_reply_due_at')
             ->where('auto_reply_due_at', '<=', now())
             ->get();
 
-        // Dono da agenda Google (conta usada para marcar as reuniões automaticamente).
-        $googleUser = User::whereNotNull('google_refresh_token')->first();
-
         foreach ($due as $conv) {
+            // Daqui pra frente, tudo roda no contexto da empresa dona da conversa: as mensagens
+            // criadas nascem com o company_id certo e os envios usam o WhatsApp (instância) dela.
+            $tenancy->set($conv->company_id);
+
+            try {
+            // Dono da agenda Google DESTA empresa (conta usada para marcar as reuniões).
+            $googleUser = User::where('company_id', $conv->company_id)
+                ->whereNotNull('google_refresh_token')->first();
+
             // Última mensagem é nossa? Então já foi respondida (humano assumiu) → limpa e segue.
             $last = $conv->messages()->reorder()->orderByDesc('ts')->orderByDesc('id')->first();
             if (! $last || $last->is_out) {
@@ -127,6 +137,9 @@ class AutoReplyTick extends Command
             ]);
 
             $this->info("auto-reply: respondeu conversa {$conv->id} ({$conv->name})");
+            } finally {
+                $tenancy->forget();
+            }
         }
 
         return self::SUCCESS;

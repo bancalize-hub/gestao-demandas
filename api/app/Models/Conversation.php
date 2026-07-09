@@ -2,12 +2,16 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToCompany;
+
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Conversation extends Model
 {
+    use BelongsToCompany;
+
     protected $guarded = [];
 
     /** Silencia o broadcast de tempo real (usado em importações em massa). */
@@ -46,12 +50,12 @@ class Conversation extends Model
         // Tempo real: avisa os painéis abertos (chat/etiquetas/funil) a cada mudança.
         // Broadcast é best-effort: se o Reverb estiver fora, não derruba a operação.
         // Silenciável em importações em massa (self::$muteBroadcast) p/ não floodar.
-        $notify = function () {
+        $notify = function ($conv) {
             if (self::$muteBroadcast) {
                 return;
             }
             try {
-                \App\Events\CrmUpdated::dispatch('conversation');
+                \App\Events\CrmUpdated::dispatch('conversation', $conv->company_id);
             } catch (\Throwable $e) {
             }
         };

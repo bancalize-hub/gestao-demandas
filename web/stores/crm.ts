@@ -908,7 +908,7 @@ export const useCrmStore = defineStore('crm', {
     },
 
     // ----- Portal de solicitações -----
-    async submitForm(payload: { name: string, company: string, desc: string, due: string }) {
+    async submitForm(payload: { name: string, company: string, desc: string, due: string, slug?: string }) {
       const name = payload.name.trim()
       const desc = payload.desc.trim()
       if (!name || !desc) { this.formError = true; return }
@@ -922,6 +922,8 @@ export const useCrmStore = defineStore('crm', {
         due: due || 'Sem prazo',
         type: this.formType,
         column: 'todo',
+        // Empresa (tenant) destino — pelo slug na URL do portal (?e=slug).
+        company_slug: payload.slug || undefined,
       }
       try {
         const created = await api()<any>(`/api/solicitacoes`, { method: 'POST', body })

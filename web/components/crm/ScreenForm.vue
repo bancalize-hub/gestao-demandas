@@ -3,6 +3,9 @@ import { useCrmStore } from '~/stores/crm'
 
 const crm = useCrmStore()
 
+// Empresa (tenant) destino: slug na URL do portal, ex.: /solicitar?e=minha-empresa
+const slug = computed(() => (useRoute().query.e as string) || '')
+
 const name = ref('')
 const company = ref('')
 const desc = ref('')
@@ -23,7 +26,7 @@ function prioStyle(p: { color: string }, active: boolean) {
 }
 
 function submit() {
-  crm.submitForm({ name: name.value, company: company.value, desc: desc.value, due: due.value })
+  crm.submitForm({ name: name.value, company: company.value, desc: desc.value, due: due.value, slug: slug.value })
 }
 function reset() {
   name.value = ''

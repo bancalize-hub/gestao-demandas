@@ -2,25 +2,36 @@
 
 namespace App\Events;
 
+use App\Support\Tenancy;
 use Illuminate\Broadcasting\Channel;
 use Illuminate\Broadcasting\InteractsWithSockets;
+use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
 
 /**
  * Sinal leve de "algo mudou no CRM" — o front rebusca pela API autenticada
- * ao receber. Não trafega dados sensíveis (canal público, só um aviso).
+ * ao receber. Não trafega dados sensíveis (só um aviso com o tipo do que mudou).
+ *
+ * Canal PRIVADO por empresa: `crm.{companyId}`. Cada empresa só recebe os avisos
+ * da sua própria operação. O companyId, quando não informado, vem do contexto de
+ * tenancy atual (todo dispatch acontece dentro do escopo de uma empresa).
  */
 class CrmUpdated implements ShouldBroadcast
 {
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
-    public function __construct(public string $kind = 'crm') {}
+    public ?int $companyId;
+
+    public function __construct(public string $kind = 'crm', ?int $companyId = null)
+    {
+        $this->companyId = $companyId ?? app(Tenancy::class)->id();
+    }
 
     public function broadcastOn(): Channel
     {
-        return new Channel('crm');
+        return new PrivateChannel('crm.'.($this->companyId ?? 0));
     }
 
     public function broadcastAs(): string

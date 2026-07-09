@@ -9,11 +9,12 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 
-#[Fillable(['name', 'email', 'password'])]
+#[Fillable(['name', 'email', 'password', 'company_id'])]
 #[Hidden(['password', 'remember_token', 'google_access_token', 'google_refresh_token'])]
 #[Appends(['google_connected'])]
 class User extends Authenticatable
@@ -32,11 +33,18 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'is_admin' => 'boolean',
+            'is_super_admin' => 'boolean',
             // Tokens do Google guardados cifrados no banco.
             'google_access_token' => 'encrypted',
             'google_refresh_token' => 'encrypted',
             'google_token_expires_at' => 'datetime',
         ];
+    }
+
+    /** Empresa (tenant) a que o usuário pertence. */
+    public function company(): BelongsTo
+    {
+        return $this->belongsTo(Company::class);
     }
 
     /** Conta Google vinculada (tem refresh token para renovar o acesso). */

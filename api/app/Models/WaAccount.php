@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToCompany;
+
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
@@ -12,6 +14,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  */
 class WaAccount extends Model
 {
+    use BelongsToCompany;
+
     protected $guarded = [];
 
     protected $casts = [
@@ -33,12 +37,14 @@ class WaAccount extends Model
         return $this->role === 'primary';
     }
 
-    /** A conta principal (atende anúncios). Cacheada por request. */
+    /**
+     * A conta principal (atende anúncios) DA EMPRESA ATUAL.
+     * Sem cache estático: em multi-tenant o processo alterna entre empresas
+     * (agendador/webhook), então cachear vazaria a principal de uma no contexto da outra.
+     */
     public static function primary(): ?self
     {
-        static $cached = null;
-
-        return $cached ??= static::where('role', 'primary')->first();
+        return static::where('role', 'primary')->first();
     }
 
     /** Resolve a conta pelo nome da instância recebido no webhook da Evolution. */

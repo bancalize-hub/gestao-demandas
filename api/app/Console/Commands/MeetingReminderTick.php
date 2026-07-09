@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Models\Meeting;
 use App\Support\Evolution;
+use App\Support\Tenancy;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 
@@ -34,7 +35,14 @@ class MeetingReminderTick extends Command
             ->with('conversation')
             ->get();
 
+        $tenancy = app(Tenancy::class);
+
         foreach ($due as $meeting) {
+            // Contexto da empresa dona da reunião: o envio usa o WhatsApp dela e a
+            // mensagem espelhada nasce carimbada.
+            $tenancy->set((int) $meeting->company_id);
+
+            try {
             $text = $this->buildMessage($meeting);
 
             $waId = Evolution::sendText($meeting->phone, $text);
@@ -70,6 +78,9 @@ class MeetingReminderTick extends Command
             }
 
             $this->info("lembrete: enviado p/ reunião {$meeting->id} ({$meeting->phone})");
+            } finally {
+                $tenancy->forget();
+            }
         }
 
         return self::SUCCESS;

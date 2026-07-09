@@ -24,6 +24,9 @@ use Illuminate\Support\Facades\Route;
 // --- Autenticação (Sanctum SPA cookie) ---
 Route::post('/login', [AuthController::class, 'login']);
 
+// --- Público: cadastro self-service (cria a empresa + usuário dono e já autentica) ---
+Route::post('/register', [AuthController::class, 'register']);
+
 // --- Público: canal do cliente (portal de solicitações, sem login) ---
 Route::post('/solicitacoes', [TaskController::class, 'store']);
 
@@ -33,8 +36,8 @@ Route::post('/wpp/webhook', [WhatsAppController::class, 'webhook']);
 // --- Público: callback do OAuth do Google (usuário identificado pelo state assinado) ---
 Route::get('/google/callback', [GoogleAuthController::class, 'callback']);
 
-// --- Protegido (auth:sanctum) ---
-Route::middleware('auth:sanctum')->group(function () {
+// --- Protegido (auth:sanctum + tenancy: isola tudo pela empresa do usuário) ---
+Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
     Route::get('/me', [AuthController::class, 'me']);
     Route::post('/logout', [AuthController::class, 'logout']);
 
@@ -64,14 +67,17 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/conversations/{conversation}/followups', [FollowUpController::class, 'store']);
     Route::patch('/followups/{task}/complete', [FollowUpController::class, 'complete']);
 
-    // Agente operacional (chat que dirige o Claude Code na VPS). Só logado; tudo auditado.
-    Route::get('/agent/sessions', [AgentController::class, 'index']);
-    Route::post('/agent/sessions', [AgentController::class, 'store']);
-    Route::get('/agent/sessions/{session}', [AgentController::class, 'show']);
-    Route::delete('/agent/sessions/{session}', [AgentController::class, 'destroy']);
-    Route::post('/agent/sessions/{session}/messages', [AgentController::class, 'message']);
-    Route::get('/agent/jobs/{job}', [AgentController::class, 'job']);
-    Route::post('/agent/jobs/{job}/stop', [AgentController::class, 'stop']);
+    // Agente operacional (chat que dirige o Claude Code na VPS). Opera o próprio
+    // servidor — EXCLUSIVO do dono da plataforma (super-admin). Nunca exposto às empresas.
+    Route::middleware('super.admin')->group(function () {
+        Route::get('/agent/sessions', [AgentController::class, 'index']);
+        Route::post('/agent/sessions', [AgentController::class, 'store']);
+        Route::get('/agent/sessions/{session}', [AgentController::class, 'show']);
+        Route::delete('/agent/sessions/{session}', [AgentController::class, 'destroy']);
+        Route::post('/agent/sessions/{session}/messages', [AgentController::class, 'message']);
+        Route::get('/agent/jobs/{job}', [AgentController::class, 'job']);
+        Route::post('/agent/jobs/{job}/stop', [AgentController::class, 'stop']);
+    });
 
     Route::get('/stages', [StageController::class, 'index']);
     Route::post('/stages', [StageController::class, 'store']);

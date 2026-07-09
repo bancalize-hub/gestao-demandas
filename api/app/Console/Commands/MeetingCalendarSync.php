@@ -7,6 +7,7 @@ use App\Models\Meeting;
 use App\Models\Message;
 use App\Models\User;
 use App\Services\GoogleCalendarService;
+use App\Support\Tenancy;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 
@@ -25,13 +26,33 @@ class MeetingCalendarSync extends Command
 
     public function handle(GoogleCalendarService $google): int
     {
-        $user = User::whereNotNull('google_access_token')->first();
-        if (! $user || ! $user->hasGoogle()) {
+        $tenancy = app(Tenancy::class);
+
+        // Uma conta Google por empresa (a primeira conectada). Cada empresa importa as
+        // reuniões da SUA agenda, casando com os SEUS leads — isolado das demais.
+        $users = User::whereNotNull('google_access_token')
+            ->whereNotNull('company_id')
+            ->get()->unique('company_id');
+
+        if ($users->isEmpty()) {
             $this->warn('Nenhuma conta Google conectada — nada a sincronizar.');
 
             return self::SUCCESS;
         }
 
+        foreach ($users as $user) {
+            if (! $user->hasGoogle()) {
+                continue;
+            }
+            $tenancy->run((int) $user->company_id, fn () => $this->syncUser($google, $user));
+        }
+
+        return self::SUCCESS;
+    }
+
+    /** Sincroniza a agenda de UMA empresa (contexto de tenancy já vinculado). */
+    private function syncUser(GoogleCalendarService $google, User $user): void
+    {
         $tz = config('app.timezone', 'America/Sao_Paulo');
         $from = Carbon::now($tz)->subDays(14);
         $to = Carbon::now($tz)->addDays(30);
@@ -39,9 +60,9 @@ class MeetingCalendarSync extends Command
         try {
             $events = $google->listEvents($user, $from, $to);
         } catch (\Throwable $e) {
-            $this->warn('Falha ao listar a agenda: '.$e->getMessage());
+            $this->warn("Empresa {$user->company_id}: falha ao listar a agenda: ".$e->getMessage());
 
-            return self::SUCCESS;
+            return;
         }
 
         $imported = 0;
@@ -93,9 +114,7 @@ class MeetingCalendarSync extends Command
             $imported++;
         }
 
-        $this->info("calendar-sync: {$imported} reuniões importadas, {$matched} casadas com um lead.");
-
-        return self::SUCCESS;
+        $this->info("empresa {$user->company_id} calendar-sync: {$imported} reuniões importadas, {$matched} casadas com um lead.");
     }
 
     /**

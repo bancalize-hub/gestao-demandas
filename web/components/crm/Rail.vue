@@ -70,7 +70,7 @@ const initials = computed(() => {
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h9M4 12h6M4 18h10" stroke-linecap="round" /><path d="m16 8 3.2 3.2L16 14.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
     </button>
 
-    <button v-if="user?.is_admin" class="navbtn" :style="nav(route.path === '/agente')" title="Agente (opera a VPS)" @click="navigateTo('/agente')">
+    <button v-if="user?.is_super_admin" class="navbtn" :style="nav(route.path === '/agente')" title="Agente (opera a VPS)" @click="navigateTo('/agente')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="6" width="16" height="13" rx="2.5" /><path d="M9 2.5v3.5M15 2.5v3.5M9.5 12h.01M14.5 12h.01M9 16h6" stroke-linecap="round" /></svg>
     </button>
 

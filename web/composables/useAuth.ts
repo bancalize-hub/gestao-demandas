@@ -1,10 +1,20 @@
 // Autenticação Sanctum SPA (cookie de sessão). Estado compartilhado via useState.
 
+export interface AuthCompany {
+  id: number
+  name: string
+  slug: string
+  is_active: boolean
+}
+
 export interface AuthUser {
   id: number
   name: string
   email: string
   is_admin: boolean
+  is_super_admin: boolean
+  company_id: number | null
+  company?: AuthCompany | null
 }
 
 export function useAuth() {
@@ -28,6 +38,13 @@ export function useAuth() {
     await fetchUser()
   }
 
+  // Cadastro self-service: cria a empresa + usuário dono e já autentica.
+  async function register(payload: { company: string, name: string, email: string, password: string }) {
+    const res = await api<{ user: AuthUser }>('/api/register', { method: 'POST', body: payload })
+    user.value = res.user
+    return user.value
+  }
+
   async function logout() {
     try {
       await api('/api/logout', { method: 'POST' })
@@ -38,5 +55,5 @@ export function useAuth() {
     }
   }
 
-  return { user, isAuthenticated, fetchUser, login, logout }
+  return { user, isAuthenticated, fetchUser, login, register, logout }
 }

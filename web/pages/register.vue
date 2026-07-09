@@ -1,11 +1,12 @@
 <script setup lang="ts">
 definePageMeta({ layout: 'blank' })
 
-const { login } = useAuth()
+const { register } = useAuth()
 
+const company = ref('')
+const name = ref('')
 const email = ref('')
 const password = ref('')
-const remember = ref(false)
 const error = ref('')
 const loading = ref(false)
 
@@ -14,11 +15,14 @@ async function submit() {
   error.value = ''
   loading.value = true
   try {
-    await login({ email: email.value, password: password.value, remember: remember.value })
+    await register({ company: company.value, name: name.value, email: email.value, password: password.value })
     await navigateTo('/', { replace: true })
   }
   catch (e: any) {
-    error.value = e?.response?._data?.message || 'E-mail ou senha inválidos.'
+    const data = e?.response?._data
+    error.value = data?.message
+      ? (data.errors ? Object.values(data.errors).flat()[0] as string : data.message)
+      : 'Não foi possível criar a conta. Verifique os dados.'
   }
   finally {
     loading.value = false
@@ -36,11 +40,21 @@ async function submit() {
         <span style="font-size:21px;font-weight:800;letter-spacing:-.3px;">Vértice CRM</span>
       </div>
 
-      <form style="background:#111b21;border:1px solid #1c2730;border-radius:18px;padding:30px;display:flex;flex-direction:column;gap:18px;" @submit.prevent="submit">
+      <form style="background:#111b21;border:1px solid #1c2730;border-radius:18px;padding:30px;display:flex;flex-direction:column;gap:16px;" @submit.prevent="submit">
         <div>
-          <div style="font-size:21px;font-weight:800;">Entrar</div>
-          <div style="font-size:13.5px;color:#8696a0;margin-top:5px;">Acesse o painel da sua equipe.</div>
+          <div style="font-size:21px;font-weight:800;">Criar conta da empresa</div>
+          <div style="font-size:13.5px;color:#8696a0;margin-top:5px;">Atenda seus clientes com seu próprio WhatsApp, isolado.</div>
         </div>
+
+        <label style="display:flex;flex-direction:column;gap:7px;">
+          <span style="font-size:12.5px;font-weight:600;color:#aebac1;">Nome da empresa</span>
+          <input v-model="company" type="text" autocomplete="organization" placeholder="Minha Empresa Ltda" style="background:#202c33;border:1px solid #2a3942;border-radius:11px;padding:12px 13px;color:#e9edef;font-family:inherit;font-size:14px;outline:none;">
+        </label>
+
+        <label style="display:flex;flex-direction:column;gap:7px;">
+          <span style="font-size:12.5px;font-weight:600;color:#aebac1;">Seu nome</span>
+          <input v-model="name" type="text" autocomplete="name" placeholder="Seu nome" style="background:#202c33;border:1px solid #2a3942;border-radius:11px;padding:12px 13px;color:#e9edef;font-family:inherit;font-size:14px;outline:none;">
+        </label>
 
         <label style="display:flex;flex-direction:column;gap:7px;">
           <span style="font-size:12.5px;font-weight:600;color:#aebac1;">E-mail</span>
@@ -49,12 +63,7 @@ async function submit() {
 
         <label style="display:flex;flex-direction:column;gap:7px;">
           <span style="font-size:12.5px;font-weight:600;color:#aebac1;">Senha</span>
-          <input v-model="password" type="password" autocomplete="current-password" placeholder="••••••••" style="background:#202c33;border:1px solid #2a3942;border-radius:11px;padding:12px 13px;color:#e9edef;font-family:inherit;font-size:14px;outline:none;">
-        </label>
-
-        <label style="display:flex;align-items:center;gap:9px;font-size:13px;color:#aebac1;cursor:pointer;">
-          <input v-model="remember" type="checkbox" style="width:16px;height:16px;accent-color:#25D366;cursor:pointer;">
-          Manter conectado
+          <input v-model="password" type="password" autocomplete="new-password" placeholder="mínimo 8 caracteres" style="background:#202c33;border:1px solid #2a3942;border-radius:11px;padding:12px 13px;color:#e9edef;font-family:inherit;font-size:14px;outline:none;">
         </label>
 
         <div v-if="error" style="display:flex;align-items:center;gap:8px;background:rgba(255,77,77,.1);border:1px solid rgba(255,77,77,.3);color:#ff8d8d;font-size:13px;font-weight:600;padding:11px 14px;border-radius:11px;">
@@ -62,13 +71,13 @@ async function submit() {
         </div>
 
         <button type="submit" :disabled="loading" :style="{ width: '100%', background: '#25D366', border: 'none', color: '#062014', fontFamily: 'inherit', fontSize: '15px', fontWeight: 700, padding: '14px', borderRadius: '13px', cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.7 : 1, boxShadow: '0 6px 16px rgba(37,211,102,.28)' }">
-          {{ loading ? 'Entrando…' : 'Entrar' }}
+          {{ loading ? 'Criando…' : 'Criar conta' }}
         </button>
       </form>
 
       <div style="text-align:center;font-size:13px;color:#8696a0;margin-top:18px;">
-        Ainda não tem conta?
-        <NuxtLink to="/register" style="color:#25D366;font-weight:700;text-decoration:none;">Cadastre sua empresa</NuxtLink>
+        Já tem conta?
+        <NuxtLink to="/login" style="color:#25D366;font-weight:700;text-decoration:none;">Entrar</NuxtLink>
       </div>
     </div>
   </div>

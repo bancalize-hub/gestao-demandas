@@ -6,6 +6,7 @@ use App\Models\Conversation;
 use App\Models\LeadActivity;
 use App\Models\StageAutomationRun;
 use App\Support\Evolution;
+use App\Support\Tenancy;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -32,9 +33,13 @@ class AutomationTick extends Command
             ->limit(self::PER_TICK)
             ->get();
 
+        $tenancy = app(Tenancy::class);
+
         foreach ($runs as $run) {
             try {
-                $this->processRun($run);
+                // Processa no contexto da empresa dona do run (mensagens/atividades nascem
+                // carimbadas e o envio usa o WhatsApp da empresa).
+                $tenancy->run((int) $run->company_id, fn () => $this->processRun($run));
             } catch (\Throwable $e) {
                 Log::warning('automations:tick erro', ['run' => $run->id, 'e' => $e->getMessage()]);
                 $run->update(['status' => 'failed', 'error' => mb_substr($e->getMessage(), 0, 250)]);

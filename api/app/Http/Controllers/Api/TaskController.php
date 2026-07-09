@@ -3,9 +3,11 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Company;
 use App\Models\Task;
 use App\Models\User;
 use App\Services\GoogleCalendarService;
+use App\Support\Tenancy;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -31,17 +33,35 @@ class TaskController extends Controller
             'column' => 'nullable|string|max:16',
             'starts_at' => 'nullable|date',
             'ends_at' => 'nullable|date|after_or_equal:starts_at',
+            // Portal público do cliente: identifica a empresa (tenant) destino pelo slug.
+            'company_slug' => 'nullable|string',
         ]);
 
-        $data['column'] = $data['column'] ?? 'todo';
-        $data['priority'] = $data['priority'] ?? 'media';
-        // Novas solicitações entram no topo de "A fazer".
-        $data['position'] = (Task::where('column', $data['column'])->min('position') ?? 0) - 1;
+        $slug = $data['company_slug'] ?? null;
+        unset($data['company_slug']);
 
-        $task = Task::create($data);
-        $this->syncToCalendar($task, $request->user());
+        $create = function () use ($data, $request) {
+            $data['column'] = $data['column'] ?? 'todo';
+            $data['priority'] = $data['priority'] ?? 'media';
+            // Novas solicitações entram no topo de "A fazer" (escopado à empresa atual).
+            $data['position'] = (Task::where('column', $data['column'])->min('position') ?? 0) - 1;
 
-        return response()->json($task->fresh(), 201);
+            $task = Task::create($data);
+            $this->syncToCalendar($task, $request->user());
+
+            return $task->fresh();
+        };
+
+        // Autenticado (/tasks): a empresa já está vinculada pelo middleware set.tenant.
+        if ($request->user()) {
+            return response()->json($create(), 201);
+        }
+
+        // Público (/solicitacoes): sem login → resolve a empresa pelo slug e cria no contexto dela.
+        $company = $slug ? Company::where('slug', $slug)->where('is_active', true)->first() : null;
+        abort_unless($company, 404, 'Empresa não encontrada.');
+
+        return response()->json(app(Tenancy::class)->run($company->id, $create), 201);
     }
 
     public function update(Request $request, Task $task)

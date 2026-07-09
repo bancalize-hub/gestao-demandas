@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Services\GmailService;
 use App\Services\GoogleCalendarService;
 use App\Services\StageMover;
+use App\Support\Tenancy;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 
@@ -43,9 +44,13 @@ class MeetingAttendanceTick extends Command
             ->with('conversation')
             ->get();
 
+        $tenancy = app(Tenancy::class);
+
         foreach ($meetings as $meeting) {
             try {
-                $this->process($meeting, $google, $gmail, $minMinutes, $doneStage);
+                // Contexto da empresa dona: presença/atividades/tarefas nascem carimbadas
+                // e as buscas (conta Google, conversa) ficam isoladas.
+                $tenancy->run((int) $meeting->company_id, fn () => $this->process($meeting, $google, $gmail, $minMinutes, $doneStage));
             } catch (\Throwable $e) {
                 $this->warn("reunião {$meeting->id}: {$e->getMessage()}");
             }
@@ -58,7 +63,9 @@ class MeetingAttendanceTick extends Command
     {
         $user = $meeting->user_id ? User::find($meeting->user_id) : null;
         if (! $user || ! $user->hasGoogle()) {
-            $user = User::whereNotNull('google_access_token')->first(); // fallback: a conta conectada
+            // Fallback: uma conta Google conectada DA MESMA empresa (nunca de outra).
+            $user = User::where('company_id', $meeting->company_id)
+                ->whereNotNull('google_access_token')->first();
         }
         if (! $user || ! $user->hasGoogle()) {
             $meeting->update(['attendance_checked_at' => now()]); // sem conta Google p/ apurar — encerra

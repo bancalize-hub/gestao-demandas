@@ -7,6 +7,7 @@ use App\Models\Conversation;
 use App\Models\WaAccount;
 use App\Services\CampaignMessageService;
 use App\Support\Evolution;
+use App\Support\Tenancy;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
@@ -23,11 +24,16 @@ class CampaignTick extends Command
 
     public function handle(CampaignMessageService $ai): int
     {
+        $tenancy = app(Tenancy::class);
+
+        // Global (sem tenant): campanhas ativas de TODAS as empresas.
         $campaigns = Campaign::where('status', 'running')->get();
 
         foreach ($campaigns as $campaign) {
             try {
-                $this->processCampaign($campaign, $ai);
+                // Processa no contexto da empresa dona: conversas/mensagens carimbadas
+                // e o envio usa o número (instância) de prospecção dela.
+                $tenancy->run((int) $campaign->company_id, fn () => $this->processCampaign($campaign, $ai));
             } catch (\Throwable $e) {
                 Log::warning('campaigns:tick erro', ['campaign' => $campaign->id, 'e' => $e->getMessage()]);
             }

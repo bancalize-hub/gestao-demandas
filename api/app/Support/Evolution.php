@@ -18,7 +18,14 @@ class Evolution
     /** Resolve a instância: a passada explicitamente, ou a principal (config) por padrão. */
     private static function instance(?string $instance = null): string
     {
-        return $instance ?: (string) config('services.evolution.instance');
+        if ($instance) {
+            return $instance;
+        }
+        // Sem instância explícita, usa a PRINCIPAL da empresa atual (escopada pelo tenant).
+        // Só cai no config global quando não há empresa/primary — compatível com a Empresa 1.
+        $primary = \App\Models\WaAccount::primary();
+
+        return $primary?->instance ?: (string) config('services.evolution.instance');
     }
 
     /** Lista as etiquetas do WhatsApp Business conectado. */

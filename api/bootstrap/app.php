@@ -16,6 +16,12 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         // Habilita o guard de sessão (cookie) do Sanctum para requests do SPA.
         $middleware->statefulApi();
+
+        // Vincula a empresa (tenant) do usuário autenticado. Usado no grupo auth:sanctum.
+        $middleware->alias([
+            'set.tenant' => \App\Http\Middleware\SetTenant::class,
+            'super.admin' => \App\Http\Middleware\EnsureSuperAdmin::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(

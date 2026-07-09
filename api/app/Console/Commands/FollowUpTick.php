@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Models\LeadActivity;
 use App\Models\Task;
 use App\Services\AiReplyService;
+use App\Support\Tenancy;
 use Illuminate\Console\Command;
 
 /**
@@ -30,12 +31,18 @@ class FollowUpTick extends Command
             ->limit(20)
             ->get();
 
+        $tenancy = app(Tenancy::class);
+
         foreach ($due as $task) {
             $conv = $task->conversation;
             if (! $conv) {
                 continue;
             }
 
+            // Contexto da empresa dona do follow-up (rascunho/atividade carimbados).
+            $tenancy->set((int) $task->company_id);
+
+            try {
             $draft = $ai->generate(
                 $conv,
                 "Escreva uma mensagem curta e cordial de follow-up para retomar o contato com este lead, "
@@ -53,13 +60,16 @@ class FollowUpTick extends Command
 
             LeadActivity::log($conv->id, 'followup', 'Follow-up venceu — rascunho de mensagem pronto', null);
 
-            // Avisa os painéis abertos (ficha/acompanhamentos) em tempo real.
+            // Avisa os painéis abertos (ficha/acompanhamentos) em tempo real — só a empresa dona.
             try {
-                \App\Events\CrmUpdated::dispatch('followup');
+                \App\Events\CrmUpdated::dispatch('followup', (int) $task->company_id);
             } catch (\Throwable $e) {
             }
 
             $this->info("followup: rascunho gerado p/ conversa {$conv->id}");
+            } finally {
+                $tenancy->forget();
+            }
         }
 
         return self::SUCCESS;

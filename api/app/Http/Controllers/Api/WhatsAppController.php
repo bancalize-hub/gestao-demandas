@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\WaAccount;
+use App\Support\Tenancy;
 use Illuminate\Http\Request;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
@@ -20,10 +21,19 @@ class WhatsAppController extends Controller
             ->timeout(20);
     }
 
-    /** Instância-alvo: a passada, ou a principal (config) por padrão. */
+    /**
+     * Instância-alvo: a passada, ou a principal DA EMPRESA ATUAL por padrão.
+     * (Como roda dentro do contexto de tenancy, WaAccount::primary() já é escopada.)
+     * Só cai no config global quando não há empresa/primary — compatível com a Empresa 1.
+     */
     private function instance(?string $instance = null): string
     {
-        return $instance ?: (string) config('services.evolution.instance');
+        if ($instance) {
+            return $instance;
+        }
+        $primary = WaAccount::primary();
+
+        return $primary?->instance ?: (string) config('services.evolution.instance');
     }
 
     /** Conta-alvo da requisição (?account=<id> ou body account_id); default = principal. */
@@ -157,8 +167,9 @@ class WhatsAppController extends Controller
             'daily_cap' => 'nullable|integer|min:1|max:1000',
         ]);
 
-        // Nome de instância único e seguro (slug + sufixo aleatório).
-        $instance = (Str::slug($data['name']) ?: 'numero').'-'.Str::lower(Str::random(5));
+        // Nome de instância único e seguro, prefixado pela empresa (isolamento por tenant).
+        $prefix = 'c'.$request->user()->company_id.'-';
+        $instance = $prefix.(Str::slug($data['name']) ?: 'numero').'-'.Str::lower(Str::random(5));
 
         $res = $this->evo()->timeout(40)->post('/instance/create', [
             'instanceName' => $instance,
@@ -178,12 +189,16 @@ class WhatsAppController extends Controller
             ],
         ]);
 
+        // A primeira conta conectada da empresa vira a PRINCIPAL (atende leads com IA);
+        // as demais são de prospecção/disparo. company_id é carimbado pelo BelongsToCompany.
+        $isFirst = ! WaAccount::primary();
+
         $account = WaAccount::create([
             'name' => $data['name'],
             'instance' => $instance,
-            'role' => 'outreach',
+            'role' => $isFirst ? 'primary' : 'outreach',
             'is_active' => true,
-            'daily_cap' => $data['daily_cap'] ?? 40,
+            'daily_cap' => $isFirst ? 0 : ($data['daily_cap'] ?? 40),
             'state' => 'connecting',
         ]);
 
@@ -511,31 +526,41 @@ class WhatsAppController extends Controller
 
         $event = $request->input('event');
 
-        // De qual número (instância) veio o evento. A principal (vertice) resolve para a conta
-        // primary; números de prospecção resolvem para a conta outreach correspondente.
-        $account = WaAccount::byInstance($request->input('instance')) ?? WaAccount::primary();
+        // De qual número (instância) veio o evento → resolve a CONTA e, por ela, a EMPRESA.
+        // Sem tenant vinculado aqui, byInstance enxerga todas as empresas (instância é única).
+        $account = WaAccount::byInstance($request->input('instance'));
 
-        // messages.upsert = mensagem nova; messages.set = lote de histórico (sync full history).
-        if ($event === 'messages.upsert' || $event === 'messages.set') {
-            $data = $request->input('data', []);
-            $messages = isset($data['key']) ? [$data] : ($data['messages'] ?? []);
-            foreach ($messages as $m) {
-                if (is_array($m)) {
-                    $this->ingestMessage($m, $account);
-                }
-            }
-        } elseif ($event === 'messages.update' || $event === 'messages.edit') {
-            // Recibo (ack): entregue/lido. Pode vir como objeto único ou lista.
-            $data = $request->input('data', []);
-            $items = (isset($data['keyId']) || isset($data['key']) || isset($data['status'])) ? [$data] : (array_is_list($data) ? $data : [$data]);
-            foreach ($items as $u) {
-                if (is_array($u)) {
-                    $this->ingestStatus($u);
-                }
-            }
-        } elseif ($event === 'labels.association') {
-            $this->ingestLabelAssociation($request->input('data', []));
+        // Instância desconhecida: não dá para atribuir a nenhuma empresa. Ignora com segurança
+        // (NUNCA cair na principal de outra empresa — isso vazaria mensagens entre tenants).
+        if (! $account || ! $account->company_id) {
+            return response()->json(['ok' => true, 'ignored' => 'unknown-instance']);
         }
+
+        // Processa TUDO no contexto da empresa dona da instância: as conversas/mensagens/labels
+        // criadas nascem carimbadas com o company_id certo e as consultas ficam isoladas.
+        app(Tenancy::class)->run($account->company_id, function () use ($event, $request, $account) {
+            // messages.upsert = mensagem nova; messages.set = lote de histórico (sync full history).
+            if ($event === 'messages.upsert' || $event === 'messages.set') {
+                $data = $request->input('data', []);
+                $messages = isset($data['key']) ? [$data] : ($data['messages'] ?? []);
+                foreach ($messages as $m) {
+                    if (is_array($m)) {
+                        $this->ingestMessage($m, $account);
+                    }
+                }
+            } elseif ($event === 'messages.update' || $event === 'messages.edit') {
+                // Recibo (ack): entregue/lido. Pode vir como objeto único ou lista.
+                $data = $request->input('data', []);
+                $items = (isset($data['keyId']) || isset($data['key']) || isset($data['status'])) ? [$data] : (array_is_list($data) ? $data : [$data]);
+                foreach ($items as $u) {
+                    if (is_array($u)) {
+                        $this->ingestStatus($u);
+                    }
+                }
+            } elseif ($event === 'labels.association') {
+                $this->ingestLabelAssociation($request->input('data', []));
+            }
+        });
 
         return response()->json(['ok' => true]);
     }

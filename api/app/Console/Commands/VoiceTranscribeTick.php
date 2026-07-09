@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Models\Message;
 use App\Services\TranscriptionService;
+use App\Support\Tenancy;
 use Illuminate\Console\Command;
 
 /**
@@ -36,8 +37,11 @@ class VoiceTranscribeTick extends Command
             ->limit(20)
             ->get();
 
+        $tenancy = app(Tenancy::class);
+
         foreach ($pending as $msg) {
-            $text = $stt->transcribe($msg);
+            // Busca a mídia no WhatsApp da empresa dona da mensagem (instância correta).
+            $text = $tenancy->run((int) $msg->company_id, fn () => $stt->transcribe($msg));
             if ($text !== null) {
                 $this->info("transcrito msg {$msg->id}: ".mb_substr($text, 0, 50));
             }

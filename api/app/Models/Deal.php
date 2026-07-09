@@ -2,10 +2,14 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToCompany;
+
 use Illuminate\Database\Eloquent\Model;
 
 class Deal extends Model
 {
+    use BelongsToCompany;
+
     protected $guarded = [];
 
     protected $casts = [
@@ -17,9 +21,10 @@ class Deal extends Model
     protected static function booted(): void
     {
         // Tempo real: avisa os painéis (funil) a cada mudança. Best-effort.
-        $notify = function () {
+        // Passa o company_id do próprio registro para o aviso ir só à empresa dona.
+        $notify = function ($deal) {
             try {
-                \App\Events\CrmUpdated::dispatch('deal');
+                \App\Events\CrmUpdated::dispatch('deal', $deal->company_id);
             } catch (\Throwable $e) {
             }
         };

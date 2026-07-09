@@ -88,6 +88,17 @@ class AuthController extends Controller
         return $request->user()->load('company');
     }
 
+    /** Salva a preferência de tema (claro/escuro) do usuário. */
+    public function updateTheme(Request $request)
+    {
+        $data = $request->validate(['theme' => 'required|in:light,dark,system']);
+        $user = $request->user();
+        $user->theme = $data['theme'];
+        $user->save();
+
+        return response()->json(['theme' => $user->theme]);
+    }
+
     /** Lista de usuários da PRÓPRIA empresa (somente admin). */
     public function index(Request $request)
     {

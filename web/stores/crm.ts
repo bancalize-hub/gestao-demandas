@@ -108,6 +108,8 @@ type Board = 'pipeline' | 'tasks'
 interface DragRef { board: Board, from: string, id: number | string, kind?: 'conv' | 'deal' }
 
 // ----- Metadados fixos das colunas -----
+// Cores de STATUS/etapa/prioridade são DADO (usadas como `${cor}22` p/ tint e como
+// borda) e legíveis nos dois temas — ficam em hex, não em token de tema.
 const DEFAULT_STAGES: Stage[] = [
   { key: 'novo', name: 'Novo lead', color: '#53bdeb' },
   { key: 'contato', name: 'Contato feito', color: '#7c6cf5' },

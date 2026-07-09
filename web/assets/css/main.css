@@ -2,7 +2,11 @@
 @tailwind components;
 @tailwind utilities;
 
+/* O tema (claro/escuro) é definido em runtime pelo plugin (data-theme + colorScheme). */
 :root {
+  color-scheme: light;
+}
+:root[data-theme='dark'] {
   color-scheme: dark;
 }
 
@@ -12,10 +16,11 @@
 
 body {
   margin: 0;
-  background: #0b141a;
-  color: #e9edef;
+  background: var(--c-bg-deep);
+  color: var(--c-text);
   font-family: 'Manrope', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+  transition: background-color .2s ease, color .2s ease;
 }
 
 ::-webkit-scrollbar {
@@ -23,7 +28,7 @@ body {
   height: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2a3942;
+  background: var(--c-surface-3);
   border-radius: 8px;
 }
 ::-webkit-scrollbar-track {

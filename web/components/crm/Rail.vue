@@ -4,7 +4,15 @@ import { SCREEN_ROUTES, useCrmStore, type Screen } from '~/stores/crm'
 const crm = useCrmStore()
 const route = useRoute()
 const { user, logout } = useAuth()
+const { isDark, toggle } = useTheme()
 const isMobile = useIsMobile()
+
+// Logo da empresa para o topo do Rail (variante conforme o tema), se houver.
+const companyLogo = computed(() => {
+  const c = user.value?.company
+  if (!c) return null
+  return (isDark.value ? c.logo_dark_url : c.logo_light_url) || c.logo_light_url || c.logo_dark_url || null
+})
 
 function isActive(s: Screen) {
   return route.path === SCREEN_ROUTES[s]
@@ -14,15 +22,15 @@ function isActive(s: Screen) {
 // está aberta no chat, para o teclado/composer ocuparem a tela toda.
 const hideOnMobile = computed(() => isMobile.value && isActive('chat') && crm.chatOpen)
 const railStyle = computed(() => isMobile.value
-  ? { order: 2, width: '100%', height: '58px', flexShrink: 0, background: '#0a0f12', borderTop: '1px solid #1c2730', display: hideOnMobile.value ? 'none' : 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', padding: '0 4px', gap: '2px', overflowX: 'auto' }
-  : { width: '76px', flexShrink: 0, background: '#0a0f12', borderRight: '1px solid #1c2730', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '18px 0', gap: '6px' })
+  ? { order: 2, width: '100%', height: '58px', flexShrink: 0, background: 'var(--c-bg-deepest)', borderTop: '1px solid var(--c-surface-1)', display: hideOnMobile.value ? 'none' : 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', padding: '0 4px', gap: '2px', overflowX: 'auto' }
+  : { width: '76px', flexShrink: 0, background: 'var(--c-bg-deepest)', borderRight: '1px solid var(--c-surface-1)', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '18px 0', gap: '6px' })
 
 function nav(active: boolean) {
   return {
     width: '46px', height: '46px', borderRadius: '14px', display: 'flex',
     alignItems: 'center', justifyContent: 'center', border: 'none', cursor: 'pointer',
-    transition: 'all .15s', background: active ? 'rgba(37,211,102,0.14)' : 'transparent',
-    color: active ? '#25D366' : '#8696a0',
+    transition: 'all .15s', background: active ? 'rgba(var(--accent-rgb),0.14)' : 'transparent',
+    color: active ? 'var(--accent)' : 'var(--c-text-muted)',
   }
 }
 
@@ -35,8 +43,9 @@ const initials = computed(() => {
 
 <template>
   <nav :style="railStyle">
-    <div v-if="!isMobile" style="width:42px;height:42px;border-radius:13px;background:#25D366;display:flex;align-items:center;justify-content:center;margin-bottom:14px;box-shadow:0 6px 16px rgba(37,211,102,.35);">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 3c-4.97 0-9 3.58-9 8 0 2.5 1.3 4.7 3.3 6.1L5.5 21l3.6-1.5c.9.25 1.9.4 2.9.4 4.97 0 9-3.58 9-8s-4.03-8.9-9-8.9Z" fill="#0a0f12" /></svg>
+    <img v-if="!isMobile && companyLogo" :src="companyLogo" alt="Logo" style="width:42px;height:42px;border-radius:13px;object-fit:contain;margin-bottom:14px;">
+    <div v-else-if="!isMobile" style="width:42px;height:42px;border-radius:13px;background:var(--accent);display:flex;align-items:center;justify-content:center;margin-bottom:14px;box-shadow:0 6px 16px rgba(var(--accent-rgb),.35);">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 3c-4.97 0-9 3.58-9 8 0 2.5 1.3 4.7 3.3 6.1L5.5 21l3.6-1.5c.9.25 1.9.4 2.9.4 4.97 0 9-3.58 9-8s-4.03-8.9-9-8.9Z" fill="var(--c-bg-deepest)" /></svg>
     </div>
 
     <button class="navbtn" :style="nav(isActive('chat'))" title="Chat" @click="crm.go('chat')">
@@ -69,6 +78,9 @@ const initials = computed(() => {
     <button v-if="user?.is_admin" class="navbtn" :style="nav(route.path === '/admin/automacoes')" title="Automações de etapa" @click="navigateTo('/admin/automacoes')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h9M4 12h6M4 18h10" stroke-linecap="round" /><path d="m16 8 3.2 3.2L16 14.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
     </button>
+    <button v-if="user?.is_admin" class="navbtn" :style="nav(route.path === '/admin/marca')" title="Marca (cores e logo)" @click="navigateTo('/admin/marca')">
+      <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3a9 9 0 1 0 0 18c1.4 0 2.2-.9 2.2-2 0-1-.8-1.6-.8-2.4 0-.7.6-1.3 1.4-1.3H17a4 4 0 0 0 4-4c0-4.4-4-8.3-9-8.3Z" stroke-linejoin="round" /><circle cx="7.5" cy="12" r="1.1" fill="currentColor" stroke="none" /><circle cx="10" cy="7.8" r="1.1" fill="currentColor" stroke="none" /><circle cx="14.5" cy="7.8" r="1.1" fill="currentColor" stroke="none" /></svg>
+    </button>
 
     <button v-if="user?.is_super_admin" class="navbtn" :style="nav(route.path === '/agente')" title="Agente (opera a VPS)" @click="navigateTo('/agente')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="6" width="16" height="13" rx="2.5" /><path d="M9 2.5v3.5M15 2.5v3.5M9.5 12h.01M14.5 12h.01M9 16h6" stroke-linecap="round" /></svg>
@@ -76,10 +88,15 @@ const initials = computed(() => {
 
     <div v-if="!isMobile" style="flex:1;" />
 
+    <button class="navbtn" :title="isDark ? 'Tema claro' : 'Tema escuro'" :style="nav(false)" @click="toggle()">
+      <svg v-if="isDark" width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="4.2" /><path d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6" stroke-linecap="round" /></svg>
+      <svg v-else width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 14.5A8 8 0 0 1 9.5 4a7 7 0 1 0 10.5 10.5Z" stroke-linecap="round" stroke-linejoin="round" /></svg>
+    </button>
+
     <button class="navbtn" title="Sair" :style="nav(false)" @click="logout()">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 12H4m0 0 3.5-3.5M4 12l3.5 3.5M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4" stroke-linecap="round" stroke-linejoin="round" /></svg>
     </button>
-    <div v-if="!isMobile" :title="user?.name || ''" style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#25D366,#0e8a4f);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:#062014;margin-top:4px;">
+    <div v-if="!isMobile" :title="user?.name || ''" style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-deep));display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:var(--accent-ink);margin-top:4px;">
       {{ initials }}
     </div>
   </nav>
@@ -87,6 +104,6 @@ const initials = computed(() => {
 
 <style scoped>
 .navbtn:hover {
-  background: rgba(37, 211, 102, 0.1) !important;
+  background: rgba(var(--accent-rgb),0.1) !important;
 }
 </style>

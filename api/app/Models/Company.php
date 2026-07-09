@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
@@ -16,11 +17,24 @@ class Company extends Model
 {
     protected $guarded = [];
 
+    // URLs completas das logos são expostas ao front (o path fica no banco).
+    protected $appends = ['logo_light_url', 'logo_dark_url'];
+
     protected function casts(): array
     {
         return [
             'is_active' => 'boolean',
         ];
+    }
+
+    protected function logoLightUrl(): Attribute
+    {
+        return Attribute::get(fn () => $this->logo_light ? asset('storage/'.$this->logo_light) : null);
+    }
+
+    protected function logoDarkUrl(): Attribute
+    {
+        return Attribute::get(fn () => $this->logo_dark ? asset('storage/'.$this->logo_dark) : null);
     }
 
     public function users(): HasMany

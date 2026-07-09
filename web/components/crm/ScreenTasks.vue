@@ -44,13 +44,13 @@ const cols = computed(() => crm.tasks.map((col) => {
   const over = crm.dragOverCol === key
   return {
     id: col.id, title: col.title, dot: col.dot, count: col.cards.length,
-    bodyStyle: { display: 'flex', flexDirection: 'column', gap: '10px', overflowY: 'auto', flex: 1, borderRadius: '10px', minHeight: '70px', transition: 'background .15s', background: over ? 'rgba(37,211,102,.08)' : 'transparent', outline: over ? '2px dashed rgba(37,211,102,.45)' : '2px dashed transparent', outlineOffset: '-2px' },
+    bodyStyle: { display: 'flex', flexDirection: 'column', gap: '10px', overflowY: 'auto', flex: 1, borderRadius: '10px', minHeight: '70px', transition: 'background .15s', background: over ? 'rgba(var(--accent-rgb),.08)' : 'transparent', outline: over ? '2px dashed rgba(var(--accent-rgb),.45)' : '2px dashed transparent', outlineOffset: '-2px' },
     cards: col.cards.map((card) => {
       const p = prioMeta(card.priority)
       return {
         ...card, prioLabel: p.label,
         prioStyle: { fontSize: '10px', fontWeight: 700, color: p.color, background: `${p.color}22`, padding: '2px 8px', borderRadius: '6px' },
-        cardStyle: { background: '#1a262e', borderRadius: '12px', padding: '13px', cursor: 'pointer', borderLeft: `3px solid ${col.dot}` },
+        cardStyle: { background: 'var(--c-surface-1)', borderRadius: '12px', padding: '13px', cursor: 'pointer', borderLeft: `3px solid ${col.dot}` },
       }
     }),
   }
@@ -58,18 +58,18 @@ const cols = computed(() => crm.tasks.map((col) => {
 </script>
 
 <template>
-  <div style="flex:1;display:flex;flex-direction:column;min-width:0;background:#0b141a;">
+  <div style="flex:1;display:flex;flex-direction:column;min-width:0;background:var(--c-bg-deep);">
     <div style="padding:22px 30px 0;display:flex;align-items:center;justify-content:space-between;">
       <div>
         <div style="font-size:23px;font-weight:800;letter-spacing:-.3px;">Tarefas</div>
-        <div style="font-size:13.5px;color:#8696a0;margin-top:3px;">Clique numa tarefa para ver os detalhes · arraste para mover entre as etapas</div>
+        <div style="font-size:13.5px;color:var(--c-text-muted);margin-top:3px;">Clique numa tarefa para ver os detalhes · arraste para mover entre as etapas</div>
       </div>
-      <button class="wabtn" style="background:#25D366;border:none;color:#062014;font-family:inherit;font-size:13.5px;font-weight:700;padding:10px 17px;border-radius:11px;cursor:pointer;display:flex;align-items:center;gap:7px;" @click="crm.go('form')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>Nova tarefa</button>
+      <button class="wabtn" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:13.5px;font-weight:700;padding:10px 17px;border-radius:11px;cursor:pointer;display:flex;align-items:center;gap:7px;" @click="crm.go('form')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>Nova tarefa</button>
     </div>
     <div style="flex:1;overflow-x:auto;overflow-y:hidden;padding:22px 30px 26px;">
       <div style="display:flex;gap:16px;height:100%;min-width:max-content;">
-        <div v-for="col in cols" :key="col.id" style="width:288px;display:flex;flex-direction:column;background:#0f181e;border-radius:14px;padding:13px;flex-shrink:0;">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:13px;padding:0 3px;"><span :style="{ width: '9px', height: '9px', borderRadius: '50%', background: col.dot }" /><span style="font-weight:700;font-size:13.5px;">{{ col.title }}</span><span style="font-size:12px;color:#8696a0;background:#1a262e;min-width:20px;height:20px;border-radius:6px;display:flex;align-items:center;justify-content:center;padding:0 6px;">{{ col.count }}</span></div>
+        <div v-for="col in cols" :key="col.id" style="width:288px;display:flex;flex-direction:column;background:var(--c-bg-deep);border-radius:14px;padding:13px;flex-shrink:0;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:13px;padding:0 3px;"><span :style="{ width: '9px', height: '9px', borderRadius: '50%', background: col.dot }" /><span style="font-weight:700;font-size:13.5px;">{{ col.title }}</span><span style="font-size:12px;color:var(--c-text-muted);background:var(--c-surface-1);min-width:20px;height:20px;border-radius:6px;display:flex;align-items:center;justify-content:center;padding:0 6px;">{{ col.count }}</span></div>
           <div
             :style="col.bodyStyle"
             @dragover.prevent="crm.setDragOver(`tasks:${col.id}`)"
@@ -84,11 +84,11 @@ const cols = computed(() => crm.tasks.map((col) => {
             >
               <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
                 <div style="font-weight:700;font-size:13.5px;line-height:1.35;">{{ card.title }}</div>
-                <button class="delbtn" title="Excluir" style="background:none;border:none;color:#5a6b73;cursor:pointer;padding:0;flex-shrink:0;display:flex;" @click.stop="delTask(card.id)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+                <button class="delbtn" title="Excluir" style="background:none;border:none;color:var(--c-text-faint);cursor:pointer;padding:0;flex-shrink:0;display:flex;" @click.stop="delTask(card.id)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
               </div>
-              <div v-if="card.description" style="font-size:11.5px;color:#8696a0;margin-top:5px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">{{ card.description }}</div>
-              <div style="display:flex;align-items:center;gap:6px;margin-top:9px;"><span :style="card.prioStyle">{{ card.prioLabel }}</span><span style="font-size:10.5px;color:#8696a0;background:#0b141a;padding:2px 8px;border-radius:6px;">{{ card.type }}</span></div>
-              <div style="display:flex;align-items:center;justify-content:space-between;margin-top:11px;"><span style="font-size:11.5px;color:#8696a0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px;">{{ card.client }}</span><span style="font-size:11px;color:#8696a0;display:flex;align-items:center;gap:4px;flex-shrink:0;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" stroke-linecap="round" /></svg>{{ card.due }}</span></div>
+              <div v-if="card.description" style="font-size:11.5px;color:var(--c-text-muted);margin-top:5px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">{{ card.description }}</div>
+              <div style="display:flex;align-items:center;gap:6px;margin-top:9px;"><span :style="card.prioStyle">{{ card.prioLabel }}</span><span style="font-size:10.5px;color:var(--c-text-muted);background:var(--c-bg-deep);padding:2px 8px;border-radius:6px;">{{ card.type }}</span></div>
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-top:11px;"><span style="font-size:11.5px;color:var(--c-text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px;">{{ card.client }}</span><span style="font-size:11px;color:var(--c-text-muted);display:flex;align-items:center;gap:4px;flex-shrink:0;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" stroke-linecap="round" /></svg>{{ card.due }}</span></div>
             </div>
           </div>
         </div>
@@ -97,49 +97,49 @@ const cols = computed(() => crm.tasks.map((col) => {
 
     <!-- Modal: detalhes da tarefa -->
     <div v-if="open" class="overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px;" @click.self="open = false">
-      <div style="width:560px;max-width:100%;max-height:90vh;overflow-y:auto;background:#111b21;border:1px solid #1c2730;border-radius:18px;padding:26px;">
+      <div style="width:560px;max-width:100%;max-height:90vh;overflow-y:auto;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:26px;">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:18px;">
           <div style="font-size:18px;font-weight:800;">Detalhes da tarefa</div>
-          <button class="ghost" style="background:#202c33;border:none;color:#8696a0;font-family:inherit;font-size:18px;line-height:1;padding:6px 11px;border-radius:9px;cursor:pointer;" @click="open = false">✕</button>
+          <button class="ghost" style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);font-family:inherit;font-size:18px;line-height:1;padding:6px 11px;border-radius:9px;cursor:pointer;" @click="open = false">✕</button>
         </div>
 
         <div style="display:flex;flex-direction:column;gap:16px;">
-          <label style="display:flex;flex-direction:column;gap:6px;"><span style="font-size:12.5px;font-weight:600;color:#aebac1;">Título</span>
-            <input v-model="edit.title" style="background:#202c33;border:1px solid #2a3942;border-radius:10px;padding:10px 12px;color:#e9edef;font-family:inherit;font-size:14px;outline:none;">
+          <label style="display:flex;flex-direction:column;gap:6px;"><span style="font-size:12.5px;font-weight:600;color:var(--c-text-secondary);">Título</span>
+            <input v-model="edit.title" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:10px 12px;color:var(--c-text);font-family:inherit;font-size:14px;outline:none;">
           </label>
 
-          <label style="display:flex;flex-direction:column;gap:6px;"><span style="font-size:12.5px;font-weight:600;color:#aebac1;">Descrição</span>
-            <textarea v-model="edit.description" rows="6" placeholder="Sem descrição registrada para esta tarefa." style="background:#202c33;border:1px solid #2a3942;border-radius:10px;padding:11px 12px;color:#e9edef;font-family:inherit;font-size:14px;outline:none;resize:vertical;line-height:1.55;" />
+          <label style="display:flex;flex-direction:column;gap:6px;"><span style="font-size:12.5px;font-weight:600;color:var(--c-text-secondary);">Descrição</span>
+            <textarea v-model="edit.description" rows="6" placeholder="Sem descrição registrada para esta tarefa." style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:11px 12px;color:var(--c-text);font-family:inherit;font-size:14px;outline:none;resize:vertical;line-height:1.55;" />
           </label>
 
-          <label style="display:flex;flex-direction:column;gap:6px;"><span style="font-size:12.5px;font-weight:600;color:#aebac1;">Cliente</span>
-            <input v-model="edit.client" style="background:#202c33;border:1px solid #2a3942;border-radius:10px;padding:10px 12px;color:#e9edef;font-family:inherit;font-size:14px;outline:none;">
+          <label style="display:flex;flex-direction:column;gap:6px;"><span style="font-size:12.5px;font-weight:600;color:var(--c-text-secondary);">Cliente</span>
+            <input v-model="edit.client" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:10px 12px;color:var(--c-text);font-family:inherit;font-size:14px;outline:none;">
           </label>
 
           <div>
-            <span style="font-size:12.5px;font-weight:600;color:#aebac1;">Tipo</span>
+            <span style="font-size:12.5px;font-weight:600;color:var(--c-text-secondary);">Tipo</span>
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
-              <button v-for="t in TYPES" :key="t" :style="{ fontSize: '13px', fontWeight: edit.type === t ? 700 : 600, color: edit.type === t ? '#062014' : '#aebac1', background: edit.type === t ? '#25D366' : '#202c33', padding: '8px 13px', borderRadius: '9px', cursor: 'pointer', border: 'none', fontFamily: 'inherit' }" @click="edit.type = t">{{ t }}</button>
+              <button v-for="t in TYPES" :key="t" :style="{ fontSize: '13px', fontWeight: edit.type === t ? 700 : 600, color: edit.type === t ? 'var(--accent-ink)' : 'var(--c-text-secondary)', background: edit.type === t ? 'var(--accent)' : 'var(--c-surface-2)', padding: '8px 13px', borderRadius: '9px', cursor: 'pointer', border: 'none', fontFamily: 'inherit' }" @click="edit.type = t">{{ t }}</button>
             </div>
           </div>
 
           <div>
-            <span style="font-size:12.5px;font-weight:600;color:#aebac1;">Prioridade</span>
+            <span style="font-size:12.5px;font-weight:600;color:var(--c-text-secondary);">Prioridade</span>
             <div style="display:flex;gap:8px;margin-top:8px;">
-              <button v-for="p in PRIOS" :key="p.k" :style="{ fontSize: '13px', fontWeight: edit.priority === p.k ? 700 : 600, color: edit.priority === p.k ? p.color : '#aebac1', background: edit.priority === p.k ? `${p.color}22` : '#202c33', border: edit.priority === p.k ? `1px solid ${p.color}` : '1px solid transparent', padding: '8px 15px', borderRadius: '9px', cursor: 'pointer', fontFamily: 'inherit' }" @click="edit.priority = p.k">{{ p.label }}</button>
+              <button v-for="p in PRIOS" :key="p.k" :style="{ fontSize: '13px', fontWeight: edit.priority === p.k ? 700 : 600, color: edit.priority === p.k ? p.color : 'var(--c-text-secondary)', background: edit.priority === p.k ? `${p.color}22` : 'var(--c-surface-2)', border: edit.priority === p.k ? `1px solid ${p.color}` : '1px solid transparent', padding: '8px 15px', borderRadius: '9px', cursor: 'pointer', fontFamily: 'inherit' }" @click="edit.priority = p.k">{{ p.label }}</button>
             </div>
           </div>
 
-          <label style="display:flex;flex-direction:column;gap:6px;max-width:220px;"><span style="font-size:12.5px;font-weight:600;color:#aebac1;">Prazo</span>
-            <input v-model="edit.due" placeholder="ex.: 20/06 ou Sem prazo" style="background:#202c33;border:1px solid #2a3942;border-radius:10px;padding:10px 12px;color:#e9edef;font-family:inherit;font-size:14px;outline:none;">
+          <label style="display:flex;flex-direction:column;gap:6px;max-width:220px;"><span style="font-size:12.5px;font-weight:600;color:var(--c-text-secondary);">Prazo</span>
+            <input v-model="edit.due" placeholder="ex.: 20/06 ou Sem prazo" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:10px 12px;color:var(--c-text);font-family:inherit;font-size:14px;outline:none;">
           </label>
         </div>
 
         <div style="display:flex;align-items:center;justify-content:space-between;margin-top:24px;">
-          <button class="delbig" style="background:none;border:1px solid #3a2a2e;color:#ff8d8d;font-family:inherit;font-size:13px;font-weight:600;padding:10px 16px;border-radius:11px;cursor:pointer;" @click="delFromDetail">Excluir</button>
+          <button class="delbig" style="background:none;border:1px solid var(--c-danger-bg);color:var(--c-danger-soft);font-family:inherit;font-size:13px;font-weight:600;padding:10px 16px;border-radius:11px;cursor:pointer;" @click="delFromDetail">Excluir</button>
           <div style="display:flex;gap:10px;">
-            <button class="ghost" style="background:#202c33;border:none;color:#e9edef;font-family:inherit;font-size:13.5px;font-weight:600;padding:10px 17px;border-radius:11px;cursor:pointer;" @click="open = false">Cancelar</button>
-            <button class="wabtn" style="background:#25D366;border:none;color:#062014;font-family:inherit;font-size:13.5px;font-weight:700;padding:10px 20px;border-radius:11px;cursor:pointer;" @click="saveDetail">Salvar</button>
+            <button class="ghost" style="background:var(--c-surface-2);border:none;color:var(--c-text);font-family:inherit;font-size:13.5px;font-weight:600;padding:10px 17px;border-radius:11px;cursor:pointer;" @click="open = false">Cancelar</button>
+            <button class="wabtn" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:13.5px;font-weight:700;padding:10px 20px;border-radius:11px;cursor:pointer;" @click="saveDetail">Salvar</button>
           </div>
         </div>
       </div>
@@ -148,11 +148,11 @@ const cols = computed(() => crm.tasks.map((col) => {
 </template>
 
 <style scoped>
-.wabtn:hover { background: #2ee070 !important; }
+.wabtn:hover { background: var(--accent-hi) !important; }
 .card:hover { filter: brightness(1.12); }
 .card .delbtn { opacity: 0; transition: opacity .15s; }
 .card:hover .delbtn { opacity: 1; }
-.delbtn:hover { color: #ff6b6b !important; }
-.ghost:hover { background: #2a3942 !important; }
+.delbtn:hover { color: var(--c-danger) !important; }
+.ghost:hover { background: var(--c-surface-3) !important; }
 .delbig:hover { background: rgba(255,107,107,.12) !important; }
 </style>

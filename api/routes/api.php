@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\AgentController;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\BrandingController;
 use App\Http\Controllers\Api\CampaignController;
 use App\Http\Controllers\Api\ChatTabController;
 use App\Http\Controllers\Api\ContactController;
@@ -30,6 +31,9 @@ Route::post('/register', [AuthController::class, 'register']);
 // --- Público: canal do cliente (portal de solicitações, sem login) ---
 Route::post('/solicitacoes', [TaskController::class, 'store']);
 
+// --- Público: branding da empresa por slug (cor + logos) p/ o portal do cliente ---
+Route::get('/public/branding/{slug}', [BrandingController::class, 'publicBranding']);
+
 // --- Público: webhook do Evolution (protegido por token na query) ---
 Route::post('/wpp/webhook', [WhatsAppController::class, 'webhook']);
 
@@ -40,6 +44,13 @@ Route::get('/google/callback', [GoogleAuthController::class, 'callback']);
 Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
     Route::get('/me', [AuthController::class, 'me']);
     Route::post('/logout', [AuthController::class, 'logout']);
+    Route::patch('/me/theme', [AuthController::class, 'updateTheme']);
+
+    // Branding da empresa: cor de destaque + logos (alteração só admin, checado no controller).
+    Route::get('/branding', [BrandingController::class, 'show']);
+    Route::patch('/branding', [BrandingController::class, 'update']);
+    Route::post('/branding/logo', [BrandingController::class, 'uploadLogo']);
+    Route::delete('/branding/logo', [BrandingController::class, 'removeLogo']);
 
     // Cadastro restrito: somente admin gerencia usuários.
     Route::get('/users', [AuthController::class, 'index']);

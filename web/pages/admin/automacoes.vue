@@ -141,109 +141,109 @@ onMounted(load)
 </script>
 
 <template>
-  <div style="flex:1;min-width:0;background:#0b141a;display:flex;flex-direction:column;overflow-y:auto;">
-    <div style="padding:16px 30px;border-bottom:1px solid #1c2730;display:flex;align-items:center;gap:11px;flex-shrink:0;">
-      <div style="width:34px;height:34px;border-radius:10px;background:#25D366;display:flex;align-items:center;justify-content:center;">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#062014" stroke-width="2"><path d="M4 6h10M4 12h7M4 18h12" stroke-linecap="round" /><path d="m16 8 3 3-3 3" stroke-linecap="round" stroke-linejoin="round" /></svg>
+  <div style="flex:1;min-width:0;background:var(--c-bg-deep);display:flex;flex-direction:column;overflow-y:auto;">
+    <div style="padding:16px 30px;border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;gap:11px;flex-shrink:0;">
+      <div style="width:34px;height:34px;border-radius:10px;background:var(--accent);display:flex;align-items:center;justify-content:center;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-ink)" stroke-width="2"><path d="M4 6h10M4 12h7M4 18h12" stroke-linecap="round" /><path d="m16 8 3 3-3 3" stroke-linecap="round" stroke-linejoin="round" /></svg>
       </div>
       <div style="flex:1;">
         <div style="font-weight:800;font-size:15px;">Automações de etapa</div>
-        <div style="font-size:12px;color:#8696a0;">Mensagens automáticas (PDF/follow-up) quando o lead entra numa etapa do funil · 1× por conversa</div>
+        <div style="font-size:12px;color:var(--c-text-muted);">Mensagens automáticas (PDF/follow-up) quando o lead entra numa etapa do funil · 1× por conversa</div>
       </div>
     </div>
 
     <div style="flex:1;display:flex;align-items:flex-start;justify-content:center;padding:24px;">
       <div style="width:700px;max-width:100%;display:flex;flex-direction:column;gap:16px;">
-        <div v-if="loading" style="background:#111b21;border:1px solid #1c2730;border-radius:18px;padding:40px;text-align:center;color:#8696a0;">Carregando…</div>
+        <div v-if="loading" style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:40px;text-align:center;color:var(--c-text-muted);">Carregando…</div>
 
         <template v-else>
           <!-- seletor de etapa -->
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <button
               v-for="s in stages" :key="s.key"
-              :style="{ display: 'flex', alignItems: 'center', gap: '7px', background: activeKey === s.key ? '#202c33' : '#111b21', border: '1px solid ' + (activeKey === s.key ? '#2a3942' : '#1c2730'), color: '#e9edef', fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 700, padding: '8px 13px', borderRadius: '10px', cursor: 'pointer' }"
+              :style="{ display: 'flex', alignItems: 'center', gap: '7px', background: activeKey === s.key ? 'var(--c-surface-2)' : 'var(--c-bg)', border: '1px solid ' + (activeKey === s.key ? 'var(--c-surface-3)' : 'var(--c-surface-1)'), color: 'var(--c-text)', fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 700, padding: '8px 13px', borderRadius: '10px', cursor: 'pointer' }"
               @click="selectStage(s.key)"
             >
               <span :style="{ width: '9px', height: '9px', borderRadius: '50%', background: s.color }" />
               {{ s.name }}
-              <span v-if="automations.find(a => a.stage_key === s.key && a.steps.length)" style="font-size:10px;color:#25D366;">●</span>
+              <span v-if="automations.find(a => a.stage_key === s.key && a.steps.length)" style="font-size:10px;color:var(--accent);">●</span>
             </button>
           </div>
 
           <!-- editor da etapa selecionada -->
-          <div style="background:#111b21;border:1px solid #1c2730;border-radius:18px;padding:22px;">
+          <div style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:22px;">
             <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
               <div style="flex:1;">
-                <div style="font-size:11.5px;color:#8696a0;margin-bottom:5px;">Nome do playbook</div>
-                <input v-model="name" placeholder="Ex.: Pós-reunião — proposta e follow-up" style="width:100%;background:#202c33;border:1px solid #2a3942;border-radius:10px;padding:10px 12px;color:#e9edef;font-family:inherit;font-size:13.5px;outline:none;box-sizing:border-box;">
+                <div style="font-size:11.5px;color:var(--c-text-muted);margin-bottom:5px;">Nome do playbook</div>
+                <input v-model="name" placeholder="Ex.: Pós-reunião — proposta e follow-up" style="width:100%;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:10px 12px;color:var(--c-text);font-family:inherit;font-size:13.5px;outline:none;box-sizing:border-box;">
               </div>
-              <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:#aebac1;cursor:pointer;align-self:flex-end;padding-bottom:9px;">
-                <input v-model="enabled" type="checkbox" style="accent-color:#25D366;width:16px;height:16px;"> Ativo
+              <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--c-text-secondary);cursor:pointer;align-self:flex-end;padding-bottom:9px;">
+                <input v-model="enabled" type="checkbox" style="accent-color:var(--accent);width:16px;height:16px;"> Ativo
               </label>
             </div>
 
-            <div style="font-size:11.5px;color:#5f6f78;margin:12px 0;line-height:1.5;">
-              Variáveis disponíveis no texto: <b style="color:#a89bf9;">{nome}</b> · <b style="color:#a89bf9;">{empresa}</b> · <b style="color:#a89bf9;">{responsavel}</b>
+            <div style="font-size:11.5px;color:var(--c-text-faint);margin:12px 0;line-height:1.5;">
+              Variáveis disponíveis no texto: <b style="color:var(--c-ai-soft);">{nome}</b> · <b style="color:var(--c-ai-soft);">{empresa}</b> · <b style="color:var(--c-ai-soft);">{responsavel}</b>
             </div>
 
             <!-- passos -->
-            <div v-for="(s, i) in steps" :key="i" style="background:#0d171e;border:1px solid #1c2730;border-radius:14px;padding:15px;margin-bottom:11px;">
+            <div v-for="(s, i) in steps" :key="i" style="background:var(--c-bg-deep);border:1px solid var(--c-surface-1);border-radius:14px;padding:15px;margin-bottom:11px;">
               <div style="display:flex;align-items:center;gap:9px;margin-bottom:10px;">
-                <span style="background:#25D36622;color:#25D366;font-size:11px;font-weight:800;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;">{{ i + 1 }}</span>
-                <span style="font-size:12.5px;font-weight:700;color:#e9edef;">{{ s.type === 'media' ? '📄 Documento (PDF)' : '💬 Texto' }}</span>
+                <span style="background:rgba(var(--accent-rgb),.13);color:var(--accent);font-size:11px;font-weight:800;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;">{{ i + 1 }}</span>
+                <span style="font-size:12.5px;font-weight:700;color:var(--c-text);">{{ s.type === 'media' ? '📄 Documento (PDF)' : '💬 Texto' }}</span>
                 <div style="flex:1;" />
-                <button title="Subir" :disabled="i === 0" :style="{ background: 'none', border: 'none', color: i === 0 ? '#33444d' : '#8696a0', cursor: i === 0 ? 'default' : 'pointer', fontSize: '15px' }" @click="moveStep(i, -1)">↑</button>
-                <button title="Descer" :disabled="i === steps.length - 1" :style="{ background: 'none', border: 'none', color: i === steps.length - 1 ? '#33444d' : '#8696a0', cursor: i === steps.length - 1 ? 'default' : 'pointer', fontSize: '15px' }" @click="moveStep(i, 1)">↓</button>
-                <button title="Remover passo" style="background:none;border:none;color:#6a7c86;cursor:pointer;font-size:14px;" @click="removeStep(i)">✕</button>
+                <button title="Subir" :disabled="i === 0" :style="{ background: 'none', border: 'none', color: i === 0 ? 'var(--c-border-strong)' : 'var(--c-text-muted)', cursor: i === 0 ? 'default' : 'pointer', fontSize: '15px' }" @click="moveStep(i, -1)">↑</button>
+                <button title="Descer" :disabled="i === steps.length - 1" :style="{ background: 'none', border: 'none', color: i === steps.length - 1 ? 'var(--c-border-strong)' : 'var(--c-text-muted)', cursor: i === steps.length - 1 ? 'default' : 'pointer', fontSize: '15px' }" @click="moveStep(i, 1)">↓</button>
+                <button title="Remover passo" style="background:none;border:none;color:var(--c-text-faint);cursor:pointer;font-size:14px;" @click="removeStep(i)">✕</button>
               </div>
 
               <!-- atraso -->
               <div style="display:flex;align-items:center;gap:7px;margin-bottom:10px;">
-                <span style="font-size:12px;color:#8696a0;">Disparar</span>
+                <span style="font-size:12px;color:var(--c-text-muted);">Disparar</span>
                 <input
                   type="number" min="0" :value="delayValue(s)"
-                  style="width:64px;background:#202c33;border:1px solid #2a3942;border-radius:8px;padding:7px 9px;color:#e9edef;font-family:inherit;font-size:13px;outline:none;"
+                  style="width:64px;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:8px;padding:7px 9px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;"
                   @input="(e) => setDelay(s, +(e.target as HTMLInputElement).value, delayUnit(s))"
                 >
                 <select
                   :value="delayUnit(s)"
-                  style="background:#202c33;border:1px solid #2a3942;border-radius:8px;padding:7px 9px;color:#e9edef;font-family:inherit;font-size:13px;outline:none;"
+                  style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:8px;padding:7px 9px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;"
                   @change="(e) => setDelay(s, delayValue(s), (e.target as HTMLSelectElement).value)"
                 >
                   <option value="min">minutos</option>
                   <option value="horas">horas</option>
                   <option value="dias">dias</option>
                 </select>
-                <span style="font-size:12px;color:#8696a0;">após entrar na etapa</span>
+                <span style="font-size:12px;color:var(--c-text-muted);">após entrar na etapa</span>
               </div>
 
-              <textarea v-model="s.text" rows="3" :placeholder="s.type === 'media' ? 'Legenda enviada junto com o PDF…' : 'Mensagem de texto…'" style="width:100%;background:#202c33;border:1px solid #2a3942;border-radius:10px;padding:10px 12px;color:#e9edef;font-family:inherit;font-size:13.5px;outline:none;box-sizing:border-box;resize:vertical;" />
+              <textarea v-model="s.text" rows="3" :placeholder="s.type === 'media' ? 'Legenda enviada junto com o PDF…' : 'Mensagem de texto…'" style="width:100%;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:10px 12px;color:var(--c-text);font-family:inherit;font-size:13.5px;outline:none;box-sizing:border-box;resize:vertical;" />
 
               <!-- anexo PDF (passos de mídia) -->
               <div v-if="s.type === 'media'" style="margin-top:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-                <label :style="{ background: '#202c33', color: '#e9edef', fontSize: '12px', fontWeight: 700, padding: '8px 13px', borderRadius: '9px', cursor: 'pointer' }">
+                <label :style="{ background: 'var(--c-surface-2)', color: 'var(--c-text)', fontSize: '12px', fontWeight: 700, padding: '8px 13px', borderRadius: '9px', cursor: 'pointer' }">
                   {{ uploadingIdx === i ? 'Enviando…' : (s.asset_filename ? '↻ Trocar PDF' : '⬆ Anexar PDF') }}
                   <input type="file" accept="application/pdf,.pdf" style="display:none;" :disabled="uploadingIdx === i" @change="(e) => uploadPdf(i, e)">
                 </label>
-                <span v-if="s.asset_filename" style="font-size:12px;color:#a89bf9;">📄 {{ s.asset_filename }}</span>
-                <span v-else style="font-size:11.5px;color:#ffb443;">Sem PDF — este passo não dispara até você anexar um arquivo.</span>
-                <span v-if="!s.id" style="font-size:11px;color:#5f6f78;flex-basis:100%;">Salve a sequência para liberar o anexo.</span>
+                <span v-if="s.asset_filename" style="font-size:12px;color:var(--c-ai-soft);">📄 {{ s.asset_filename }}</span>
+                <span v-else style="font-size:11.5px;color:var(--c-warn);">Sem PDF — este passo não dispara até você anexar um arquivo.</span>
+                <span v-if="!s.id" style="font-size:11px;color:var(--c-text-faint);flex-basis:100%;">Salve a sequência para liberar o anexo.</span>
               </div>
             </div>
 
             <!-- adicionar passo -->
             <div style="display:flex;gap:8px;margin-top:4px;">
-              <button style="background:#202c33;border:1px solid #2a3942;color:#e9edef;font-family:inherit;font-size:12.5px;font-weight:700;padding:9px 14px;border-radius:10px;cursor:pointer;" @click="addStep('text')">+ Texto</button>
-              <button style="background:#202c33;border:1px solid #2a3942;color:#e9edef;font-family:inherit;font-size:12.5px;font-weight:700;padding:9px 14px;border-radius:10px;cursor:pointer;" @click="addStep('media')">+ Documento (PDF)</button>
+              <button style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);color:var(--c-text);font-family:inherit;font-size:12.5px;font-weight:700;padding:9px 14px;border-radius:10px;cursor:pointer;" @click="addStep('text')">+ Texto</button>
+              <button style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);color:var(--c-text);font-family:inherit;font-size:12.5px;font-weight:700;padding:9px 14px;border-radius:10px;cursor:pointer;" @click="addStep('media')">+ Documento (PDF)</button>
             </div>
 
-            <div style="display:flex;align-items:center;gap:12px;margin-top:18px;border-top:1px solid #1c2730;padding-top:16px;">
-              <button :disabled="saving" :style="{ background: '#25D366', border: 'none', color: '#062014', fontFamily: 'inherit', fontSize: '13.5px', fontWeight: 700, padding: '11px 20px', borderRadius: '11px', cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.6 : 1 }" @click="save">{{ saving ? 'Salvando…' : 'Salvar sequência' }}</button>
-              <span v-if="savedMsg" style="font-size:12.5px;color:#a89bf9;">{{ savedMsg }}</span>
+            <div style="display:flex;align-items:center;gap:12px;margin-top:18px;border-top:1px solid var(--c-surface-1);padding-top:16px;">
+              <button :disabled="saving" :style="{ background: 'var(--accent)', border: 'none', color: 'var(--accent-ink)', fontFamily: 'inherit', fontSize: '13.5px', fontWeight: 700, padding: '11px 20px', borderRadius: '11px', cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.6 : 1 }" @click="save">{{ saving ? 'Salvando…' : 'Salvar sequência' }}</button>
+              <span v-if="savedMsg" style="font-size:12.5px;color:var(--c-ai-soft);">{{ savedMsg }}</span>
             </div>
           </div>
 
-          <div style="font-size:11.5px;color:#5f6f78;line-height:1.6;padding:0 4px;">
+          <div style="font-size:11.5px;color:var(--c-text-faint);line-height:1.6;padding:0 4px;">
             As mensagens disparam <b>uma única vez por conversa</b> ao entrar na etapa (mover de volta não reenvia). Só conversas com WhatsApp vinculado recebem. O envio respeita a ordem e o atraso configurados.
           </div>
         </template>

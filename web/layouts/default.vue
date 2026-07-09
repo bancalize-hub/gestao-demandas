@@ -15,7 +15,7 @@ onBeforeUnmount(() => { if (poll) clearInterval(poll) })
 </script>
 
 <template>
-  <div :style="{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', width: '100%', height: '100dvh', background: '#0b141a', color: '#e9edef', fontFamily: 'Manrope, sans-serif', overflow: 'hidden' }">
+  <div :style="{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', width: '100%', height: '100dvh', background: 'var(--c-bg-deep)', color: 'var(--c-text)', fontFamily: 'Manrope, sans-serif', overflow: 'hidden' }">
     <CrmRail />
     <slot />
   </div>

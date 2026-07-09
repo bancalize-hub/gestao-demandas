@@ -800,7 +800,7 @@ watch(() => crm.activeId, () => {
       </div>
 
       <!-- header -->
-      <div :style="{ display: 'flex', alignItems: 'center', gap: isMobile ? '9px' : '13px', padding: isMobile ? '10px 12px' : '13px 22px', background: 'var(--c-bg)', borderBottom: '1px solid var(--c-surface-1)' }">
+      <div :style="{ display: 'flex', alignItems: 'center', gap: isMobile ? '9px' : '13px', padding: isMobile ? '10px 12px' : '13px 22px', background: 'var(--c-surface-2)', borderBottom: '1px solid var(--c-border)' }">
         <button v-if="isMobile" title="Voltar" style="background:none;border:none;color:var(--c-text);cursor:pointer;display:flex;align-items:center;padding:0;margin-right:-4px;flex-shrink:0;" @click="backToList">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 19l-7-7 7-7" stroke-linecap="round" stroke-linejoin="round" /></svg>
         </button>
@@ -1023,7 +1023,7 @@ watch(() => crm.activeId, () => {
     </div>
 
     <!-- painel de contexto -->
-    <div :style="{ width:'312px', flexShrink:0, background:'var(--c-bg)', borderLeft:'1px solid var(--c-surface-1)', flexDirection:'column', overflowY:'auto', display: isMobile ? 'none' : 'flex' }">
+    <div :style="{ width:'312px', flexShrink:0, background:'var(--c-surface-2)', borderLeft:'1px solid var(--c-border)', flexDirection:'column', overflowY:'auto', display: isMobile ? 'none' : 'flex' }">
       <div style="padding:24px 20px 18px;text-align:center;border-bottom:1px solid var(--c-surface-1);">
         <div :style="active.avatarBig">
           <img v-if="active.avatar && !broken.has(active.id)" :src="active.avatar" referrerpolicy="no-referrer" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" @error="broken.add(active.id)">

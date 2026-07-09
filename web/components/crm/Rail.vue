@@ -22,8 +22,8 @@ function isActive(s: Screen) {
 // está aberta no chat, para o teclado/composer ocuparem a tela toda.
 const hideOnMobile = computed(() => isMobile.value && isActive('chat') && crm.chatOpen)
 const railStyle = computed(() => isMobile.value
-  ? { order: 2, width: '100%', height: '58px', flexShrink: 0, background: 'var(--c-bg-deepest)', borderTop: '1px solid var(--c-surface-1)', display: hideOnMobile.value ? 'none' : 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', padding: '0 4px', gap: '2px', overflowX: 'auto' }
-  : { width: '76px', flexShrink: 0, background: 'var(--c-bg-deepest)', borderRight: '1px solid var(--c-surface-1)', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '18px 0', gap: '6px' })
+  ? { order: 2, width: '100%', height: '58px', flexShrink: 0, background: 'var(--c-surface-2)', borderTop: '1px solid var(--c-border)', display: hideOnMobile.value ? 'none' : 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', padding: '0 4px', gap: '2px', overflowX: 'auto' }
+  : { width: '76px', flexShrink: 0, background: 'var(--c-surface-2)', borderRight: '1px solid var(--c-border)', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '18px 0', gap: '6px' })
 
 function nav(active: boolean) {
   return {
@@ -45,7 +45,7 @@ const initials = computed(() => {
   <nav :style="railStyle">
     <img v-if="!isMobile && companyLogo" :src="companyLogo" alt="Logo" style="width:42px;height:42px;border-radius:13px;object-fit:contain;margin-bottom:14px;">
     <div v-else-if="!isMobile" style="width:42px;height:42px;border-radius:13px;background:var(--accent);display:flex;align-items:center;justify-content:center;margin-bottom:14px;box-shadow:0 6px 16px rgba(var(--accent-rgb),.35);">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 3c-4.97 0-9 3.58-9 8 0 2.5 1.3 4.7 3.3 6.1L5.5 21l3.6-1.5c.9.25 1.9.4 2.9.4 4.97 0 9-3.58 9-8s-4.03-8.9-9-8.9Z" fill="var(--c-bg-deepest)" /></svg>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 3c-4.97 0-9 3.58-9 8 0 2.5 1.3 4.7 3.3 6.1L5.5 21l3.6-1.5c.9.25 1.9.4 2.9.4 4.97 0 9-3.58 9-8s-4.03-8.9-9-8.9Z" fill="var(--accent-ink)" /></svg>
     </div>
 
     <button class="navbtn" :style="nav(isActive('chat'))" title="Chat" @click="crm.go('chat')">

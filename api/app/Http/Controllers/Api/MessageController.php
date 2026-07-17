@@ -10,6 +10,50 @@ use Illuminate\Http\Request;
 
 class MessageController extends Controller
 {
+    /**
+     * Página da thread (keyset). before_ts/before_id → mensagens mais ANTIGAS que o
+     * limite ("carregar anteriores"); after_ts/after_id → mais NOVAS (delta ao voltar
+     * pra uma conversa em cache). Sempre em ordem cronológica ascendente, colunas enxutas.
+     */
+    public function index(Request $request, Conversation $conversation)
+    {
+        $limit = min(500, max(1, (int) $request->query('limit', 150)));
+        $q = $conversation->messages()->reorder();
+
+        if ($request->filled('after_id')) {
+            $ts = (int) $request->query('after_ts', 0);
+            $id = (int) $request->query('after_id');
+            $rows = $q->where(function ($w) use ($ts, $id) {
+                $w->where('ts', '>', $ts)->orWhere(fn ($w2) => $w2->where('ts', $ts)->where('id', '>', $id));
+            })->orderBy('ts')->orderBy('id')->limit($limit)->get(Message::THREAD_COLUMNS);
+
+            return response()->json(['messages' => $rows, 'has_more' => false]);
+        }
+
+        $ts = $request->query('before_ts');
+        $id = (int) $request->query('before_id', 0);
+        $q->where(function ($w) use ($ts, $id) {
+            if ($ts === null || $ts === '') {
+                // Limite sem ts (legado): mais antigas = ids menores entre as sem ts.
+                $w->whereNull('ts')->where('id', '<', $id);
+
+                return;
+            }
+            // Sem ts = legado mais antigo que qualquer ts — sempre entra no "anteriores".
+            $w->where('ts', '<', (int) $ts)
+                ->orWhere(fn ($w2) => $w2->where('ts', (int) $ts)->where('id', '<', $id))
+                ->orWhereNull('ts');
+        })->orderByDesc('ts')->orderByDesc('id');
+
+        $rows = $q->limit($limit + 1)->get(Message::THREAD_COLUMNS);
+        $hasMore = $rows->count() > $limit;
+
+        return response()->json([
+            'messages' => $rows->take($limit)->reverse()->values(),
+            'has_more' => $hasMore,
+        ]);
+    }
+
     public function store(Request $request, Conversation $conversation)
     {
         $data = $request->validate([
@@ -64,6 +108,8 @@ class MessageController extends Controller
                 'last_message_at' => now(),
             ]);
         }
+
+        \App\Support\Realtime::messageCreated($message);
 
         return response()->json($message, 201);
     }
@@ -127,6 +173,8 @@ class MessageController extends Controller
             'last_message_at' => now(),
         ]);
 
+        \App\Support\Realtime::messageCreated($message);
+
         return response()->json($message, 201);
     }
 
@@ -166,6 +214,7 @@ class MessageController extends Controller
             }
             $msg = $conversation->messages()->updateOrCreate(['wa_id' => $waId], $base + ['type' => 'text', 'text' => $src->text]);
             $conversation->update(['preview' => mb_substr((string) $src->text, 0, 80), 'time' => $base['time'], 'unread' => 0, 'last_message_at' => now()]);
+            \App\Support\Realtime::messageCreated($msg);
 
             return response()->json($msg, 201);
         }
@@ -197,6 +246,7 @@ class MessageController extends Controller
         ]);
         $preview = $src->type === 'image' ? '📷 Foto' : ($src->type === 'video' ? '🎬 Vídeo' : ($src->type === 'voice' ? '🎵 Áudio' : '📄 '.$fileName));
         $conversation->update(['preview' => $preview, 'time' => $base['time'], 'unread' => 0, 'last_message_at' => now()]);
+        \App\Support\Realtime::messageCreated($msg);
 
         return response()->json($msg, 201);
     }
@@ -213,6 +263,7 @@ class MessageController extends Controller
         }
 
         $message->update(['reaction' => $emoji !== '' ? $emoji : null]);
+        \App\Support\Realtime::messagePatched($message, ['reaction' => $message->reaction]);
 
         return response()->json($message);
     }
@@ -223,6 +274,7 @@ class MessageController extends Controller
         abort_unless($message->conversation_id === $conversation->id, 404);
 
         $message->delete();
+        \App\Support\Realtime::messagePatched($message, ['removed' => true]);
 
         // Recalcula o resumo da conversa com a última mensagem de texto restante.
         $last = $conversation->messages()

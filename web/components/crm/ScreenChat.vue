@@ -1,3 +1,14 @@
+<script lang="ts">
+// ---- Estado de MÓDULO (sobrevive à remontagem do chat) ----
+// Cache de mídia por mensagem (objectURL de blob binário). Antes o cache era do
+// componente: navegar funil→chat remontava e re-baixava TODAS as mídias de novo.
+const mediaCache = reactive<Record<number, string>>({})
+const mediaBusy = reactive<Record<number, boolean>>({})
+const mediaFailed = reactive<Record<number, boolean>>({})
+const mediaQueue: number[] = []
+let mediaInFlight = 0
+</script>
+
 <script setup lang="ts">
 import { fmtListTime, maskPhone, useCrmStore } from '~/stores/crm'
 
@@ -96,20 +107,48 @@ async function doSaveRule() {
   setTimeout(() => { memoToast.value = '' }, 3000)
 }
 
-// Mídia (carregada sob demanda — descriptografada pelo Evolution)
+// Mídia sob demanda: binário → blob URL, no máximo 3 downloads simultâneos.
+// (O auto-load de TODAS as mídias da conversa saturava os workers do PHP-FPM —
+// era a causa nº 1 do delay ao entrar/sair de conversas.)
 const apiClient = useApi()
-const media = reactive<Record<number, string>>({})
-const mediaLoading = reactive<Record<number, boolean>>({})
-async function loadMedia(id?: number) {
-  if (!id || media[id] || mediaLoading[id]) return
-  mediaLoading[id] = true
-  try {
-    const r = await apiClient<{ data: string }>(`/api/wpp/media/${id}`)
-    media[id] = r.data
-  }
-  catch { /* */ }
-  finally { mediaLoading[id] = false }
+function requestMedia(id?: number) {
+  if (!id || mediaCache[id] || mediaFailed[id] || mediaBusy[id]) return
+  mediaBusy[id] = true
+  mediaQueue.push(id)
+  pumpMedia()
 }
+async function pumpMedia() {
+  if (mediaInFlight >= 3) return
+  const id = mediaQueue.shift()
+  if (!id) return
+  mediaInFlight++
+  try {
+    const blob = await apiClient<Blob>(`/api/wpp/media/${id}`, { responseType: 'blob' })
+    mediaCache[id] = URL.createObjectURL(blob)
+  }
+  catch { mediaFailed[id] = true }
+  finally {
+    mediaBusy[id] = false
+    mediaInFlight--
+    pumpMedia()
+  }
+}
+// Baixa a mídia quando a bolha se aproxima da tela (300px de folga).
+const mediaObserver = import.meta.client
+  ? new IntersectionObserver((entries) => {
+      for (const en of entries) {
+        if (!en.isIntersecting) continue
+        const id = Number((en.target as HTMLElement).dataset.mid)
+        if (id) requestMedia(id)
+        mediaObserver?.unobserve(en.target)
+      }
+    }, { rootMargin: '300px' })
+  : null
+const vLazyMedia = {
+  mounted: (el: HTMLElement) => mediaObserver?.observe(el),
+  unmounted: (el: HTMLElement) => mediaObserver?.unobserve(el),
+}
+onUnmounted(() => mediaObserver?.disconnect())
 
 // Apagar uma mensagem do chat (só no CRM; não remove no WhatsApp do cliente).
 function removeMsg(m: any) {
@@ -316,14 +355,20 @@ const active = computed(() => {
   }
 })
 
+// Estilos ESTÁTICOS das linhas — a linha ativa é marcada por classe CSS. Antes o
+// estilo dependia de crm.activeId: trocar de conversa recriava e re-patchava as
+// centenas de linhas da lista inteira.
+const ROW_STYLE = { display: 'flex', gap: '12px', padding: '11px 12px', borderRadius: '13px', cursor: 'pointer', alignItems: 'center', position: 'relative' }
+const DOT_STYLE = { position: 'absolute', bottom: '1px', right: '1px', width: '12px', height: '12px', borderRadius: '50%', background: 'var(--accent)', border: '2.5px solid var(--c-bg)' }
+
 const list = computed(() => crm.conversations.map(c => ({
   id: c.id, name: c.name, initials: c.initials, avatar: c.avatar, preview: c.preview, time: fmtListTime(c.lastMessageAt, c.time),
   unread: c.unread, online: c.online, hot: !!c.hot, hasUnread: c.unread > 0, archived: c.archived, inMemory: c.inMemory, tags: c.tags || [], stage: c.stage,
   autoReply: c.autoReply, lastOut: c.lastOut, stageColor: c.stageColor,
   stageName: (crm.stages.find(s => s.key === c.stage)?.name) || c.stage,
-  rowStyle: { display: 'flex', gap: '12px', padding: '11px 12px', borderRadius: '13px', cursor: 'pointer', alignItems: 'center', position: 'relative', background: c.id === crm.activeId ? 'var(--c-surface-2)' : 'transparent' },
+  rowStyle: ROW_STYLE,
   avatarStyle: { width: '48px', height: '48px', borderRadius: '50%', background: c.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '16px', flexShrink: 0, position: 'relative' },
-  dotStyle: { position: 'absolute', bottom: '1px', right: '1px', width: '12px', height: '12px', borderRadius: '50%', background: 'var(--accent)', border: `2.5px solid ${c.id === crm.activeId ? 'var(--c-surface-2)' : 'var(--c-bg)'}` },
+  dotStyle: DOT_STYLE,
 })))
 
 // Base filtrada pela TAB ativa (Todas/SDR/CLOSER/CS). Os contadores de status (Tudo/Não
@@ -386,13 +431,63 @@ function msgTick(status?: string | null) {
   }
 }
 
-const thread = computed(() => {
+// Estilos de bolha memoizados por combinação (mídia × lado × agrupada × mobile):
+// objetos estáveis → o re-render de uma mensagem não re-patcha as outras 3 mil.
+const bubbleStyleCache = new Map<string, Record<string, string>>()
+function bubbleStyle(isMedia: boolean, isOut: boolean, grouped: boolean, mobile: boolean) {
+  const k = `${isMedia ? 1 : 0}${isOut ? 1 : 0}${grouped ? 1 : 0}${mobile ? 1 : 0}`
+  let s = bubbleStyleCache.get(k)
+  if (!s) {
+    s = {
+      position: 'relative',
+      alignSelf: isOut ? 'flex-end' : 'flex-start',
+      maxWidth: mobile ? '82%' : '64%',
+      background: isOut ? 'var(--c-bubble-out)' : 'var(--c-surface-2)',
+      marginTop: grouped ? '2px' : '8px',
+      padding: isMedia ? '8px' : '9px 13px',
+      borderRadius: isMedia ? '9px' : (isOut ? '9px 9px 2px 9px' : '9px 9px 9px 2px'),
+    }
+    bubbleStyleCache.set(k, s)
+  }
+  return s
+}
+
+// Janela de renderização: monta só as últimas N mensagens (a conversa maior tem
+// 3.584 — renderizar tudo = ~50k nós DOM e era o que travava abrir/trocar de chat).
+const WINDOW_STEP = 60
+const windowSize = ref(WINDOW_STEP)
+const olderAvailable = computed(() => {
   const raw = conv.value?.thread || []
-  const q = threadSearch.value.trim().toLowerCase()
+  return raw.length > windowSize.value || !!conv.value?.threadHasMore
+})
+const loadingOlderUi = ref(false)
+async function loadOlder() {
+  if (loadingOlderUi.value) return
+  const c = conv.value
+  const el = msgsRef.value
+  const prevH = el?.scrollHeight ?? 0
+  const prevTop = el?.scrollTop ?? 0
+  if (!c) return
+  loadingOlderUi.value = true
+  try {
+    // Janela já cobre o que está em memória? Busca mais uma página do servidor.
+    if ((c.thread?.length ?? 0) <= windowSize.value && c.threadHasMore)
+      await crm.loadOlderMessages(c.id)
+    windowSize.value += 100
+    await nextTick()
+    // Mantém o usuário olhando pras mesmas mensagens (compensa a altura nova acima).
+    if (el) el.scrollTop = el.scrollHeight - prevH + prevTop
+  }
+  finally { loadingOlderUi.value = false }
+}
+
+const thread = computed(() => {
+  const all = conv.value?.thread || []
+  const q = threadSearchQ.value.trim().toLowerCase()
   // Busca dentro da conversa: mostra só as mensagens que casam (divisores de data recalculam).
   const msgs = q
-    ? raw.filter((m: any) => m.type !== 'divider' && `${m.text || ''} ${m.transcript || ''}`.toLowerCase().includes(q))
-    : raw
+    ? all.filter((m: any) => m.type !== 'divider' && `${m.text || ''} ${m.transcript || ''}`.toLowerCase().includes(q))
+    : (all.length > windowSize.value ? all.slice(-windowSize.value) : all)
   // Linha "não lidas": antes das últimas N mensagens (N = não lidas ao abrir). Some durante a busca.
   const unreadStart = (!q && unreadMark.value > 0 && unreadMark.value < msgs.length) ? msgs.length - unreadMark.value : -1
 
@@ -418,25 +513,27 @@ const thread = computed(() => {
       }
     }
     const isOut = !!m.isOut
-    const baseBg = isOut ? 'var(--c-bubble-out)' : 'var(--c-surface-2)'
-    const align = isOut ? 'flex-end' : 'flex-start'
     // Agrupa mensagens consecutivas do mesmo lado em até 5 min (espaçamento menor, estilo WhatsApp).
     const grouped = prevIsOut === isOut && !!m.ts && (m.ts - prevTs) < 300
     prevIsOut = isOut
     prevTs = m.ts || prevTs
     out.push({
       ...m, isOut, grouped, tick: msgTick(m.status),
+      key: m.id ?? m.waId ?? null,
       isDivider: m.type === 'divider', isText: m.type === 'text',
       isImage: m.type === 'image', isVoice: m.type === 'voice', isVideo: m.type === 'video', isFile: m.type === 'file',
       isMedia: m.type === 'image' || m.type === 'voice' || m.type === 'video' || m.type === 'file',
       avColor: conv.value?.color, avInitials: conv.value?.initials,
       dividerStyle,
-      bubbleText: { position: 'relative', alignSelf: align, maxWidth: isMobile.value ? '82%' : '64%', background: baseBg, padding: '9px 13px', borderRadius: isOut ? '9px 9px 2px 9px' : '9px 9px 9px 2px', marginTop: grouped ? '2px' : '8px' },
-      bubbleMedia: { position: 'relative', alignSelf: align, maxWidth: isMobile.value ? '82%' : '64%', background: baseBg, padding: '8px', borderRadius: '9px', marginTop: grouped ? '2px' : '8px' },
+      bubbleText: bubbleStyle(false, isOut, grouped, isMobile.value),
+      bubbleMedia: bubbleStyle(true, isOut, grouped, isMobile.value),
     })
   }
   return out
 })
+
+// Contagem de resultados da busca (computed p/ não rodar filter a cada render do template).
+const searchCount = computed(() => thread.value.filter((m: any) => !m.isDivider).length)
 
 // Texto digitado? (controla a troca do botão mic ↔ enviar, estilo WhatsApp).
 const hasInput = ref(false)
@@ -468,8 +565,9 @@ async function send() {
       cancelAttach()
       await nextTick()
       scrollDown()
+      // A mídia acabou de sair DESTE aparelho: usa o próprio arquivo como preview.
       const last = thread.value[thread.value.length - 1]
-      if (last?.id && last.isMedia) loadMedia(last.id)
+      if (last?.id && last.isMedia) mediaCache[last.id] = URL.createObjectURL(f)
     }
     else {
       memoToast.value = 'Falha ao enviar a mídia — tente de novo'
@@ -651,7 +749,7 @@ function sendRec() {
       await nextTick()
       scrollDown()
       const last = thread.value[thread.value.length - 1]
-      if (last?.id && last.isMedia) loadMedia(last.id)
+      if (last?.id && last.isMedia) mediaCache[last.id] = URL.createObjectURL(file)
     }
     else {
       memoToast.value = 'Falha ao enviar o áudio'
@@ -662,9 +760,16 @@ function sendRec() {
 }
 onUnmounted(() => { if (recording.value) cancelRec() })
 
-// Busca dentro da conversa.
+// Busca dentro da conversa. O filtro usa a versão com debounce (200ms) — filtrar
+// e re-renderizar a thread inteira a CADA tecla travava a digitação.
 const showThreadSearch = ref(false)
 const threadSearch = ref('')
+const threadSearchQ = ref('')
+let searchT: ReturnType<typeof setTimeout> | null = null
+watch(threadSearch, (v) => {
+  if (searchT) clearTimeout(searchT)
+  searchT = setTimeout(() => { threadSearchQ.value = v }, 200)
+})
 function toggleThreadSearch() {
   showThreadSearch.value = !showThreadSearch.value
   if (!showThreadSearch.value) threadSearch.value = ''
@@ -690,17 +795,14 @@ function scrollDown() {
   const el = msgsRef.value
   if (el) { el.scrollTop = el.scrollHeight; atBottom.value = true }
 }
-// troca de conversa: sempre desce até o fim
-watch(() => crm.activeId, async () => { await nextTick(); scrollDown() })
+// troca de conversa: janela de renderização volta ao fim + desce até o fim
+watch(() => crm.activeId, async () => {
+  windowSize.value = WINDOW_STEP
+  await nextTick()
+  scrollDown()
+})
 // mensagem nova: só desce se o usuário já estava no fim (não atrapalha quem lê o histórico)
 watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.value) scrollDown() })
-
-// Auto-carrega as mídias da conversa aberta (sem precisar clicar).
-watch(() => crm.activeId, () => {
-  for (const m of thread.value) {
-    if (m.isMedia && m.id) loadMedia(m.id)
-  }
-}, { immediate: true })
 </script>
 
 <template>
@@ -748,7 +850,7 @@ watch(() => crm.activeId, () => {
 
         <template v-else>
           <div v-if="!filteredList.length" style="padding:30px 14px;text-align:center;color:var(--c-text-muted);font-size:13px;">Nenhuma conversa encontrada</div>
-          <div v-for="c in filteredList" :key="c.id" :style="c.rowStyle" class="convrow" @click="openConv(c)">
+          <div v-for="c in filteredList" :key="c.id" :style="c.rowStyle" class="convrow" :class="{ activerow: c.id === crm.activeId, cvrow: menuFor !== c.id && stageFor !== c.id }" @click="openConv(c)">
             <div :style="c.avatarStyle">
               <img v-if="c.avatar && !broken.has(c.id)" :src="c.avatar" referrerpolicy="no-referrer" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" @error="broken.add(c.id)">
               <template v-else>{{ c.initials }}</template>
@@ -851,7 +953,7 @@ watch(() => crm.activeId, () => {
       <div v-if="showThreadSearch" style="display:flex;align-items:center;gap:10px;padding:9px 22px;background:var(--c-bg-deep);border-bottom:1px solid var(--c-surface-1);">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--c-text-muted)" stroke-width="2" style="flex-shrink:0;"><circle cx="11" cy="11" r="7" /><path d="m20 20-3-3" stroke-linecap="round" /></svg>
         <input v-model="threadSearch" placeholder="Buscar mensagens nesta conversa" style="flex:1;background:transparent;border:none;outline:none;color:var(--c-text);font-family:inherit;font-size:13.5px;">
-        <span v-if="threadSearch.trim()" style="font-size:12px;color:var(--c-text-muted);flex-shrink:0;">{{ thread.filter(m => !m.isDivider).length }} resultado(s)</span>
+        <span v-if="threadSearch.trim()" style="font-size:12px;color:var(--c-text-muted);flex-shrink:0;">{{ searchCount }} resultado(s)</span>
         <button title="Fechar" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:18px;line-height:1;flex-shrink:0;" @click="toggleThreadSearch">✕</button>
       </div>
 
@@ -876,7 +978,10 @@ watch(() => crm.activeId, () => {
         </div>
 
         <template v-else>
-          <template v-for="(m, i) in thread" :key="i">
+          <button v-if="olderAvailable && !threadSearch.trim()" :disabled="loadingOlderUi" style="align-self:center;background:var(--c-surface-2);border:none;color:var(--c-text-secondary);font-family:inherit;font-size:12px;font-weight:700;padding:7px 16px;border-radius:9px;cursor:pointer;margin-bottom:6px;flex-shrink:0;" @click="loadOlder">
+            {{ loadingOlderUi ? 'Carregando…' : '↑ Carregar mensagens anteriores' }}
+          </button>
+          <template v-for="(m, i) in thread" :key="m.key ?? `i${i}`">
             <div v-if="m.isDivider" :style="m.dividerStyle">{{ m.label }}</div>
             <div v-else-if="m.isText" class="bubble" :style="m.bubbleText" @dblclick="startReply(m)">
               <button v-if="m.id" class="msgmenu-btn" :style="{ [m.isOut ? 'left' : 'right']: '-9px' }" title="Opções" @click.stop="toggleMsgMenu(m, i)">
@@ -904,20 +1009,20 @@ watch(() => crm.activeId, () => {
                 <button v-if="m.id" class="ctxitem danger" @click="removeMsg(m); msgMenu = null"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14" stroke-linecap="round" stroke-linejoin="round" /></svg>Apagar</button>
               </div>
             </div>
-            <div v-else-if="m.isMedia" class="bubble" :style="m.bubbleMedia" @dblclick="startReply(m)">
+            <div v-else-if="m.isMedia" v-lazy-media class="bubble" :style="m.bubbleMedia" :data-mid="m.id" @dblclick="startReply(m)">
               <button v-if="m.id" class="msgmenu-btn" :style="{ [m.isOut ? 'left' : 'right']: '-9px' }" title="Opções" @click.stop="toggleMsgMenu(m, i)">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="12" cy="19" r="1.8" /></svg>
               </button>
               <div v-if="m.replyExcerpt" style="border-left:3px solid var(--accent);background:rgba(0,0,0,.18);border-radius:5px;padding:5px 9px;margin-bottom:6px;font-size:12.5px;color:var(--c-text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">↩ {{ m.replyExcerpt }}</div>
-              <template v-if="media[m.id]">
-                <img v-if="m.isImage" :src="media[m.id]" title="Ampliar" style="max-width:260px;width:100%;border-radius:7px;display:block;cursor:zoom-in;" @click="lightbox = media[m.id]">
-                <video v-else-if="m.isVideo" :src="media[m.id]" controls style="max-width:260px;width:100%;border-radius:7px;display:block;" />
-                <audio v-else-if="m.isVoice" :src="media[m.id]" controls style="width:230px;display:block;" />
-                <a v-else :href="media[m.id]" :download="m.fileName || 'arquivo'" style="display:flex;align-items:center;gap:10px;background:rgba(0,0,0,.18);border-radius:7px;padding:10px 12px;color:var(--c-text);text-decoration:none;font-size:13px;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--c-bubble-out-muted)" stroke-width="1.8"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14" stroke-linecap="round" stroke-linejoin="round" /></svg>Baixar arquivo</a>
+              <template v-if="mediaCache[m.id]">
+                <img v-if="m.isImage" :src="mediaCache[m.id]" title="Ampliar" style="max-width:260px;width:100%;border-radius:7px;display:block;cursor:zoom-in;" @click="lightbox = mediaCache[m.id]">
+                <video v-else-if="m.isVideo" :src="mediaCache[m.id]" controls style="max-width:260px;width:100%;border-radius:7px;display:block;" />
+                <audio v-else-if="m.isVoice" :src="mediaCache[m.id]" controls style="width:230px;display:block;" />
+                <a v-else :href="mediaCache[m.id]" :download="m.fileName || 'arquivo'" style="display:flex;align-items:center;gap:10px;background:rgba(0,0,0,.18);border-radius:7px;padding:10px 12px;color:var(--c-text);text-decoration:none;font-size:13px;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--c-bubble-out-muted)" stroke-width="1.8"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14" stroke-linecap="round" stroke-linejoin="round" /></svg>Baixar arquivo</a>
               </template>
-              <button v-else :disabled="mediaLoading[m.id]" style="display:flex;align-items:center;gap:9px;background:rgba(0,0,0,.18);border:none;color:var(--c-text);font-family:inherit;font-size:13px;padding:11px 14px;border-radius:7px;cursor:pointer;width:100%;min-width:170px;" @click="loadMedia(m.id)">
+              <button v-else :disabled="mediaBusy[m.id] || mediaFailed[m.id]" style="display:flex;align-items:center;gap:9px;background:rgba(0,0,0,.18);border:none;color:var(--c-text);font-family:inherit;font-size:13px;padding:11px 14px;border-radius:7px;cursor:pointer;width:100%;min-width:170px;" @click="requestMedia(m.id)">
                 <span style="font-size:18px;">{{ m.isImage ? '📷' : m.isVoice ? '🎵' : m.isVideo ? '🎬' : '📄' }}</span>
-                <span style="flex:1;text-align:left;">{{ mediaLoading[m.id] ? 'Carregando…' : (m.isImage ? 'Ver imagem' : m.isVoice ? 'Tocar áudio' : m.isVideo ? 'Ver vídeo' : 'Baixar arquivo') }}</span>
+                <span style="flex:1;text-align:left;">{{ mediaFailed[m.id] ? 'Mídia indisponível' : mediaBusy[m.id] ? 'Carregando…' : (m.isImage ? 'Ver imagem' : m.isVoice ? 'Tocar áudio' : m.isVideo ? 'Ver vídeo' : 'Baixar arquivo') }}</span>
               </button>
               <div v-if="m.text" style="font-size:13.5px;line-height:1.4;margin-top:6px;padding:0 2px;word-break:break-word;overflow-wrap:anywhere;">{{ m.text }}</div>
               <div v-if="m.isVoice && m.transcript" style="font-size:12.5px;line-height:1.4;margin-top:6px;padding:0 2px;color:var(--c-text);font-style:italic;word-break:break-word;overflow-wrap:anywhere;">📝 {{ m.transcript }}</div>
@@ -1260,6 +1365,12 @@ watch(() => crm.activeId, () => {
 
 <style scoped>
 .convrow:hover { background: var(--c-surface-0) !important; }
+/* Linha ativa por CLASSE (o estilo inline é estático — ver ROW_STYLE). Depois do
+   :hover para vencer no empate de especificidade. */
+.convrow.activerow { background: var(--c-surface-2) !important; }
+/* Linhas fora da tela nem renderizam (lista tem centenas de conversas). Desligado
+   na linha com menu aberto: paint containment cortaria o dropdown. */
+.cvrow { content-visibility: auto; contain-intrinsic-size: auto 112px; }
 .rowmenu { opacity: 0; transition: opacity .15s; }
 .convrow:hover .rowmenu { opacity: 1; }
 .mitem:hover { background: var(--c-surface-3) !important; }

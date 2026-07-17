@@ -60,7 +60,9 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
 
     // CRM
     Route::get('/conversations', [ConversationController::class, 'index']);
+    Route::get('/conversations/{conversation}', [ConversationController::class, 'show']);
     Route::patch('/conversations/{conversation}', [ConversationController::class, 'update']);
+    Route::get('/conversations/{conversation}/messages', [MessageController::class, 'index']);
     Route::post('/conversations/{conversation}/messages', [MessageController::class, 'store']);
     Route::post('/conversations/{conversation}/media', [MessageController::class, 'storeMedia']);
     Route::post('/conversations/{conversation}/messages/{message}/react', [MessageController::class, 'react']);

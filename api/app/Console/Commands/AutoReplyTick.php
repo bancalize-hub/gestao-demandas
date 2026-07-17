@@ -123,11 +123,10 @@ class AutoReplyTick extends Command
             ];
             // Já grava com o wa_id do envio → o eco do webhook é ignorado (não duplica).
             // updateOrCreate por wa_id fecha a corrida caso o eco tenha chegado primeiro.
-            if ($waId !== '') {
-                $conv->messages()->updateOrCreate(['wa_id' => $waId], $data);
-            } else {
-                $conv->messages()->create($data);
-            }
+            $msg = $waId !== ''
+                ? $conv->messages()->updateOrCreate(['wa_id' => $waId], $data)
+                : $conv->messages()->create($data);
+            \App\Support\Realtime::messageCreated($msg);
 
             $conv->update([
                 'preview' => mb_substr($reply, 0, 80),

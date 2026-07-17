@@ -546,7 +546,9 @@ class WhatsAppController extends Controller
                 $messages = isset($data['key']) ? [$data] : ($data['messages'] ?? []);
                 foreach ($messages as $m) {
                     if (is_array($m)) {
-                        $this->ingestMessage($m, $account);
+                        // Push em tempo real só p/ mensagem nova de verdade (upsert);
+                        // messages.set é lote de histórico — broadcastar cada uma floodaria.
+                        $this->ingestMessage($m, $account, broadcast: $event === 'messages.upsert');
                     }
                 }
             } elseif ($event === 'messages.update' || $event === 'messages.edit') {
@@ -595,11 +597,8 @@ class WhatsAppController extends Controller
             return;
         }
         $msg->update(['status' => $status]);
-
-        try {
-            \App\Events\CrmUpdated::dispatch('message');
-        } catch (\Throwable $e) {
-        }
+        // Recibo em tempo real direto na bolha — sem re-baixar a thread inteira.
+        \App\Support\Realtime::messagePatched($msg, ['status' => $status]);
     }
 
     /**
@@ -638,7 +637,7 @@ class WhatsAppController extends Controller
         $conv->save();
     }
 
-    public function ingestMessage(array $m, ?WaAccount $account = null): void
+    public function ingestMessage(array $m, ?WaAccount $account = null, bool $broadcast = true): void
     {
         $account ??= WaAccount::primary();
         $key = $m['key'] ?? [];
@@ -764,7 +763,7 @@ class WhatsAppController extends Controller
             }
         }
 
-        $conv->messages()->create([
+        $msg = $conv->messages()->create([
             'wa_id' => $waId ?: null,
             'type' => $p['type'],
             'is_out' => $isOut,
@@ -775,6 +774,12 @@ class WhatsAppController extends Controller
             'ts' => $ts ?: null,
             'position' => ((int) $conv->messages()->max('position')) + 1,
         ]);
+
+        // Push imediato: o evento leva a mensagem + a linha da conversa, então o
+        // chat e o preview atualizam na hora sem nenhum refetch da API.
+        if ($broadcast) {
+            \App\Support\Realtime::messageCreated($msg);
+        }
     }
 
     /** Busca mensagens de um JID no Evolution e grava como conversa+thread. */
@@ -1004,11 +1009,7 @@ class WhatsAppController extends Controller
             return;
         }
         $msg->update(['reaction' => $emoji !== '' ? $emoji : null]);
-
-        try {
-            \App\Events\CrmUpdated::dispatch('message');
-        } catch (\Throwable $e) {
-        }
+        \App\Support\Realtime::messagePatched($msg, ['reaction' => $msg->reaction]);
     }
 
     /** Extrai a citação (quoted) de uma mensagem recebida: ['reply_to'=>?, 'reply_excerpt'=>?]. */
@@ -1058,13 +1059,25 @@ class WhatsAppController extends Controller
         return $msg;
     }
 
-    /** Carrega o histórico COMPLETO da conversa (re-importa do Evolution). */
+    /** Abre a conversa: ficha + ÚLTIMA página da thread (o resto pagina sob demanda). */
     public function loadFull(Conversation $conversation)
     {
         // Devolve IMEDIATAMENTE o que já está no banco. Mensagens novas chegam em
         // tempo real pelo webhook (por isso o preview lateral atualiza na hora),
         // então o chat aberto NÃO precisa esperar o import do Evolution.
-        $payload = response()->json($conversation->fresh()->load('messages'));
+        // Só as últimas 150 msgs, colunas enxutas: a thread inteira da maior conversa
+        // era 1,66MB por abertura (e por refetch) — a última página são ~30KB. As
+        // anteriores vêm de GET /conversations/{c}/messages?before_ts=... ao rolar.
+        $limit = 150;
+        $messages = $conversation->messages()->reorder()
+            ->orderByDesc('ts')->orderByDesc('id')
+            ->limit($limit + 1)->get(\App\Models\Message::THREAD_COLUMNS);
+        $hasMore = $messages->count() > $limit;
+
+        $full = $conversation->fresh();
+        $full->setRelation('messages', $messages->take($limit)->reverse()->values());
+        $full->setAttribute('messages_has_more', $hasMore);
+        $payload = response()->json($full);
 
         // Backfill do histórico via Evolution (até 30 páginas) é caro (~20s e era
         // o que travava a abertura/refresh do chat). Roda DEPOIS de enviar a resposta
@@ -1083,22 +1096,145 @@ class WhatsAppController extends Controller
         return $payload;
     }
 
-    /** Mídia descriptografada (data URI base64) de uma mensagem — sob demanda. */
+    /**
+     * Mídia descriptografada de uma mensagem — binário com cache em disco.
+     *
+     * O formato antigo (data URI base64 dentro de JSON) triplicava o arquivo em
+     * memória e estourava o memory_limit em vídeos grandes (~70MB de base64 →
+     * fatal no json_encode), além de re-baixar do Evolution a CADA abertura do
+     * chat. Agora: 1ª busca decodifica o base64 em STREAMING direto p/ disco
+     * (memória O(1)); as seguintes saem do disco com Cache-Control imutável
+     * (o browser nem re-pede). Mídia que o Evolution não tem (404) entra em
+     * cache negativo de 1 dia — antes cada miss segurava um worker ~5s.
+     */
     public function media(\App\Models\Message $message)
     {
         abort_unless((bool) $message->wa_id, 404);
+        abort_if((bool) Cache::get("wa-media-miss:{$message->id}"), 404);
 
-        $res = $this->evo()->timeout(40)->post("/chat/getBase64FromMediaMessage/{$this->instance()}", [
-            'message' => ['key' => ['id' => $message->wa_id]],
-            'convertToMp4' => false,
+        $dir = storage_path('app/wa-media');
+        $path = "{$dir}/{$message->id}";
+        $mimePath = "{$path}.mime";
+
+        if (! is_file($path)) {
+            if (! is_dir($dir)) {
+                @mkdir($dir, 0775, true);
+            }
+            $tmp = tempnam(sys_get_temp_dir(), 'wamedia');
+            try {
+                // Mídia mora na instância da conta da conversa (multi-número).
+                $inst = $this->instance($message->conversation?->account?->instance);
+                $res = $this->evo()->timeout(12)
+                    ->withOptions(['sink' => $tmp])
+                    ->post("/chat/getBase64FromMediaMessage/{$inst}", [
+                        'message' => ['key' => ['id' => $message->wa_id]],
+                        'convertToMp4' => false,
+                    ]);
+
+                $mime = null;
+                if (! $res->successful() || ! $this->extractBase64ToFile($tmp, $path, $mime)) {
+                    Cache::put("wa-media-miss:{$message->id}", true, now()->addDay());
+                    abort(404);
+                }
+                file_put_contents($mimePath, $mime ?: (string) $message->meta);
+            } finally {
+                @unlink($tmp);
+            }
+        }
+
+        $mime = is_file($mimePath) ? trim((string) file_get_contents($mimePath)) : (string) $message->meta;
+
+        return response()->file($path, [
+            'Content-Type' => $mime ?: 'application/octet-stream',
+            'Cache-Control' => 'private, max-age=31536000, immutable',
         ]);
+    }
 
-        $base64 = $res->json('base64');
-        abort_unless((bool) $base64, 404);
+    /**
+     * Extrai o campo "base64" do JSON do Evolution (salvo em $jsonFile) decodificando
+     * em blocos direto para $outFile — sem nunca materializar o base64 em memória.
+     * Captura também o "mimetype". Retorna false se o JSON não tem mídia.
+     */
+    private function extractBase64ToFile(string $jsonFile, string $outFile, ?string &$mime): bool
+    {
+        $size = (int) @filesize($jsonFile);
+        if ($size < 30) {
+            return false;
+        }
 
-        $mime = $res->json('mimetype') ?: 'application/octet-stream';
+        // mimetype é um campo curto — vive no começo ou no fim do JSON (o base64 é o gigante do meio).
+        $head = (string) @file_get_contents($jsonFile, false, null, 0, min($size, 262144));
+        $tail = $size > 262144 ? (string) @file_get_contents($jsonFile, false, null, max(0, $size - 262144), 262144) : '';
+        if (preg_match('/"mimetype"\s*:\s*"([^"]+)"/', $head.$tail, $m)) {
+            $mime = stripslashes($m[1]);
+        }
 
-        return response()->json(['data' => "data:{$mime};base64,{$base64}"]);
+        $in = @fopen($jsonFile, 'rb');
+        if (! $in) {
+            return false;
+        }
+
+        // Localiza o início do VALOR de "base64" varrendo em blocos (com sobreposição
+        // p/ o marcador não cair no meio de uma emenda).
+        $start = null;
+        $offset = 0;
+        $prevTail = '';
+        while (($chunk = fread($in, 1048576)) !== false && $chunk !== '') {
+            $hay = $prevTail.$chunk;
+            if (preg_match('/"base64"\s*:\s*"/', $hay, $m, PREG_OFFSET_CAPTURE)) {
+                $start = $offset - strlen($prevTail) + $m[0][1] + strlen($m[0][0]);
+                break;
+            }
+            $offset += strlen($chunk);
+            $prevTail = substr($hay, -32);
+        }
+        if ($start === null) {
+            fclose($in);
+
+            return false;
+        }
+
+        $out = @fopen("{$outFile}.part", 'wb');
+        if (! $out) {
+            fclose($in);
+
+            return false;
+        }
+
+        fseek($in, $start);
+        $carry = '';
+        $closed = false;
+        while (! $closed && ($chunk = fread($in, 1048576)) !== false && $chunk !== '') {
+            $q = strpos($chunk, '"');
+            if ($q !== false) {
+                $chunk = substr($chunk, 0, $q);
+                $closed = true;
+            }
+            // JSON pode escapar "/" como "\/" — barra invertida nunca é base64, descarta.
+            $b64 = str_replace(['\\', "\n", "\r", ' '], '', $carry.$chunk);
+            $rem = strlen($b64) % 4;
+            $carry = $rem ? substr($b64, -$rem) : '';
+            if ($rem) {
+                $b64 = substr($b64, 0, -$rem);
+            }
+            if ($b64 !== '') {
+                fwrite($out, (string) base64_decode($b64));
+            }
+        }
+        if ($carry !== '') {
+            fwrite($out, (string) base64_decode($carry, false));
+        }
+        fclose($in);
+        fclose($out);
+
+        $ok = $closed && (int) @filesize("{$outFile}.part") > 0;
+        if ($ok) {
+            rename("{$outFile}.part", $outFile);
+        } else {
+            @unlink("{$outFile}.part");
+        }
+
+        return $ok;
     }
 
     /** Prévia: hoje → HH:MM, ontem → "Ontem", senão → DD/MM/AAAA. */

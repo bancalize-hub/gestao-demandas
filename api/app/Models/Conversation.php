@@ -17,6 +17,30 @@ class Conversation extends Model
     /** Silencia o broadcast de tempo real (usado em importações em massa). */
     public static bool $muteBroadcast = false;
 
+    /**
+     * Colunas que a LISTA de conversas consome (index, evento de tempo real e
+     * patch de conversa única). Fora ficam wa_jid/custom_fields/draft/timestamps —
+     * com centenas de conversas o excesso inflava o payload em ~40%.
+     */
+    public const LIST_COLUMNS = [
+        'id', 'slug', 'name', 'initials', 'avatar', 'online', 'status_text', 'role',
+        'deal_value', 'deal_unit', 'stage', 'stage_color', 'prob', 'hot', 'preview', 'time',
+        'last_message_at', 'unread', 'archived', 'auto_reply', 'in_memory', 'tags', 'phone',
+        'email', 'company', 'origin', 'responsible', 'segmento', 'notes', 'interactions', 'company_id',
+    ];
+
+    /**
+     * Query padrão da lista: colunas enxutas + última mensagem (só o necessário
+     * p/ preview/✓✓) + ts da 1ª mensagem (filtro de data do Funil).
+     */
+    public static function listQuery(): \Illuminate\Database\Eloquent\Builder
+    {
+        return static::query()
+            ->select(array_map(fn ($c) => "conversations.{$c}", self::LIST_COLUMNS))
+            ->with(['lastMessage' => fn ($q) => $q->select('messages.id', 'messages.conversation_id', 'messages.is_out', 'messages.ts')])
+            ->withMin('messages as started_ts', 'ts');
+    }
+
     protected $casts = [
         'online' => 'boolean',
         'hot' => 'boolean',
@@ -47,20 +71,35 @@ class Conversation extends Model
             }
         });
 
-        // Tempo real: avisa os painéis abertos (chat/etiquetas/funil) a cada mudança.
-        // Broadcast é best-effort: se o Reverb estiver fora, não derruba a operação.
-        // Silenciável em importações em massa (self::$muteBroadcast) p/ não floodar.
-        $notify = function ($conv) {
+        // Tempo real: avisa os painéis abertos (chat/etiquetas/funil) quando a
+        // conversa muda de verdade. Broadcast é best-effort: se o Reverb estiver
+        // fora, não derruba a operação. Silenciável em massa (self::$muteBroadcast).
+        static::saved(function (Conversation $conv) {
+            if (self::$muteBroadcast) {
+                return;
+            }
+            // Mudanças "quietas" não broadcastam: o realtime delas já viaja no
+            // MessageCreated (preview/time/last_message_at) ou é ação do próprio
+            // cliente (unread=0 ao abrir o chat). Antes, o PATCH de unread gerava
+            // broadcast → o próprio cliente re-baixava lista+thread ao ABRIR a conversa.
+            $quiet = ['unread', 'time', 'preview', 'last_message_at', 'auto_reply_due_at', 'online', 'status_text', 'updated_at'];
+            if (! $conv->wasRecentlyCreated && empty(array_diff(array_keys($conv->getChanges()), $quiet))) {
+                return;
+            }
+            try {
+                broadcast(new \App\Events\CrmUpdated('conversation', $conv->company_id, $conv->slug))->toOthers();
+            } catch (\Throwable $e) {
+            }
+        });
+        static::deleted(function (Conversation $conv) {
             if (self::$muteBroadcast) {
                 return;
             }
             try {
-                \App\Events\CrmUpdated::dispatch('conversation', $conv->company_id);
+                broadcast(new \App\Events\CrmUpdated('conversation', $conv->company_id, $conv->slug))->toOthers();
             } catch (\Throwable $e) {
             }
-        };
-        static::saved($notify);
-        static::deleted($notify);
+        });
 
         // Playbook por etapa: ao ENTRAR numa etapa (mudança real de stage, não na
         // criação), enfileira as mensagens automáticas dessa etapa. Best-effort:

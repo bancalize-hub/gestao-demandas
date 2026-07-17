@@ -69,6 +69,8 @@ class TranscriptionService
             }
 
             $message->update(['transcript' => $text]);
+            // Transcrição pronta aparece na bolha em tempo real.
+            \App\Support\Realtime::messagePatched($message, ['transcript' => $text]);
 
             return $text;
         } catch (\Throwable $e) {

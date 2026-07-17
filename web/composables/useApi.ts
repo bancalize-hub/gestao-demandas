@@ -25,6 +25,13 @@ export function useApi() {
       const headers = new Headers(options.headers as HeadersInit)
       headers.set('Accept', 'application/json')
 
+      // Identifica a conexão WebSocket desta aba: o backend usa broadcast()->toOthers()
+      // p/ não devolver pra própria aba o evento causado pela ação dela (evita o
+      // ciclo abrir conversa → broadcast → re-baixar tudo).
+      const sid = (globalThis as any).__crmEcho?.socketId?.()
+      if (sid)
+        headers.set('X-Socket-ID', sid)
+
       if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
         await ensureCsrf()
         const token = readCookie('XSRF-TOKEN')

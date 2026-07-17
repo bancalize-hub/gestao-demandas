@@ -9,7 +9,9 @@ const isMobile = useIsMobile()
 let poll: ReturnType<typeof setInterval> | null = null
 onMounted(async () => {
   await crm.init()
-  poll = setInterval(() => crm.refreshBoards(), 30000)
+  // Só rede de segurança: o tempo real de verdade chega pelo WebSocket com payload
+  // (message.new/message.patch). 30s de polling dobrava a carga à toa.
+  poll = setInterval(() => crm.refreshBoards(), 60000)
 })
 onBeforeUnmount(() => { if (poll) clearInterval(poll) })
 </script>

@@ -24,7 +24,7 @@ class CrmUpdated implements ShouldBroadcast
 
     public ?int $companyId;
 
-    public function __construct(public string $kind = 'crm', ?int $companyId = null)
+    public function __construct(public string $kind = 'crm', ?int $companyId = null, public ?string $slug = null)
     {
         $this->companyId = $companyId ?? app(Tenancy::class)->id();
     }
@@ -41,6 +41,8 @@ class CrmUpdated implements ShouldBroadcast
 
     public function broadcastWith(): array
     {
-        return ['kind' => $this->kind];
+        // slug identifica a conversa afetada — permite ao front dar patch em UMA
+        // linha da lista em vez de re-baixar as centenas de conversas.
+        return ['kind' => $this->kind, 'slug' => $this->slug];
     }
 }

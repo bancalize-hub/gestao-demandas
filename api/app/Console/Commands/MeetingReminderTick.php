@@ -65,11 +65,10 @@ class MeetingReminderTick extends Command
                     'ts' => $ts,
                     'position' => ((int) $conv->messages()->max('position')) + 1,
                 ];
-                if ($waId !== '') {
-                    $conv->messages()->updateOrCreate(['wa_id' => $waId], $data);
-                } else {
-                    $conv->messages()->create($data);
-                }
+                $msg = $waId !== ''
+                    ? $conv->messages()->updateOrCreate(['wa_id' => $waId], $data)
+                    : $conv->messages()->create($data);
+                \App\Support\Realtime::messageCreated($msg);
                 $conv->update([
                     'preview' => mb_substr($text, 0, 80),
                     'time' => date('H:i', $ts),

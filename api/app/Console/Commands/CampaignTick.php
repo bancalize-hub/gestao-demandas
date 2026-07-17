@@ -185,9 +185,10 @@ class CampaignTick extends Command
             'status' => 'sent',
             'position' => ((int) $conv->messages()->max('position')) + 1,
         ];
-        $waId !== ''
+        $msg = $waId !== ''
             ? $conv->messages()->updateOrCreate(['wa_id' => $waId], $data)
             : $conv->messages()->create($data);
+        \App\Support\Realtime::messageCreated($msg);
 
         return $conv;
     }

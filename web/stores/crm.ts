@@ -69,6 +69,7 @@ export interface Conversation {
   notes: string
   interactions: Interaction[]
   thread: Msg[]
+  threadHasMore: boolean // há mensagens mais antigas no servidor (paginação da thread)
 }
 
 export interface Deal {
@@ -253,6 +254,7 @@ function mapConv(c: any): Conversation {
     segmento: c.segmento ?? '', notes: c.notes ?? '',
     interactions: c.interactions ?? [],
     thread: (c.messages ?? []).map(mapMsg),
+    threadHasMore: !!c.messages_has_more,
   }
 }
 function mapMsg(m: any): Msg {
@@ -267,6 +269,22 @@ function mapTask(t: any): Task {
 
 let dragRef: DragRef | null = null
 const fullLoaded = new Set<string>()
+const loadingOlder = new Set<string>() // paginação de histórico em voo, por conversa
+const patchingConv = new Set<string>() // patch de linha única em voo, por conversa
+
+// Mescla mensagens novas na thread sem duplicar: dedup por id/waId e "adoção" da
+// bolha otimista (enviada por nós, ainda sem id) quando o eco do servidor chega.
+function mergeIncoming(conv: Conversation, msgs: Msg[]) {
+  for (const m of msgs) {
+    if (m.id && conv.thread.some(x => x.id === m.id)) continue
+    if (m.waId && conv.thread.some(x => x.waId === m.waId)) continue
+    const opt = m.isOut
+      ? conv.thread.find(x => !x.id && x.isOut && x.type === m.type && (x.text ?? '') === (m.text ?? ''))
+      : undefined
+    if (opt) Object.assign(opt, m)
+    else conv.thread.push(m)
+  }
+}
 
 // Mapa de "tela" -> rota real (navegação por vue-router).
 export const SCREEN_ROUTES: Record<Screen, string> = {
@@ -401,7 +419,7 @@ export const useCrmStore = defineStore('crm', {
         const existing = byId.get(mapped.id)
         if (!existing) return mapped
         // A lista não traz mais a thread (só a última msg); preserva a que já está carregada.
-        Object.assign(existing, mapped, { thread: existing.thread })
+        Object.assign(existing, mapped, { thread: existing.thread, threadHasMore: existing.threadHasMore })
         // Conversa aberta recebeu mensagem nova? (última do servidor != última carregada)
         if (existing.id === this.activeId && r.last_message) {
           const lastLoaded = [...existing.thread].reverse().find(o => o.id)
@@ -410,8 +428,8 @@ export const useCrmStore = defineStore('crm', {
         return existing
       })
       this.linkContactNames()
-      // Mantém a conversa aberta em tempo real recarregando só a thread dela (barata).
-      if (activeNewMsg && this.activeId) this.loadFullThread(this.activeId, true)
+      // Mantém a conversa aberta em dia buscando só o DELTA (mensagens após a última carregada).
+      if (activeNewMsg && this.activeId) this.syncThread(this.activeId)
     },
 
     // Atualiza a lista/threads (polling — mensagens novas em tempo real).
@@ -423,7 +441,9 @@ export const useCrmStore = defineStore('crm', {
       catch { /* silencioso */ }
     },
 
-    // Polling global: conversas + negócios (mantém chat, etiquetas e funil em tempo real).
+    // Fallback global (polling lento + eventos sem rota incremental): conversas + negócios.
+    // Recibos/mensagens da conversa aberta chegam pelos eventos message.new/message.patch,
+    // então aqui NÃO se re-baixa a thread.
     async refreshBoards() {
       try {
         const [convs, deals] = await Promise.all([
@@ -433,11 +453,16 @@ export const useCrmStore = defineStore('crm', {
         this.applyConversations(convs)
         this.dealList = deals.map(mapDeal)
         this.connection = 'online'
-        // Recarrega a thread aberta para refletir os recibos (entregue/lido) em tempo real.
-        // Status-only não muda o tamanho da lista, então não causa "pulo" de rolagem.
-        if (this.chatOpen && this.activeId) this.loadFullThread(this.activeId, true)
       }
       catch { this.connection = 'offline' }
+    },
+
+    async refreshDeals() {
+      try {
+        const deals = await api()<any[]>('/api/deals')
+        this.dealList = deals.map(mapDeal)
+      }
+      catch { /* silencioso */ }
     },
 
     // Indicadores do dia (leads novos que mandaram msg hoje) — para o painel do funil.
@@ -450,16 +475,108 @@ export const useCrmStore = defineStore('crm', {
       catch { /* mantém o último valor */ }
     },
 
-    // Carrega o histórico completo da conversa (o sync guarda só as recentes).
+    // Carrega a ÚLTIMA página da thread (o histórico anterior pagina sob demanda).
     async loadFullThread(id: string, force = false) {
       if (!force && fullLoaded.has(id)) return
       fullLoaded.add(id)
       try {
         const c = await api()<any>(`/api/conversations/${id}/full`)
         const conv = this.conversations.find(x => x.id === id)
-        if (conv) conv.thread = (c.messages ?? []).map(mapMsg)
+        if (conv) {
+          conv.thread = (c.messages ?? []).map(mapMsg)
+          conv.threadHasMore = !!c.messages_has_more
+        }
       }
       catch { if (!force) fullLoaded.delete(id) }
+    },
+
+    // "Carregar anteriores": busca a página mais antiga que a 1ª mensagem carregada.
+    async loadOlderMessages(id: string): Promise<boolean> {
+      const conv = this.conversations.find(x => x.id === id)
+      const first = conv?.thread.find(m => m.id)
+      if (!conv || !first || loadingOlder.has(id)) return false
+      loadingOlder.add(id)
+      try {
+        const qs = `before_id=${first.id}${first.ts != null ? `&before_ts=${first.ts}` : ''}&limit=150`
+        const r = await api()<{ messages: any[], has_more: boolean }>(`/api/conversations/${id}/messages?${qs}`)
+        conv.thread = [...r.messages.map(mapMsg), ...conv.thread]
+        conv.threadHasMore = !!r.has_more
+        return r.messages.length > 0
+      }
+      catch { return false }
+      finally { loadingOlder.delete(id) }
+    },
+
+    // Delta da thread: só as mensagens DEPOIS da última carregada (troca de chat instantânea).
+    async syncThread(id: string) {
+      const conv = this.conversations.find(x => x.id === id)
+      if (!conv) return
+      const last = [...conv.thread].reverse().find(m => m.id && m.ts != null)
+      if (!last) return this.loadFullThread(id, true)
+      try {
+        const r = await api()<{ messages: any[] }>(`/api/conversations/${id}/messages?after_ts=${last.ts}&after_id=${last.id}&limit=500`)
+        mergeIncoming(conv, r.messages.map(mapMsg))
+      }
+      catch { /* silencioso */ }
+    },
+
+    // ----- Tempo real com payload (WebSocket) -----
+    // message.new: a mensagem + a linha da conversa chegam NO evento — patch direto, zero refetch.
+    applyRealtimeMessage(e: any) {
+      const row = e?.conversation
+      if (!row?.slug) return
+      let conv = this.conversations.find(c => c.id === row.slug)
+      if (!conv) {
+        conv = mapConv(row)
+        this.conversations.unshift(conv)
+      }
+      else {
+        Object.assign(conv, mapConv(row), { thread: conv.thread, threadHasMore: conv.threadHasMore })
+        // Conversa com mensagem nova sobe pro topo (mesma ordem do servidor).
+        const idx = this.conversations.indexOf(conv)
+        if (idx > 0) {
+          this.conversations.splice(idx, 1)
+          this.conversations.unshift(conv)
+        }
+      }
+      if (e?.message && (conv.thread.length || conv.id === this.activeId))
+        mergeIncoming(conv, [mapMsg(e.message)])
+      // Chat aberto nessa conversa: já está lida (espelha o WhatsApp).
+      if (conv.id === this.activeId && this.screen === 'chat' && this.chatOpen && conv.unread > 0) {
+        conv.unread = 0
+        api()(`/api/conversations/${conv.id}`, { method: 'PATCH', body: { unread: 0 } }).catch(() => {})
+      }
+      this.linkContactNames()
+    },
+
+    // message.patch: recibo/reação/transcrição/remoção aplicados na bolha certa.
+    applyMessagePatch(e: any) {
+      const conv = this.conversations.find(c => c.id === e?.slug)
+      if (!conv) return
+      const m = conv.thread.find(x => (e.id && x.id === e.id) || (e.wa_id && x.waId === e.wa_id))
+      if (!m) return
+      if (e.removed) {
+        conv.thread.splice(conv.thread.indexOf(m), 1)
+        return
+      }
+      if ('status' in e && e.status != null) m.status = e.status
+      if ('reaction' in e) m.reaction = e.reaction ?? null
+      if ('transcript' in e && e.transcript != null) m.transcript = e.transcript
+    },
+
+    // Evento genérico de conversa (etapa/nome/ficha mudou em outra aba): busca SÓ essa linha.
+    async patchConversationFromServer(slug: string) {
+      if (patchingConv.has(slug)) return
+      patchingConv.add(slug)
+      try {
+        const row = await api()<any>(`/api/conversations/${slug}`)
+        const conv = this.conversations.find(c => c.id === slug)
+        if (conv) Object.assign(conv, mapConv(row), { thread: conv.thread, threadHasMore: conv.threadHasMore })
+        else this.conversations.unshift(mapConv(row))
+        this.linkContactNames()
+      }
+      catch { /* silencioso */ }
+      finally { patchingConv.delete(slug) }
     },
 
     selectConv(id: string) {
@@ -467,8 +584,10 @@ export const useCrmStore = defineStore('crm', {
       this.chatOpen = true
       this.threadError = false
       this.aiSuggestion = ''
-      this.loadFullThread(id)
       const c = this.conversations.find(x => x.id === id)
+      // Thread em cache aparece NA HORA; só o delta vem da rede. Sem cache, carrega a última página.
+      if (c && c.thread.some(m => m.id)) this.syncThread(id)
+      else this.loadFullThread(id)
       if (c && c.unread > 0) {
         c.unread = 0
         api()(`/api/conversations/${id}`, { method: 'PATCH', body: { unread: 0 } }).catch(() => {})

@@ -46,14 +46,50 @@ export default defineNuxtPlugin(() => {
     }),
   })
 
+  // useApi lê daqui o socketId p/ mandar o X-Socket-ID (broadcast toOthers).
+  ;(globalThis as any).__crmEcho = echo
+
   const crm = useCrmStore()
-  let t: ReturnType<typeof setTimeout> | null = null
-  const refresh = () => {
-    if (t) clearTimeout(t)
-    t = setTimeout(() => {
+
+  // Fallback: refetch COMPLETO (lista+deals) no máximo 1x a cada 10s, para eventos
+  // sem tratamento incremental. Antes, TODO evento re-baixava a lista inteira
+  // (770KB) com 350ms de debounce — 19 downloads num minuto medidos.
+  let lastFull = 0
+  let fullTimer: ReturnType<typeof setTimeout> | null = null
+  const throttledBoards = () => {
+    const wait = Math.max(0, 10_000 - (Date.now() - lastFull))
+    if (fullTimer)
+      return
+    fullTimer = setTimeout(() => {
+      fullTimer = null
+      lastFull = Date.now()
       crm.refreshBoards()
-      crm.refreshEvents() // mantém a agenda em dia (presença/resumo apurados pelo servidor)
-    }, 350) // debounce: agrupa rajadas
+    }, wait)
+  }
+
+  let evTimer: ReturnType<typeof setTimeout> | null = null
+  const debouncedEvents = () => {
+    if (evTimer) clearTimeout(evTimer)
+    evTimer = setTimeout(() => crm.refreshEvents(), 1000)
+  }
+
+  // Sinal genérico "algo mudou": roteia pelo tipo — cada evento atualiza SÓ o que
+  // lhe diz respeito (patch de 1 conversa, só deals, só agenda…).
+  const onUpdated = (e: any) => {
+    const kind = String(e?.kind ?? '')
+    if (kind === 'conversation' && e?.slug) {
+      crm.patchConversationFromServer(String(e.slug))
+      return
+    }
+    if (kind === 'deal') {
+      crm.refreshDeals()
+      return
+    }
+    if (kind === 'followup' || kind === 'calendar' || kind === 'meeting') {
+      debouncedEvents()
+      return
+    }
+    throttledBoards()
   }
 
   // Assina o canal da empresa do usuário; re-assina se a identidade mudar (login/troca).
@@ -65,8 +101,13 @@ export default defineNuxtPlugin(() => {
     if (current !== null)
       echo.leave(`crm.${current}`)
     current = companyId ?? null
-    if (companyId)
-      echo.private(`crm.${companyId}`).listen('.updated', refresh)
+    if (companyId) {
+      echo.private(`crm.${companyId}`)
+        // Push com payload: a mensagem chega PRONTA no evento — zero refetch.
+        .listen('.message.new', (e: any) => crm.applyRealtimeMessage(e))
+        .listen('.message.patch', (e: any) => crm.applyMessagePatch(e))
+        .listen('.updated', onUpdated)
+    }
   }, { immediate: true })
 
   return { provide: { echo } }

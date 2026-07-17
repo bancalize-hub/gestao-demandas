@@ -10,6 +10,7 @@ use App\Models\StyleRule;
 use App\Models\StyleSample;
 use App\Support\Claude;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 
 class MemoryController extends Controller
 {

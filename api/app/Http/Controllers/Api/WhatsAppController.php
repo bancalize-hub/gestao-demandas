@@ -788,10 +788,15 @@ class WhatsAppController extends Controller
         $records = [];
         $page = 1;
         do {
+            // offset = registros por página. O Evolution devolve o registro cru da
+            // mensagem, que pode incluir mídia em base64 (~centenas de KB cada). O
+            // parseMessage NÃO usa esse base64, mas o ->json() decodifica a resposta
+            // inteira — com 100 registros isso alocava ~67MB e estourava o memory_limit
+            // (128M) em Response.php:112. Página menor mantém o decode pequeno.
             $body = $this->evo()->post("/chat/findMessages/{$this->instance()}", [
                 'where' => ['key' => ['remoteJid' => $remoteJid]],
                 'page' => $page,
-                'offset' => 100,
+                'offset' => 40,
             ])->json('messages') ?? [];
 
             $batch = $body['records'] ?? [];
@@ -1069,7 +1074,10 @@ class WhatsAppController extends Controller
         // de novo aparece na próxima atualização (Reverb) ou reabertura.
         if ($conversation->wa_jid && Cache::add("wa-import:{$conversation->id}", true, now()->addMinutes(10))) {
             $jid = $conversation->wa_jid;
-            defer(fn () => $this->importConversation($jid, maxPages: 30));
+            // Poucas páginas: o webhook já mantém o recente no banco em tempo real,
+            // então aqui é só complemento. Importar 30 páginas (com mídia base64)
+            // segurava o worker e estourava memória à toa.
+            defer(fn () => $this->importConversation($jid, maxPages: 3));
         }
 
         return $payload;

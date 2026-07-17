@@ -22,6 +22,16 @@ return Application::configure(basePath: dirname(__DIR__))
             'set.tenant' => \App\Http\Middleware\SetTenant::class,
             'super.admin' => \App\Http\Middleware\EnsureSuperAdmin::class,
         ]);
+
+        // O SetTenant PRECISA rodar antes do route-model-binding (SubstituteBindings).
+        // Sem isso, o binding resolve o {conversation} etc. sem tenant vinculado e o
+        // CompanyScope fica inerte — devolvendo o registro de OUTRA empresa (mesmo
+        // slug/id em empresas distintas). Colocá-lo na lista de prioridade logo antes
+        // do SubstituteBindings garante a ordem: auth:sanctum -> set.tenant -> binding.
+        $middleware->prependToPriorityList(
+            before: \Illuminate\Routing\Middleware\SubstituteBindings::class,
+            prepend: \App\Http\Middleware\SetTenant::class,
+        );
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(

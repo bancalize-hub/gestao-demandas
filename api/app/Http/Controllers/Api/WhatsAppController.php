@@ -9,6 +9,7 @@ use App\Models\WaAccount;
 use App\Support\Tenancy;
 use Illuminate\Http\Request;
 use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 
@@ -1055,11 +1056,23 @@ class WhatsAppController extends Controller
     /** Carrega o histórico COMPLETO da conversa (re-importa do Evolution). */
     public function loadFull(Conversation $conversation)
     {
-        if ($conversation->wa_jid) {
-            $this->importConversation($conversation->wa_jid, maxPages: 30);
+        // Devolve IMEDIATAMENTE o que já está no banco. Mensagens novas chegam em
+        // tempo real pelo webhook (por isso o preview lateral atualiza na hora),
+        // então o chat aberto NÃO precisa esperar o import do Evolution.
+        $payload = response()->json($conversation->fresh()->load('messages'));
+
+        // Backfill do histórico via Evolution (até 30 páginas) é caro (~20s e era
+        // o que travava a abertura/refresh do chat). Roda DEPOIS de enviar a resposta
+        // (defer) e no máximo 1x a cada 10min por conversa — pra não bloquear o chat
+        // nem martelar o Evolution. O Tenancy segue vinculado no defer, então o
+        // importConversation resolve a conversa da empresa certa. O que ele trouxer
+        // de novo aparece na próxima atualização (Reverb) ou reabertura.
+        if ($conversation->wa_jid && Cache::add("wa-import:{$conversation->id}", true, now()->addMinutes(10))) {
+            $jid = $conversation->wa_jid;
+            defer(fn () => $this->importConversation($jid, maxPages: 30));
         }
 
-        return response()->json($conversation->fresh()->load('messages'));
+        return $payload;
     }
 
     /** Mídia descriptografada (data URI base64) de uma mensagem — sob demanda. */

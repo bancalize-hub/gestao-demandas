@@ -124,7 +124,7 @@ class AiReplyService
     {
         $ctx = '';
 
-        $style = StyleProfile::find(1)?->summary;
+        $style = StyleProfile::first()?->summary;
         if ($style) {
             $ctx .= "COMO VOCÊ (atendente) FALA:\n{$style}\n\n";
         }

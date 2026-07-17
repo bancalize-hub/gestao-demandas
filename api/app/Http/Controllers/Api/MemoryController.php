@@ -18,7 +18,7 @@ class MemoryController extends Controller
     {
         return response()->json([
             'chunks' => MemoryChunk::latest('id')->get(),
-            'style' => StyleProfile::find(1)?->summary ?? '',
+            'style' => StyleProfile::first()?->summary ?? '',
             'samples' => StyleSample::latest('id')->take(20)->get(),
             'rules' => StyleRule::orderBy('id')->get(),
         ]);
@@ -119,7 +119,7 @@ class MemoryController extends Controller
             return;
         }
 
-        $current = StyleProfile::find(1)?->summary ?? '(vazio)';
+        $current = StyleProfile::first()?->summary ?? '(vazio)';
 
         $prompt = <<<TXT
         Você mantém um GUIA DE VOZ de um atendente, para clonar o jeito dele escrever.
@@ -140,7 +140,12 @@ class MemoryController extends Controller
         }
 
         if (! empty($data['summary'])) {
-            StyleProfile::updateOrCreate(['id' => 1], ['summary' => mb_substr((string) $data['summary'], 0, 8000)]);
+            // Um perfil de voz POR EMPRESA. O CompanyScope isola por tenant e o
+            // BelongsToCompany carimba company_id na criação — NÃO usar id fixo (=1),
+            // que colidia com a PK do perfil de outra empresa.
+            $profile = StyleProfile::firstOrNew([]);
+            $profile->summary = mb_substr((string) $data['summary'], 0, 8000);
+            $profile->save();
         }
         foreach (array_slice($data['samples'] ?? [], 0, 3) as $s) {
             $s = trim((string) $s);
@@ -190,7 +195,11 @@ class MemoryController extends Controller
     public function updateStyle(Request $request)
     {
         $data = $request->validate(['summary' => 'nullable|string']);
-        StyleProfile::updateOrCreate(['id' => 1], ['summary' => $data['summary'] ?? '']);
+        // Perfil de voz por empresa (ver extractStyle): sem id fixo, deixa o
+        // CompanyScope/BelongsToCompany isolar e carimbar o tenant.
+        $profile = StyleProfile::firstOrNew([]);
+        $profile->summary = $data['summary'] ?? '';
+        $profile->save();
 
         return response()->json(['message' => 'ok']);
     }

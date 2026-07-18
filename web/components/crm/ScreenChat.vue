@@ -955,7 +955,7 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
       <div v-if="showThreadSearch" style="display:flex;align-items:center;gap:10px;padding:9px 22px;background:var(--c-bg-deep);border-bottom:1px solid var(--c-surface-1);">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--c-text-muted)" stroke-width="2" style="flex-shrink:0;"><circle cx="11" cy="11" r="7" /><path d="m20 20-3-3" stroke-linecap="round" /></svg>
         <input v-model="threadSearch" placeholder="Buscar mensagens nesta conversa" style="flex:1;background:transparent;border:none;outline:none;color:var(--c-text);font-family:inherit;font-size:13.5px;">
-        <span v-if="threadSearch.trim()" style="font-size:12px;color:var(--c-text-muted);flex-shrink:0;">{{ searchCount }} resultado(s)</span>
+        <span v-if="threadSearch.trim()" style="font-size:12px;color:var(--c-text-muted);flex-shrink:0;">{{ searchCount }} resultado(s){{ conv?.threadHasMore ? ' · só nas carregadas' : '' }}</span>
         <button title="Fechar" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:18px;line-height:1;flex-shrink:0;" @click="toggleThreadSearch">✕</button>
       </div>
 

@@ -1110,13 +1110,15 @@ class WhatsAppController extends Controller
     public function media(\App\Models\Message $message)
     {
         abort_unless((bool) $message->wa_id, 404);
-        abort_if((bool) Cache::get("wa-media-miss:{$message->id}"), 404);
 
         $dir = storage_path('app/wa-media');
         $path = "{$dir}/{$message->id}";
         $mimePath = "{$path}.mime";
 
         if (! is_file($path)) {
+            // Cache negativo checado SÓ quando não há arquivo: se o binário já está
+            // em disco, serve — mesmo que uma corrida antiga tenha gravado um miss.
+            abort_if((bool) Cache::get("wa-media-miss:{$message->id}"), 404);
             if (! is_dir($dir)) {
                 @mkdir($dir, 0775, true);
             }

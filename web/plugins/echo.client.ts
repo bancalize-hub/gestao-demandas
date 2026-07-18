@@ -102,7 +102,9 @@ export default defineNuxtPlugin(() => {
   ;(echo.connector as any)?.pusher?.connection?.bind('connected', () => {
     if (hadSession) {
       crm.refreshBoards()
-      if (crm.activeId) crm.syncThread(crm.activeId)
+      // Recarrega a última página inteira (não só o delta): se um evento se perdeu
+      // NO MEIO da desconexão, o delta ancorado na última msg não cura o buraco.
+      if (crm.activeId) crm.loadFullThread(crm.activeId, true)
     }
     hadSession = true
   })

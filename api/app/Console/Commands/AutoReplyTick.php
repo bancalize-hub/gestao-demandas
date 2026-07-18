@@ -74,6 +74,19 @@ class AutoReplyTick extends Command
                 }
             }
 
+            // O cliente mandou imagem? Descreve ANTES de responder (a IA precisa "ver" —
+            // ex.: foto da conta de luz). Síncrono: a descrição fica pronta neste tick mesmo.
+            if ($stt->visionEnabled()) {
+                $pendingImages = $conv->messages()
+                    ->where('type', 'image')->where('is_out', false)
+                    ->whereNull('transcript')->where('transcribe_attempts', '<', 3)
+                    ->whereNotNull('wa_id')
+                    ->reorder()->orderByDesc('ts')->orderByDesc('id')->take(3)->get();
+                foreach ($pendingImages as $img) {
+                    $stt->describeImage($img);
+                }
+            }
+
             $reply = null;
 
             // Se a conversa tem pinta de agendamento, tenta marcar sozinho (cria evento + Meet).

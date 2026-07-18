@@ -79,4 +79,71 @@ class TranscriptionService
             return null;
         }
     }
+
+    public function visionEnabled(): bool
+    {
+        return (bool) config('services.claude.oauth_token');
+    }
+
+    /**
+     * Descreve uma imagem do WhatsApp via Claude (visão) e grava em message.transcript —
+     * a IA passa a "ver" as imagens do cliente (conta de luz, documento, foto), igual
+     * ela "ouve" os áudios. Conta a tentativa (trava de retry). Retorna a descrição ou null.
+     */
+    public function describeImage(Message $message): ?string
+    {
+        if (! $this->visionEnabled() || $message->type !== 'image' || ! $message->wa_id) {
+            return null;
+        }
+
+        $message->increment('transcribe_attempts');
+
+        $base64 = Evolution::mediaBase64($message->wa_id);
+        if (! $base64) {
+            return null;
+        }
+        $bytes = base64_decode($base64, true);
+        if ($bytes === false || $bytes === '') {
+            return null;
+        }
+
+        $ext = match (true) {
+            str_starts_with($bytes, "\x89PNG") => 'png',
+            str_starts_with($bytes, 'RIFF') => 'webp',
+            default => 'jpg',
+        };
+        $dir = storage_path('app/vision');
+        if (! is_dir($dir)) {
+            mkdir($dir, 0775, true);
+        }
+        $path = $dir."/msg-{$message->id}.{$ext}";
+
+        try {
+            file_put_contents($path, $bytes);
+
+            $out = \App\Support\Claude::run(
+                "Leia a imagem em {$path} e descreva o conteúdo em português, de forma objetiva e completa, "
+                ."em um parágrafo. É uma imagem enviada por um cliente em uma conversa de WhatsApp. "
+                .'Se for um documento (ex.: conta de luz/fatura de energia, boleto, contrato, comprovante), '
+                .'extraia os dados principais: emissor/distribuidora, nome do titular, valor total, consumo (kWh), '
+                .'mês de referência e datas. Responda SOMENTE com a descrição, sem preâmbulo.',
+                90
+            );
+
+            $text = trim((string) $out);
+            if ($text === '') {
+                return null;
+            }
+
+            $message->update(['transcript' => $text]);
+
+            return $text;
+        } catch (\Throwable $e) {
+            Log::warning('Descrição de imagem falhou', ['msg' => $message->id, 'e' => $e->getMessage()]);
+
+            return null;
+        } finally {
+            @unlink($path);
+        }
+    }
 }

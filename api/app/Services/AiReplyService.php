@@ -28,13 +28,18 @@ class AiReplyService
         $transcript = $conversation->messages()
             ->where(function ($q) {
                 $q->where(fn ($t) => $t->where('type', 'text')->whereNotNull('text'))
-                    ->orWhere(fn ($v) => $v->where('type', 'voice')->whereNotNull('transcript')->where('transcript', '!=', ''));
+                    ->orWhere(fn ($v) => $v->where('type', 'voice')->whereNotNull('transcript')->where('transcript', '!=', ''))
+                    ->orWhere('type', 'image');
             })
             ->reorder()->orderByRaw('ts IS NULL, ts')->orderBy('id')
             ->get(['is_out', 'type', 'text', 'transcript'])
             ->map(function ($m) use ($conversation) {
                 $who = $m->is_out ? 'Atendente' : $conversation->name;
-                $content = $m->type === 'voice' ? '[áudio do cliente] '.$m->transcript : $m->text;
+                $content = match ($m->type) {
+                    'voice' => '[áudio do cliente] '.$m->transcript,
+                    'image' => self::imageLine($m),
+                    default => $m->text,
+                };
 
                 return $who.': '.$content;
             })
@@ -119,6 +124,16 @@ class AiReplyService
         return $out !== null ? trim($out) : null;
     }
 
+    /** Linha do histórico para uma imagem: descrição da visão (se houver) + legenda. */
+    private static function imageLine($m): string
+    {
+        $desc = trim((string) $m->transcript);
+        $line = '[enviou uma imagem'.($desc !== '' ? ' — conteúdo: '.$desc : '').']';
+        $caption = trim((string) $m->text);
+
+        return $caption !== '' ? $line.' '.$caption : $line;
+    }
+
     /** Bloco de contexto: perfil de voz + exemplos + conhecimento relevante. */
     public function memoryContext(Conversation $conversation): string
     {
@@ -155,8 +170,12 @@ class AiReplyService
     private function relevantChunks(Conversation $conversation): Collection
     {
         $recent = $conversation->messages()
-            ->where('type', 'text')->where('is_out', false)->whereNotNull('text')
-            ->reorder()->orderByDesc('ts')->orderByDesc('id')->take(3)->pluck('text')->implode(' ');
+            ->where('is_out', false)
+            ->where(fn ($q) => $q->whereNotNull('text')->orWhereNotNull('transcript'))
+            ->reorder()->orderByDesc('ts')->orderByDesc('id')->take(3)
+            ->get(['text', 'transcript'])
+            ->map(fn ($m) => trim(($m->text ?? '').' '.($m->transcript ?? '')))
+            ->implode(' ');
 
         $words = collect(preg_split('/\W+/u', mb_strtolower($recent)))
             ->filter(fn ($w) => mb_strlen($w) >= 4)->unique();

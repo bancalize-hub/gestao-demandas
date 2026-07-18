@@ -126,7 +126,6 @@ class AutoReplyTick extends Command
             $msg = $waId !== ''
                 ? $conv->messages()->updateOrCreate(['wa_id' => $waId], $data)
                 : $conv->messages()->create($data);
-            \App\Support\Realtime::messageCreated($msg);
 
             $conv->update([
                 'preview' => mb_substr($reply, 0, 80),
@@ -134,6 +133,9 @@ class AutoReplyTick extends Command
                 'last_message_at' => now(),
                 'auto_reply_due_at' => null,
             ]);
+            // Depois do update: o evento carrega a linha da conversa lida do banco —
+            // broadcastar antes mandaria preview/hora velhos pro painel.
+            \App\Support\Realtime::messageCreated($msg);
 
             $this->info("auto-reply: respondeu conversa {$conv->id} ({$conv->name})");
             } finally {

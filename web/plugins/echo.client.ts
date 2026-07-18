@@ -79,6 +79,9 @@ export default defineNuxtPlugin(() => {
     const kind = String(e?.kind ?? '')
     if (kind === 'conversation' && e?.slug) {
       crm.patchConversationFromServer(String(e.slug))
+      // Mudança real de conversa pode vir de apuração de presença/etapa — mantém a
+      // agenda em dia (com o saved silenciando mudanças triviais, isso é raro).
+      debouncedEvents()
       return
     }
     if (kind === 'deal') {
@@ -90,7 +93,32 @@ export default defineNuxtPlugin(() => {
       return
     }
     throttledBoards()
+    debouncedEvents()
   }
+
+  // Reconexão do WebSocket (rede caiu, notebook dormiu): eventos perdidos não têm
+  // replay — re-sincroniza lista + delta da conversa aberta ao reconectar.
+  let hadSession = false
+  ;(echo.connector as any)?.pusher?.connection?.bind('connected', () => {
+    if (hadSession) {
+      crm.refreshBoards()
+      if (crm.activeId) crm.syncThread(crm.activeId)
+    }
+    hadSession = true
+  })
+
+  // Aba voltou ao foco: o que chegou enquanto estava em segundo plano fica lido
+  // (o zerar de não-lido em tempo real só acontece com a aba visível e focada).
+  const onFocus = () => {
+    if (crm.screen === 'chat' && crm.chatOpen && crm.activeId) {
+      crm.markRead(crm.activeId)
+      crm.syncThread(crm.activeId)
+    }
+  }
+  window.addEventListener('focus', onFocus)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') onFocus()
+  })
 
   // Assina o canal da empresa do usuário; re-assina se a identidade mudar (login/troca).
   const { user } = useAuth()

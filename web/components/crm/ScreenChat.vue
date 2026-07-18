@@ -795,9 +795,11 @@ function scrollDown() {
   const el = msgsRef.value
   if (el) { el.scrollTop = el.scrollHeight; atBottom.value = true }
 }
-// troca de conversa: janela de renderização volta ao fim + desce até o fim
+// troca de conversa: janela de renderização volta ao fim + desce até o fim.
+// A janela abre espaço p/ TODAS as não-lidas — senão a linha "N não lidas"
+// (que fica antes das últimas N) cairia fora das 60 renderizadas.
 watch(() => crm.activeId, async () => {
-  windowSize.value = WINDOW_STEP
+  windowSize.value = Math.max(WINDOW_STEP, unreadMark.value + 10)
   await nextTick()
   scrollDown()
 })

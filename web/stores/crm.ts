@@ -274,6 +274,8 @@ const patchingConv = new Set<string>() // patch de linha única em voo, por conv
 
 // Mescla mensagens novas na thread sem duplicar: dedup por id/waId e "adoção" da
 // bolha otimista (enviada por nós, ainda sem id) quando o eco do servidor chega.
+// Insere na posição cronológica (ts) — push cego bagunçava a ordem quando um delta
+// chegava atrasado. Otimista sem ts conta como "agora" (fim da lista).
 function mergeIncoming(conv: Conversation, msgs: Msg[]) {
   for (const m of msgs) {
     if (m.id && conv.thread.some(x => x.id === m.id)) continue
@@ -281,8 +283,14 @@ function mergeIncoming(conv: Conversation, msgs: Msg[]) {
     const opt = m.isOut
       ? conv.thread.find(x => !x.id && x.isOut && x.type === m.type && (x.text ?? '') === (m.text ?? ''))
       : undefined
-    if (opt) Object.assign(opt, m)
-    else conv.thread.push(m)
+    if (opt) {
+      Object.assign(opt, m)
+      continue
+    }
+    let i = conv.thread.length
+    const mts = m.ts ?? Number.POSITIVE_INFINITY
+    while (i > 0 && (conv.thread[i - 1].ts ?? Number.POSITIVE_INFINITY) > mts) i--
+    conv.thread.splice(i, 0, m)
   }
 }
 
@@ -483,8 +491,13 @@ export const useCrmStore = defineStore('crm', {
         const c = await api()<any>(`/api/conversations/${id}/full`)
         const conv = this.conversations.find(x => x.id === id)
         if (conv) {
+          // Preserva o que chegou DURANTE o voo do /full: otimistas (sem id) e
+          // mensagens empurradas pelo websocket que a resposta ainda não trazia.
+          const prev = conv.thread
           conv.thread = (c.messages ?? []).map(mapMsg)
           conv.threadHasMore = !!c.messages_has_more
+          const newest = conv.thread.length ? (conv.thread[conv.thread.length - 1].ts ?? 0) : 0
+          mergeIncoming(conv, prev.filter(m => !m.id || (m.ts ?? 0) >= newest))
         }
       }
       catch { if (!force) fullLoaded.delete(id) }
@@ -541,12 +554,21 @@ export const useCrmStore = defineStore('crm', {
       }
       if (e?.message && (conv.thread.length || conv.id === this.activeId))
         mergeIncoming(conv, [mapMsg(e.message)])
-      // Chat aberto nessa conversa: já está lida (espelha o WhatsApp).
-      if (conv.id === this.activeId && this.screen === 'chat' && this.chatOpen && conv.unread > 0) {
-        conv.unread = 0
-        api()(`/api/conversations/${conv.id}`, { method: 'PATCH', body: { unread: 0 } }).catch(() => {})
+      // Chat aberto NESSA conversa e aba realmente à vista: marca lida. Aba parada
+      // em segundo plano NÃO pode zerar o não-lido (o time inteiro perderia o aviso).
+      if (conv.id === this.activeId && this.screen === 'chat' && this.chatOpen && conv.unread > 0
+        && typeof document !== 'undefined' && document.visibilityState === 'visible' && document.hasFocus()) {
+        this.markRead(conv.id)
       }
       this.linkContactNames()
+    },
+
+    // Zera o não-lido (ação explícita do usuário ou aba visível com o chat aberto).
+    markRead(id: string) {
+      const c = this.conversations.find(x => x.id === id)
+      if (!c || c.unread === 0) return
+      c.unread = 0
+      api()(`/api/conversations/${id}`, { method: 'PATCH', body: { unread: 0 } }).catch(() => {})
     },
 
     // message.patch: recibo/reação/transcrição/remoção aplicados na bolha certa.
@@ -575,7 +597,11 @@ export const useCrmStore = defineStore('crm', {
         else this.conversations.unshift(mapConv(row))
         this.linkContactNames()
       }
-      catch { /* silencioso */ }
+      catch (e: any) {
+        // 404 = a conversa foi apagada em outra aba — remove da lista local.
+        if (e?.status === 404 || e?.statusCode === 404)
+          this.conversations = this.conversations.filter(c => c.id !== slug)
+      }
       finally { patchingConv.delete(slug) }
     },
 

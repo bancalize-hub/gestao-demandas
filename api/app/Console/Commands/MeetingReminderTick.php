@@ -68,12 +68,13 @@ class MeetingReminderTick extends Command
                 $msg = $waId !== ''
                     ? $conv->messages()->updateOrCreate(['wa_id' => $waId], $data)
                     : $conv->messages()->create($data);
-                \App\Support\Realtime::messageCreated($msg);
                 $conv->update([
                     'preview' => mb_substr($text, 0, 80),
                     'time' => date('H:i', $ts),
                     'last_message_at' => now(),
                 ]);
+                // Depois do update: o evento lê a linha do banco (preview/hora atualizados).
+                \App\Support\Realtime::messageCreated($msg);
             }
 
             $this->info("lembrete: enviado p/ reunião {$meeting->id} ({$meeting->phone})");

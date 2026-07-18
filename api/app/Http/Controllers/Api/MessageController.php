@@ -286,6 +286,13 @@ class MessageController extends Controller
             'time' => $last->time ?? $conversation->time,
         ]);
 
+        // preview/time são mudanças "quietas" (não broadcastam no saved) — aqui a
+        // origem é uma deleção, então avisa explicitamente p/ as outras abas.
+        try {
+            broadcast(new \App\Events\CrmUpdated('conversation', $conversation->company_id, $conversation->slug))->toOthers();
+        } catch (\Throwable $e) {
+        }
+
         return response()->noContent();
     }
 }

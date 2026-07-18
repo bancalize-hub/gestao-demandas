@@ -1131,8 +1131,18 @@ class WhatsAppController extends Controller
                         'convertToMp4' => false,
                     ]);
 
+                // Cache NEGATIVO só em miss definitivo (2xx sem base64, 400/404 = o
+                // Evolution não tem a mídia). Erro transitório (5xx/restart) devolve
+                // 502 SEM cachear — senão um soluço do Evolution apagaria a mídia por 1 dia.
+                if (! $res->successful()) {
+                    if (in_array($res->status(), [400, 404], true)) {
+                        Cache::put("wa-media-miss:{$message->id}", true, now()->addDay());
+                        abort(404);
+                    }
+                    abort(502);
+                }
                 $mime = null;
-                if (! $res->successful() || ! $this->extractBase64ToFile($tmp, $path, $mime)) {
+                if (! $this->extractBase64ToFile($tmp, $path, $mime)) {
                     Cache::put("wa-media-miss:{$message->id}", true, now()->addDay());
                     abort(404);
                 }
@@ -1144,10 +1154,19 @@ class WhatsAppController extends Controller
 
         $mime = is_file($mimePath) ? trim((string) file_get_contents($mimePath)) : (string) $message->meta;
 
-        return response()->file($path, [
-            'Content-Type' => $mime ?: 'application/octet-stream',
+        // Só tipos que o chat renderiza podem ir inline; o resto vira download — o
+        // mime vem do WhatsApp (não é confiável) e text/html inline seria XSS no origin.
+        $inline = (bool) preg_match('#^(image/|video/|audio/|application/pdf$)#', $mime);
+        $headers = [
+            'Content-Type' => $inline ? $mime : 'application/octet-stream',
+            'X-Content-Type-Options' => 'nosniff',
             'Cache-Control' => 'private, max-age=31536000, immutable',
-        ]);
+        ];
+        if (! $inline) {
+            $headers['Content-Disposition'] = 'attachment; filename="'.addslashes($message->file_name ?: 'arquivo').'"';
+        }
+
+        return response()->file($path, $headers);
     }
 
     /**
@@ -1194,7 +1213,10 @@ class WhatsAppController extends Controller
             return false;
         }
 
-        $out = @fopen("{$outFile}.part", 'wb');
+        // Nome de trabalho único por processo: duas requests simultâneas da mesma
+        // mídia não podem truncar o .part uma da outra (rename final é atômico).
+        $part = "{$outFile}.".getmypid().'.part';
+        $out = @fopen($part, 'wb');
         if (! $out) {
             fclose($in);
 
@@ -1227,11 +1249,11 @@ class WhatsAppController extends Controller
         fclose($in);
         fclose($out);
 
-        $ok = $closed && (int) @filesize("{$outFile}.part") > 0;
+        $ok = $closed && (int) @filesize($part) > 0;
         if ($ok) {
-            rename("{$outFile}.part", $outFile);
+            rename($part, $outFile);
         } else {
-            @unlink("{$outFile}.part");
+            @unlink($part);
         }
 
         return $ok;

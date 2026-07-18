@@ -129,13 +129,14 @@ class AutomationTick extends Command
         $msg = $waId !== ''
             ? $conv->messages()->updateOrCreate(['wa_id' => $waId], $data)
             : $conv->messages()->create($data);
-        \App\Support\Realtime::messageCreated($msg);
 
         $conv->update([
             'preview' => $preview,
             'time' => $data['time'],
             'last_message_at' => now(),
         ]);
+        // Depois do update: o evento lê a linha do banco (preview/hora atualizados).
+        \App\Support\Realtime::messageCreated($msg);
     }
 
     /** Substitui as variáveis suportadas pelo conteúdo da ficha. */

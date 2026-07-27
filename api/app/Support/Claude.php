@@ -14,12 +14,16 @@ class Claude
             return null;
         }
 
+        // Prompt via STDIN, nunca como argumento: prompt grande (conversa longa +
+        // base de conhecimento) estourava o limite de ~128KB por argumento do Linux
+        // (proc_open: "Argument list too long") e derrubava quem chamasse.
         $res = Process::timeout($timeout)
             ->env([
                 'CLAUDE_CODE_OAUTH_TOKEN' => $token,
                 'HOME' => storage_path('app/claude-home'),
             ])
-            ->run([config('services.claude.bin'), '-p', $prompt]);
+            ->input($prompt)
+            ->run([config('services.claude.bin'), '-p']);
 
         return $res->successful() ? trim($res->output()) : null;
     }

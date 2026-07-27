@@ -38,6 +38,14 @@ class AutoReplyTick extends Command
             $tenancy->set($conv->company_id);
 
             try {
+            // Sem telefone (ex.: conversa @lid órfã) não há como enviar — desiste de vez,
+            // senão a pendência fica sendo reagendada para sempre.
+            if (! $conv->phone) {
+                $conv->update(['auto_reply_due_at' => null]);
+                $this->warn("auto-reply: conversa {$conv->id} sem telefone — pendência cancelada");
+
+                continue;
+            }
             // Dono da agenda Google DESTA empresa (conta usada para marcar as reuniões).
             $googleUser = User::where('company_id', $conv->company_id)
                 ->whereNotNull('google_refresh_token')->first();
@@ -151,6 +159,12 @@ class AutoReplyTick extends Command
             \App\Support\Realtime::messageCreated($msg);
 
             $this->info("auto-reply: respondeu conversa {$conv->id} ({$conv->name})");
+            } catch (\Throwable $e) {
+                // Uma conversa problemática NUNCA derruba o tick (e as demais pendências):
+                // registra, reagenda e segue. (Ex.: prompt gigante matava o tick inteiro
+                // e ninguém mais era respondido.)
+                \Illuminate\Support\Facades\Log::error('auto-reply: falha na conversa', ['conv' => $conv->id, 'e' => $e->getMessage()]);
+                $conv->update(['auto_reply_due_at' => now()->addMinutes(5)]);
             } finally {
                 $tenancy->forget();
             }

@@ -25,14 +25,19 @@ class AiReplyService
             return null;
         }
 
+        // Só as últimas mensagens: conversa antiga inteira (1000+ msgs) não cabe no
+        // contexto útil e deixava o prompt gigante à toa. As últimas 80 bastam.
         $transcript = $conversation->messages()
             ->where(function ($q) {
                 $q->where(fn ($t) => $t->where('type', 'text')->whereNotNull('text'))
                     ->orWhere(fn ($v) => $v->where('type', 'voice')->whereNotNull('transcript')->where('transcript', '!=', ''))
                     ->orWhere('type', 'image');
             })
-            ->reorder()->orderByRaw('ts IS NULL, ts')->orderBy('id')
+            ->reorder()->orderByRaw('ts IS NULL DESC, ts DESC')->orderByDesc('id')
+            ->take(80)
             ->get(['is_out', 'type', 'text', 'transcript'])
+            ->reverse()
+            ->values()
             ->map(function ($m) use ($conversation) {
                 $who = $m->is_out ? 'Atendente' : $conversation->name;
                 $content = match ($m->type) {

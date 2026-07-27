@@ -727,6 +727,26 @@ export const useCrmStore = defineStore('crm', {
       api()(`/api/conversations/${conv.id}/messages/${messageId}/react`, { method: 'POST', body: { emoji: next } }).catch(() => {})
     },
 
+    // Reenvia uma mensagem que o WhatsApp recusou (bolha com ⚠). Otimista: mostra
+    // "enviando" na hora e volta pra 'error' se o servidor recusar de novo.
+    async resendMessage(messageId: number): Promise<string | null> {
+      const conv = this.activeConv
+      if (!conv) return 'Conversa não encontrada.'
+      const m = conv.thread.find(x => x.id === messageId)
+      if (!m) return 'Mensagem não encontrada.'
+      const before = m.status
+      m.status = 'pending'
+      try {
+        const updated = await api()<any>(`/api/conversations/${conv.id}/messages/${messageId}/resend`, { method: 'POST' })
+        m.status = updated?.status ?? 'sent'
+        return null
+      }
+      catch (e: any) {
+        m.status = before
+        return e?.data?.message || 'Não consegui reenviar. Tente de novo em alguns minutos.'
+      }
+    },
+
     // Envia mídia (imagem/vídeo/documento) pelo WhatsApp. Retorna true se foi.
     async sendMedia(file: File, caption = '', dur = ''): Promise<boolean> {
       const conv = this.activeConv

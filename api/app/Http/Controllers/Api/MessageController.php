@@ -278,6 +278,50 @@ class MessageController extends Controller
         return response()->json($message);
     }
 
+    /**
+     * Reenvia uma mensagem de saída que o WhatsApp recusou (status 'error', ex.: ack 463)
+     * ou que nunca chegou a sair ('pending'/sem status). Usa o texto já gravado e
+     * substitui o wa_id da linha pelo novo, para o eco do webhook casar com ela em vez
+     * de duplicar. Mídia não é reenviável: o conteúdo original vive no servidor do
+     * WhatsApp e, se o envio falhou, não há o que baixar.
+     */
+    public function resend(Conversation $conversation, Message $message)
+    {
+        abort_unless($message->conversation_id === $conversation->id, 404);
+
+        if (! $message->is_out) {
+            return response()->json(['message' => 'Só dá para reenviar mensagem enviada por você.'], 422);
+        }
+        if (in_array($message->status, ['delivered', 'read'], true)) {
+            return response()->json(['message' => 'Esta mensagem já foi entregue.'], 422);
+        }
+        if ($message->type !== 'text' || trim((string) $message->text) === '') {
+            return response()->json(['message' => 'Só mensagens de texto podem ser reenviadas.'], 422);
+        }
+        if ($conversation->origin !== 'WhatsApp' || ! $conversation->phone) {
+            return response()->json(['message' => 'Conversa sem telefone vinculado — não dá para enviar pelo WhatsApp.'], 422);
+        }
+
+        $waId = Evolution::sendText(
+            (string) $conversation->phone,
+            (string) $message->text,
+            $message->reply_to,
+            (string) ($message->reply_excerpt ?? ''),
+            instance: $conversation->account?->instance,
+        );
+
+        if ($waId === null) {
+            return response()->json(['message' => 'O WhatsApp recusou o envio. Tente de novo em alguns minutos.'], 502);
+        }
+
+        // O status volta a 'sent'; o webhook messages.update decide o desfecho
+        // (delivered/read, ou 'error' de novo se o WhatsApp mandar um nack).
+        $message->update(['wa_id' => $waId, 'status' => 'sent']);
+        \App\Support\Realtime::messagePatched($message, ['status' => 'sent']);
+
+        return response()->json($message);
+    }
+
     /** Apaga uma mensagem do CRM. (Não remove no WhatsApp do cliente.) */
     public function destroy(Conversation $conversation, Message $message)
     {

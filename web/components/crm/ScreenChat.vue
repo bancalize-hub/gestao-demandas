@@ -625,6 +625,18 @@ async function copyMsg(m: any) {
   msgMenu.value = null
 }
 
+// Reenviar mensagem recusada pelo WhatsApp (bolha com ⚠). Um envio por vez por mensagem.
+const resending = reactive<Record<number, boolean>>({})
+async function resendMsg(m: any) {
+  if (!m?.id || resending[m.id]) return
+  resending[m.id] = true
+  const err = await crm.resendMessage(m.id)
+  resending[m.id] = false
+  msgMenu.value = null
+  memoToast.value = err ?? 'Mensagem reenviada'
+  setTimeout(() => { memoToast.value = '' }, err ? 4000 : 1800)
+}
+
 // Responder/citar.
 const replyTo = ref<{ id?: number, waId?: string | null, text: string, isOut: boolean } | null>(null)
 function startReply(m: any) {
@@ -992,6 +1004,11 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
               <div v-if="m.replyExcerpt" style="border-left:3px solid var(--accent);background:rgba(0,0,0,.18);border-radius:5px;padding:5px 9px;margin-bottom:5px;font-size:12.5px;color:var(--c-text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">↩ {{ m.replyExcerpt }}</div>
               <div style="font-size:14px;line-height:1.42;word-break:break-word;overflow-wrap:anywhere;white-space:pre-wrap;">{{ m.text }}</div>
               <div style="display:flex;align-items:center;justify-content:flex-end;gap:4px;margin-top:3px;">
+                <!-- Recusada pelo WhatsApp: reenviar sem precisar redigitar. -->
+                <button v-if="m.isOut && m.tick.kind === 'err' && m.id" class="resend-btn" :disabled="resending[m.id]" :title="resending[m.id] ? 'Reenviando…' : 'Não entregue — clique para reenviar'" @click.stop="resendMsg(m)">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                  {{ resending[m.id] ? 'Reenviando…' : 'Reenviar' }}
+                </button>
                 <span style="font-size:10.5px;color:var(--c-text-muted);">{{ m.time }}</span>
                 <template v-if="m.isOut">
                   <svg v-if="m.tick.kind === 'clock'" width="15" height="15" viewBox="0 0 24 24" fill="none" :stroke="m.tick.color" stroke-width="2"><circle cx="12" cy="12" r="9" /><path d="M12 7.5V12l3 2" stroke-linecap="round" /></svg>
@@ -1402,4 +1419,7 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
 .reactbtn:hover { background: var(--c-surface-3); transform: scale(1.15); }
 .reactbtn.on { background: rgba(var(--accent-rgb),.2); }
 .react-badge { position: absolute; bottom: -11px; background: var(--c-border); border: 2px solid var(--c-bg); border-radius: 11px; padding: 1px 5px; font-size: 12px; line-height: 1.3; box-shadow: 0 2px 5px rgba(0,0,0,.4); z-index: 2; }
+.resend-btn { display: inline-flex; align-items: center; gap: 4px; margin-right: 2px; background: rgba(var(--c-danger-rgb),.14); border: 1px solid var(--c-danger); color: var(--c-danger); font-family: inherit; font-size: 10.5px; font-weight: 700; line-height: 1; padding: 3px 7px; border-radius: 20px; cursor: pointer; }
+.resend-btn:hover:not(:disabled) { background: var(--c-danger); color: #fff; }
+.resend-btn:disabled { opacity: .6; cursor: default; }
 </style>

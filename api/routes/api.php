@@ -66,6 +66,7 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
     Route::post('/conversations/{conversation}/messages', [MessageController::class, 'store']);
     Route::post('/conversations/{conversation}/media', [MessageController::class, 'storeMedia']);
     Route::post('/conversations/{conversation}/messages/{message}/react', [MessageController::class, 'react']);
+    Route::post('/conversations/{conversation}/messages/{message}/resend', [MessageController::class, 'resend']);
     Route::post('/conversations/{conversation}/forward', [MessageController::class, 'forward']);
     Route::delete('/conversations/{conversation}/messages/{message}', [MessageController::class, 'destroy']);
     Route::post('/conversations/{conversation}/suggest-reply', [ConversationController::class, 'suggestReply']);

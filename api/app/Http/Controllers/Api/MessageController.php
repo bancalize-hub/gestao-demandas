@@ -76,11 +76,21 @@ class MessageController extends Controller
             $data['reply_excerpt'] = mb_substr((string) $data['reply_excerpt'], 0, 200);
         }
 
+        $isOutText = ($data['is_out'] ?? false) && $data['type'] === 'text' && ! empty($data['text']);
+
+        // Conversa de WhatsApp sem telefone (ex.: @lid que não resolveu o número) não tem
+        // para onde enviar. Sem esta guarda a mensagem era gravada, devolvia 201 e aparecia
+        // normal no chat — sem nunca sair. Recusa igual storeMedia() em vez de mensagem fantasma.
+        if ($isOutText && $conversation->origin === 'WhatsApp' && ! $conversation->phone) {
+            return response()->json([
+                'message' => 'Conversa sem telefone vinculado — não dá para enviar pelo WhatsApp.',
+            ], 422);
+        }
+
         // WhatsApp: envia de verdade pelo Evolution (não-fatal se falhar) e guarda o wa_id
         // retornado, para que o eco do webhook seja ignorado em vez de duplicar a mensagem.
         $waId = null;
-        if (($data['is_out'] ?? false) && $data['type'] === 'text' && ! empty($data['text'])
-            && $conversation->origin === 'WhatsApp' && $conversation->phone) {
+        if ($isOutText && $conversation->origin === 'WhatsApp' && $conversation->phone) {
             try {
                 $waId = Evolution::sendText((string) $conversation->phone, (string) $data['text'], $data['reply_to'] ?? null, (string) ($data['reply_excerpt'] ?? ''), instance: $conversation->account?->instance);
             } catch (\Throwable $e) {

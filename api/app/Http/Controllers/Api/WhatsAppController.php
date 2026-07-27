@@ -592,8 +592,17 @@ class WhatsAppController extends Controller
             return;
         }
         // Nunca regride o recibo (read > delivered > sent > pending).
-        $rank = ['pending' => 0, 'error' => 0, 'sent' => 1, 'delivered' => 2, 'read' => 3];
-        if (($rank[$status] ?? 0) < ($rank[(string) $msg->status] ?? 0)) {
+        $rank = ['pending' => 0, 'sent' => 1, 'delivered' => 2, 'read' => 3];
+        // 'error' fica FORA da escada: é falha terminal, não um degrau. O WhatsApp manda
+        // SERVER_ACK ("aceitei") e só depois o nack de erro (ex.: 463) — com error no mesmo
+        // nível de pending o update era descartado e a bolha ficava "enviada" pra sempre,
+        // escondendo que o cliente nunca recebeu. Só não sobrescreve recibo real já
+        // confirmado (delivered/read), que prova a entrega.
+        if ($status === 'error') {
+            if (($rank[(string) $msg->status] ?? 0) >= $rank['delivered']) {
+                return;
+            }
+        } elseif (($rank[$status] ?? 0) < ($rank[(string) $msg->status] ?? 0)) {
             return;
         }
         $msg->update(['status' => $status]);

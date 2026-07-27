@@ -608,6 +608,61 @@ class WhatsAppController extends Controller
         $msg->update(['status' => $status]);
         // Recibo em tempo real direto na bolha — sem re-baixar a thread inteira.
         \App\Support\Realtime::messagePatched($msg, ['status' => $status]);
+
+        if ($status === 'error') {
+            $this->retryFromSiblingAccount($msg);
+        }
+    }
+
+    /**
+     * Recusa do WhatsApp (ex.: ack 463, "reach-out timelock" do número) → tenta uma vez
+     * por OUTRO número DA MESMA EMPRESA. O CRM é multi-empresa: cair para o número de
+     * outra empresa mandaria o cliente de uma pelo WhatsApp da outra, então o candidato
+     * é sempre filtrado por company_id.
+     *
+     * Sem número irmão ativo, não faz nada — a mensagem fica com o recibo de erro e o
+     * botão "Reenviar" do chat.
+     */
+    private function retryFromSiblingAccount(\App\Models\Message $msg): void
+    {
+        // Uma tentativa por mensagem: o reenvio gera novo ack e cairia aqui de novo.
+        $once = 'wa-fallback:'.$msg->id;
+        if (! \Illuminate\Support\Facades\Cache::add($once, 1, now()->addDay())) {
+            return;
+        }
+        if ($msg->type !== 'text' || trim((string) $msg->text) === '') {
+            return; // mídia não é reenviável: o original só existe no servidor do WhatsApp
+        }
+
+        $conv = $msg->conversation;
+        if (! $conv || ! $conv->phone || ! $conv->company_id) {
+            return;
+        }
+
+        $sibling = \App\Models\WaAccount::withoutGlobalScopes()
+            ->where('company_id', $conv->company_id)
+            ->where('is_active', true)
+            ->where('state', 'open')
+            ->where('id', '!=', $conv->wa_account_id)
+            ->orderBy('id')
+            ->first();
+
+        if (! $sibling) {
+            return;
+        }
+
+        $waId = \App\Support\Evolution::sendText((string) $conv->phone, (string) $msg->text, instance: $sibling->instance);
+        if ($waId === null) {
+            return;
+        }
+
+        \Illuminate\Support\Facades\Log::info('wpp: 463 → reenvio pelo número irmão', [
+            'message_id' => $msg->id, 'company_id' => $conv->company_id,
+            'de' => $conv->wa_account_id, 'para' => $sibling->id,
+        ]);
+
+        $msg->update(['wa_id' => $waId, 'status' => 'sent']);
+        \App\Support\Realtime::messagePatched($msg, ['status' => 'sent']);
     }
 
     /**

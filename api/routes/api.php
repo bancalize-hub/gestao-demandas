@@ -101,6 +101,9 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
     Route::delete('/stages/{stage}', [StageController::class, 'destroy']);
 
     // Playbook por etapa: mensagens automáticas (PDF/follow-up) ao entrar numa etapa.
+    // Configurações gerais de automação (IA automática p/ leads novos) — alteração só admin.
+    Route::get('/automation-settings', [StageAutomationController::class, 'settings']);
+    Route::patch('/automation-settings', [StageAutomationController::class, 'updateSettings']);
     Route::get('/stage-automations', [StageAutomationController::class, 'index']);
     Route::post('/stage-automations', [StageAutomationController::class, 'store']);
     Route::post('/stage-automations/steps/{step}/asset', [StageAutomationController::class, 'uploadAsset']);

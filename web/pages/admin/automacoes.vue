@@ -137,7 +137,33 @@ async function uploadPdf(i: number, e: Event) {
   finally { uploadingIdx.value = null; input.value = '' }
 }
 
-onMounted(load)
+// ---- Configuração geral: IA automática para leads novos ----
+const autoReplyNewLeads = ref(false)
+const savingSetting = ref(false)
+
+async function loadSettings() {
+  try {
+    const s = await api<{ auto_reply_new_leads: boolean }>('/api/automation-settings')
+    autoReplyNewLeads.value = s.auto_reply_new_leads
+  }
+  catch { /* */ }
+}
+
+async function toggleAutoReplyNewLeads() {
+  if (savingSetting.value) return
+  savingSetting.value = true
+  try {
+    const s = await api<{ auto_reply_new_leads: boolean }>('/api/automation-settings', {
+      method: 'PATCH',
+      body: { auto_reply_new_leads: !autoReplyNewLeads.value },
+    })
+    autoReplyNewLeads.value = s.auto_reply_new_leads
+  }
+  catch (e: any) { alert(e?.response?._data?.message || 'Falha ao salvar a configuração.') }
+  finally { savingSetting.value = false }
+}
+
+onMounted(() => { load(); loadSettings() })
 </script>
 
 <template>
@@ -157,6 +183,24 @@ onMounted(load)
         <div v-if="loading" style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:40px;text-align:center;color:var(--c-text-muted);">Carregando…</div>
 
         <template v-else>
+          <!-- IA automática para leads novos -->
+          <div style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:18px 22px;display:flex;align-items:center;gap:14px;">
+            <div style="font-size:22px;">🤖</div>
+            <div style="flex:1;min-width:0;">
+              <div style="font-weight:800;font-size:13.5px;">IA automática para leads novos</div>
+              <div style="font-size:12px;color:var(--c-text-muted);line-height:1.5;margin-top:3px;">
+                Toda conversa nova de lead que mandar mensagem no WhatsApp (número principal) já nasce com o atendimento automático da IA ligado. Dá para desligar depois, conversa a conversa, no chat.
+              </div>
+            </div>
+            <button
+              :disabled="savingSetting"
+              :style="{ flexShrink: 0, height: '38px', borderRadius: '11px', border: 'none', display: 'flex', alignItems: 'center', gap: '6px', padding: '0 14px', cursor: savingSetting ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 700, color: autoReplyNewLeads ? 'var(--accent-ink)' : 'var(--accent)', background: autoReplyNewLeads ? 'var(--accent)' : 'var(--c-surface-2)', opacity: savingSetting ? 0.6 : 1 }"
+              @click="toggleAutoReplyNewLeads"
+            >
+              {{ autoReplyNewLeads ? 'Ligada' : 'Desligada' }}
+            </button>
+          </div>
+
           <!-- seletor de etapa -->
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <button

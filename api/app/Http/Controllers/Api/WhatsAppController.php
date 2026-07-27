@@ -709,6 +709,13 @@ class WhatsAppController extends Controller
             $conv->position = (int) (Conversation::max('position') ?? 0) + 1;
             // Carimba a origem (qual número recebeu) já na criação.
             $conv->wa_account_id = $account?->id;
+            // Empresa configurou IA automática p/ leads novos: a conversa já nasce com o
+            // atendimento automático ligado. Só quando é o LEAD quem inicia (mensagem
+            // recebida) e só no número principal — prospecção é atendida por humano.
+            if (! $isOut && (! $account || $account->isPrimary())) {
+                $companyId = $account?->company_id ?? app(\App\Support\Tenancy::class)->id();
+                $conv->auto_reply = (bool) \App\Models\Company::find($companyId)?->auto_reply_new_leads;
+            }
         } elseif (! $isOut && $validPush && preg_match('/^\+?\d+$/', (string) $conv->name)) {
             // Tinha só o número como nome — assim que o WhatsApp mandar o nome real, usa.
             $conv->name = $push;

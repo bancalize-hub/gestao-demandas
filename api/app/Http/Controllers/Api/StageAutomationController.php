@@ -10,6 +10,32 @@ use Illuminate\Support\Facades\Storage;
 
 class StageAutomationController extends Controller
 {
+    /** Configurações gerais de automação da empresa (hoje: IA automática p/ leads novos). */
+    public function settings(Request $request)
+    {
+        return response()->json([
+            'auto_reply_new_leads' => (bool) $request->user()->company?->auto_reply_new_leads,
+        ]);
+    }
+
+    /** Atualiza as configurações gerais de automação (admin). */
+    public function updateSettings(Request $request)
+    {
+        abort_unless((bool) $request->user()?->is_admin, 403, 'Apenas administradores.');
+
+        $data = $request->validate([
+            'auto_reply_new_leads' => 'required|boolean',
+        ]);
+
+        $company = $request->user()->company;
+        $company->auto_reply_new_leads = $data['auto_reply_new_leads'];
+        $company->save();
+
+        return response()->json([
+            'auto_reply_new_leads' => (bool) $company->auto_reply_new_leads,
+        ]);
+    }
+
     /** Lista as automações (com seus passos). Opcionalmente filtra por etapa. */
     public function index(Request $request)
     {

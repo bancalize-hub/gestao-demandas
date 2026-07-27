@@ -795,7 +795,6 @@ class WhatsAppController extends Controller
         $account ??= WaAccount::primary();
         [$local, $domain] = array_pad(explode('@', $remoteJid, 2), 2, '');
         $isPhone = $domain === 's.whatsapp.net';
-        $slug = 'wa-'.preg_replace('/[^a-z0-9]/i', '', $local);
 
         $records = [];
         $page = 1;
@@ -838,6 +837,16 @@ class WhatsAppController extends Controller
                 }
             }
         }
+        // Chaveia pelo telefone real quando conhecido (mesma regra do ingestMessage):
+        // chat @lid com telefone resolvido cai na MESMA conversa wa-<numero>. Antes o
+        // slug era montado com o @lid, e cada reconexão do WhatsApp (sync de chats)
+        // criava uma conversa duplicada wa-<lid> ao lado da wa-<telefone>.
+        if ($realNumber) {
+            $local = $realNumber;
+            $remoteJid = $realNumber.'@s.whatsapp.net';
+            $isPhone = true;
+        }
+        $slug = 'wa-'.preg_replace('/[^a-z0-9]/i', '', $local);
 
         if ($name === null) {
             foreach ($records as $r) {
@@ -854,6 +863,15 @@ class WhatsAppController extends Controller
         $name = $name ?: ($realNumber ? ('+'.$realNumber) : 'Contato WhatsApp');
 
         $conv = Conversation::firstOrNew(['slug' => $slug]);
+        if (! $conv->exists && ! $isPhone) {
+            // @lid sem telefone resolvível: se alguma dessas mensagens já chegou antes
+            // (pelo telefone, via webhook), reusa a conversa dela em vez de duplicar.
+            $waIds = array_values(array_filter(array_map(fn ($r) => (string) ($r['key']['id'] ?? ''), $records)));
+            $hit = $waIds ? Message::whereIn('wa_id', $waIds)->first() : null;
+            if ($hit?->conversation) {
+                $conv = $hit->conversation;
+            }
+        }
         // NÃO sobrescreve nome posto à mão. Só (re)nomeia se a conversa é nova ou o nome atual
         // é automático (número/placeholder). Antes, todo re-import resetava o nome manual p/ o número.
         $cur = trim((string) $conv->name);
@@ -869,8 +887,12 @@ class WhatsAppController extends Controller
         if ($avatar) {
             $conv->avatar = $avatar;
         }
-        $conv->phone = $realNumber ? ('+'.$realNumber) : null;
-        $conv->wa_jid = $remoteJid;
+        // Nunca regride: não apaga telefone já conhecido nem troca wa_jid de
+        // telefone por um @lid (o re-import de um chat @lid fazia os dois).
+        $conv->phone = $realNumber ? ('+'.$realNumber) : $conv->phone;
+        if ($isPhone || ! $conv->wa_jid) {
+            $conv->wa_jid = $remoteJid;
+        }
         $conv->wa_account_id = $conv->wa_account_id ?: $account?->id;
         $conv->origin = 'WhatsApp';
         $conv->status_text = 'via WhatsApp';

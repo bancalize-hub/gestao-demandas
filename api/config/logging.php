@@ -73,6 +73,17 @@ return [
             'replace_placeholders' => true,
         ],
 
+        // Trilha de envio/recibo do WhatsApp. Canal próprio em nível debug de propósito:
+        // o LOG_LEVEL global é 'error', então os Log::warning do envio nunca chegavam ao
+        // disco e falha de entrega ficava sem rastro nenhum.
+        'whatsapp' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/whatsapp.log'),
+            'level' => env('LOG_WHATSAPP_LEVEL', 'debug'),
+            'days' => env('LOG_WHATSAPP_DAYS', 7),
+            'replace_placeholders' => true,
+        ],
+
         'slack' => [
             'driver' => 'slack',
             'url' => env('LOG_SLACK_WEBHOOK_URL'),

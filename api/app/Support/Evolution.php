@@ -15,6 +15,63 @@ class Evolution
             ->timeout(20);
     }
 
+    /** Trilha de envio no canal 'whatsapp' (debug), fora do LOG_LEVEL global. */
+    public static function log(string $event, array $ctx = [], string $level = 'info'): void
+    {
+        try {
+            \Illuminate\Support\Facades\Log::channel('whatsapp')->{$level}($event, $ctx);
+        } catch (\Throwable $e) {
+            // Log nunca pode derrubar o envio.
+        }
+    }
+
+    /**
+     * POST na Evolution com a trilha completa: endpoint, instância, payload (mídia
+     * truncada), status HTTP, corpo e duração. Devolve a Response para o chamador
+     * decidir. Sem isto, um 4xx/5xx da Evolution virava `return null` mudo.
+     */
+    private static function post(string $path, string $instance, array $payload, int $timeout = 20): ?\Illuminate\Http\Client\Response
+    {
+        // Base64 de mídia polui (e estoura) o log: guarda só o tamanho.
+        $safe = $payload;
+        foreach (['media', 'audio'] as $heavy) {
+            if (isset($safe[$heavy])) {
+                $safe[$heavy] = '<'.strlen((string) $payload[$heavy]).' bytes base64>';
+            }
+        }
+        if (isset($safe['text'])) {
+            $safe['text'] = mb_substr((string) $safe['text'], 0, 120);
+        }
+
+        $started = microtime(true);
+        self::log('evolution.request', ['path' => $path, 'instance' => $instance, 'payload' => $safe]);
+
+        try {
+            $res = self::http()->timeout($timeout)->post($path.'/'.$instance, $payload);
+        } catch (\Throwable $e) {
+            self::log('evolution.exception', [
+                'path' => $path,
+                'instance' => $instance,
+                'ms' => round((microtime(true) - $started) * 1000),
+                'error' => $e->getMessage(),
+                'class' => get_class($e),
+            ], 'error');
+
+            return null;
+        }
+
+        self::log('evolution.response', [
+            'path' => $path,
+            'instance' => $instance,
+            'ms' => round((microtime(true) - $started) * 1000),
+            'http' => $res->status(),
+            'wa_id' => $res->json('key.id'),
+            'body' => mb_substr((string) $res->body(), 0, 600),
+        ], $res->successful() ? 'info' : 'error');
+
+        return $res;
+    }
+
     /** Resolve a instância: a passada explicitamente, ou a principal (config) por padrão. */
     private static function instance(?string $instance = null): string
     {
@@ -72,32 +129,25 @@ class Evolution
     {
         $number = preg_replace('/\D/', '', $number);
         if ($number === '' || $base64 === '') {
-            return null;
-        }
-        try {
-            $payload = [
-                'number' => $number,
-                'mediatype' => $mediatype,
-                'mimetype' => $mimetype,
-                'media' => $base64,
-                'fileName' => $fileName,
-            ];
-            if (trim($caption) !== '') {
-                $payload['caption'] = $caption;
-            }
-            $res = self::http()->timeout(60)->post('/message/sendMedia/'.self::instance($instance), $payload);
-            if (! $res->successful()) {
-                \Illuminate\Support\Facades\Log::warning('Evolution sendMedia falhou', ['status' => $res->status(), 'body' => mb_substr((string) $res->body(), 0, 300)]);
-
-                return null;
-            }
-
-            return (string) ($res->json('key.id') ?? '');
-        } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning('Evolution sendMedia exceção', ['e' => $e->getMessage()]);
+            self::log('sendMedia.abortado', ['number' => $number, 'len_base64' => strlen($base64)], 'error');
 
             return null;
         }
+
+        $payload = [
+            'number' => $number,
+            'mediatype' => $mediatype,
+            'mimetype' => $mimetype,
+            'media' => $base64,
+            'fileName' => $fileName,
+        ];
+        if (trim($caption) !== '') {
+            $payload['caption'] = $caption;
+        }
+
+        $res = self::post('/message/sendMedia', self::instance($instance), $payload, timeout: 60);
+
+        return $res && $res->successful() ? (string) ($res->json('key.id') ?? '') : null;
     }
 
     /** Reage a uma mensagem (emoji). `$emoji` vazio remove a reação. Retorna true se ok. */
@@ -130,25 +180,17 @@ class Evolution
     {
         $number = preg_replace('/\D/', '', $number);
         if ($number === '' || $base64 === '') {
-            return null;
-        }
-        try {
-            $res = self::http()->timeout(60)->post('/message/sendWhatsAppAudio/'.self::instance($instance), [
-                'number' => $number,
-                'audio' => $base64,
-            ]);
-            if (! $res->successful()) {
-                \Illuminate\Support\Facades\Log::warning('Evolution sendAudio falhou', ['status' => $res->status(), 'body' => mb_substr((string) $res->body(), 0, 300)]);
-
-                return null;
-            }
-
-            return (string) ($res->json('key.id') ?? '');
-        } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning('Evolution sendAudio exceção', ['e' => $e->getMessage()]);
+            self::log('sendAudio.abortado', ['number' => $number, 'len_base64' => strlen($base64)], 'error');
 
             return null;
         }
+
+        $res = self::post('/message/sendWhatsAppAudio', self::instance($instance), [
+            'number' => $number,
+            'audio' => $base64,
+        ], timeout: 60);
+
+        return $res && $res->successful() ? (string) ($res->json('key.id') ?? '') : null;
     }
 
     /**
@@ -158,33 +200,40 @@ class Evolution
      */
     public static function sendText(string $number, string $text, ?string $quotedId = null, string $quotedText = '', ?string $instance = null): ?string
     {
+        $raw = $number;
         $number = preg_replace('/\D/', '', $number);
         if ($number === '' || trim($text) === '') {
+            self::log('sendText.abortado', [
+                'motivo' => $number === '' ? 'numero vazio apos limpar' : 'texto vazio',
+                'number_raw' => $raw,
+                'len_text' => strlen($text),
+            ], 'error');
+
             return null;
         }
-        try {
-            $payload = [
-                'number' => $number,
-                'text' => $text,
+
+        $payload = ['number' => $number, 'text' => $text];
+        // Resposta nativa (quoted): a citação aparece também no WhatsApp do cliente.
+        if ($quotedId) {
+            $payload['quoted'] = [
+                'key' => ['id' => $quotedId],
+                'message' => ['conversation' => $quotedText !== '' ? $quotedText : ' '],
             ];
-            // Resposta nativa (quoted): a citação aparece também no WhatsApp do cliente.
-            if ($quotedId) {
-                $payload['quoted'] = [
-                    'key' => ['id' => $quotedId],
-                    'message' => ['conversation' => $quotedText !== '' ? $quotedText : ' '],
-                ];
-            }
-            $res = self::http()->post('/message/sendText/'.self::instance($instance), $payload);
-            if (! $res->successful()) {
-                return null;
-            }
+        }
 
-            return (string) ($res->json('key.id') ?? '');
-        } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning('Evolution sendText falhou', ['e' => $e->getMessage()]);
-
+        $res = self::post('/message/sendText', self::instance($instance), $payload);
+        if (! $res || ! $res->successful()) {
             return null;
         }
+
+        $waId = (string) ($res->json('key.id') ?? '');
+        if ($waId === '') {
+            // 2xx sem key.id: o chamador trata '' como sucesso-sem-id e a mensagem fica
+            // órfã de recibo (nenhum ack casa com ela). Precisa aparecer no log.
+            self::log('sendText.sem_wa_id', ['number' => $number, 'body' => mb_substr((string) $res->body(), 0, 400)], 'error');
+        }
+
+        return $waId;
     }
 
     /**

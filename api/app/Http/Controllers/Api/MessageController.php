@@ -89,11 +89,30 @@ class MessageController extends Controller
 
         // WhatsApp: envia de verdade pelo Evolution (não-fatal se falhar) e guarda o wa_id
         // retornado, para que o eco do webhook seja ignorado em vez de duplicar a mensagem.
+        $vaiEnviar = $isOutText && $conversation->origin === 'WhatsApp' && $conversation->phone;
+        Evolution::log('store.entrada', [
+            'conversation_id' => $conversation->id,
+            'company_id' => $conversation->company_id,
+            'origin' => $conversation->origin,
+            'phone' => $conversation->phone,
+            'wa_account_id' => $conversation->wa_account_id ?? null,
+            'instance' => $conversation->account?->instance,
+            'type' => $data['type'],
+            'is_out' => (bool) ($data['is_out'] ?? false),
+            'vai_enviar' => $vaiEnviar,
+        ]);
+
         $waId = null;
-        if ($isOutText && $conversation->origin === 'WhatsApp' && $conversation->phone) {
+        if ($vaiEnviar) {
             try {
                 $waId = Evolution::sendText((string) $conversation->phone, (string) $data['text'], $data['reply_to'] ?? null, (string) ($data['reply_excerpt'] ?? ''), instance: $conversation->account?->instance);
             } catch (\Throwable $e) {
+                Evolution::log('store.excecao', [
+                    'conversation_id' => $conversation->id,
+                    'error' => $e->getMessage(),
+                    'class' => get_class($e),
+                    'file' => $e->getFile().':'.$e->getLine(),
+                ], 'error');
                 report($e);
             }
         }
@@ -108,6 +127,14 @@ class MessageController extends Controller
         $message = $waId
             ? $conversation->messages()->updateOrCreate(['wa_id' => $waId], $data)
             : $conversation->messages()->create($data);
+
+        Evolution::log('store.gravada', [
+            'message_id' => $message->id,
+            'conversation_id' => $conversation->id,
+            'wa_id' => $waId,
+            'status' => $data['status'] ?? null,
+            'enviou' => $vaiEnviar,
+        ], ($vaiEnviar && ! $waId) ? 'error' : 'info');
 
         // Atualiza o resumo da conversa na lista.
         if ($data['type'] === 'text') {

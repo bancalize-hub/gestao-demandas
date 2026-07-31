@@ -534,7 +534,21 @@ class WhatsAppController extends Controller
         // Instância desconhecida: não dá para atribuir a nenhuma empresa. Ignora com segurança
         // (NUNCA cair na principal de outra empresa — isso vazaria mensagens entre tenants).
         if (! $account || ! $account->company_id) {
+            \App\Support\Evolution::log('webhook.instancia_desconhecida', [
+                'event' => $event,
+                'instance' => $request->input('instance'),
+            ], 'error');
+
             return response()->json(['ok' => true, 'ignored' => 'unknown-instance']);
+        }
+
+        if (in_array($event, ['messages.update', 'messages.edit'], true)) {
+            \App\Support\Evolution::log('webhook.recebido', [
+                'event' => $event,
+                'instance' => $request->input('instance'),
+                'company_id' => $account->company_id,
+                'data' => $request->input('data'),
+            ]);
         }
 
         // Processa TUDO no contexto da empresa dona da instância: as conversas/mensagens/labels
@@ -574,6 +588,8 @@ class WhatsAppController extends Controller
         $waId = (string) ($u['keyId'] ?? ($u['key']['id'] ?? ($u['message']['key']['id'] ?? '')));
         $raw = strtoupper((string) ($u['status'] ?? ($u['update']['status'] ?? '')));
         if ($waId === '' || $raw === '') {
+            \App\Support\Evolution::log('ack.ignorado', ['motivo' => 'sem wa_id ou sem status', 'payload' => $u], 'warning');
+
             return;
         }
         $map = [
@@ -584,13 +600,30 @@ class WhatsAppController extends Controller
         ];
         $status = $map[$raw] ?? null;
         if (! $status) {
+            \App\Support\Evolution::log('ack.status_desconhecido', ['wa_id' => $waId, 'raw' => $raw], 'warning');
+
             return;
         }
 
         $msg = \App\Models\Message::where('wa_id', $waId)->first();
         if (! $msg || ! $msg->is_out) {
+            \App\Support\Evolution::log('ack.sem_mensagem', [
+                'wa_id' => $waId,
+                'status' => $status,
+                'motivo' => $msg ? 'mensagem nao e de saida' : 'nenhuma mensagem com esse wa_id',
+            ], 'warning');
+
             return;
         }
+
+        \App\Support\Evolution::log('ack.recebido', [
+            'wa_id' => $waId,
+            'message_id' => $msg->id,
+            'conversation_id' => $msg->conversation_id,
+            'de' => $msg->status,
+            'para' => $status,
+            'raw' => $raw,
+        ], $status === 'error' ? 'error' : 'info');
         // Nunca regride o recibo (read > delivered > sent > pending).
         $rank = ['pending' => 0, 'sent' => 1, 'delivered' => 2, 'read' => 3];
         // 'error' fica FORA da escada: é falha terminal, não um degrau. O WhatsApp manda

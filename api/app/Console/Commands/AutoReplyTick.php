@@ -7,9 +7,11 @@ use App\Models\User;
 use App\Services\AiReplyService;
 use App\Services\MeetingScheduler;
 use App\Services\TranscriptionService;
-use App\Support\Evolution;
+use App\Support\Realtime;
 use App\Support\Tenancy;
+use App\Support\Wa;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Atendimento automático: para cada conversa com auto_reply ligado e uma resposta
@@ -38,132 +40,132 @@ class AutoReplyTick extends Command
             $tenancy->set($conv->company_id);
 
             try {
-            // Sem telefone (ex.: conversa @lid órfã) não há como enviar — desiste de vez,
-            // senão a pendência fica sendo reagendada para sempre.
-            if (! $conv->phone) {
-                $conv->update(['auto_reply_due_at' => null]);
-                $this->warn("auto-reply: conversa {$conv->id} sem telefone — pendência cancelada");
+                // Sem telefone (ex.: conversa @lid órfã) não há como enviar — desiste de vez,
+                // senão a pendência fica sendo reagendada para sempre.
+                if (! $conv->phone) {
+                    $conv->update(['auto_reply_due_at' => null]);
+                    $this->warn("auto-reply: conversa {$conv->id} sem telefone — pendência cancelada");
 
-                continue;
-            }
-            // Dono da agenda Google DESTA empresa (conta usada para marcar as reuniões).
-            $googleUser = User::where('company_id', $conv->company_id)
-                ->whereNotNull('google_refresh_token')->first();
+                    continue;
+                }
+                // Dono da agenda Google DESTA empresa (conta usada para marcar as reuniões).
+                $googleUser = User::where('company_id', $conv->company_id)
+                    ->whereNotNull('google_refresh_token')->first();
 
-            // Última mensagem é nossa? Então já foi respondida (humano assumiu) → limpa e segue.
-            $last = $conv->messages()->reorder()->orderByDesc('ts')->orderByDesc('id')->first();
-            if (! $last || $last->is_out) {
-                $conv->update(['auto_reply_due_at' => null]);
+                // Última mensagem é nossa? Então já foi respondida (humano assumiu) → limpa e segue.
+                $last = $conv->messages()->reorder()->orderByDesc('ts')->orderByDesc('id')->first();
+                if (! $last || $last->is_out) {
+                    $conv->update(['auto_reply_due_at' => null]);
 
-                continue;
-            }
-
-            // O cliente mandou áudio? Transcreve ANTES de responder (a IA precisa "ouvir").
-            // Transcreve os áudios recentes ainda sem transcrição e, se o último é um áudio
-            // que ainda dá pra tentar, espera o próximo tick em vez de responder no escuro.
-            if ($stt->enabled()) {
-                $pendingVoice = $conv->messages()
-                    ->where('type', 'voice')->where('is_out', false)
-                    ->whereNull('transcript')->where('transcribe_attempts', '<', 5)
-                    ->whereNotNull('wa_id')
-                    ->reorder()->orderByDesc('ts')->orderByDesc('id')->take(5)->get();
-                foreach ($pendingVoice as $v) {
-                    $stt->transcribe($v);
+                    continue;
                 }
 
-                if ($last->type === 'voice') {
-                    $fresh = $last->fresh();
-                    if (($fresh->transcript ?? null) === null && (int) $fresh->transcribe_attempts < 5) {
-                        $conv->update(['auto_reply_due_at' => now()->addSeconds(30)]); // ainda transcrevendo
-                        $this->info("auto-reply: aguardando transcrição do áudio (conversa {$conv->id})");
+                // O cliente mandou áudio? Transcreve ANTES de responder (a IA precisa "ouvir").
+                // Transcreve os áudios recentes ainda sem transcrição e, se o último é um áudio
+                // que ainda dá pra tentar, espera o próximo tick em vez de responder no escuro.
+                if ($stt->enabled()) {
+                    $pendingVoice = $conv->messages()
+                        ->where('type', 'voice')->where('is_out', false)
+                        ->whereNull('transcript')->where('transcribe_attempts', '<', 5)
+                        ->whereNotNull('wa_id')
+                        ->reorder()->orderByDesc('ts')->orderByDesc('id')->take(5)->get();
+                    foreach ($pendingVoice as $v) {
+                        $stt->transcribe($v);
+                    }
 
-                        continue;
+                    if ($last->type === 'voice') {
+                        $fresh = $last->fresh();
+                        if (($fresh->transcript ?? null) === null && (int) $fresh->transcribe_attempts < 5) {
+                            $conv->update(['auto_reply_due_at' => now()->addSeconds(30)]); // ainda transcrevendo
+                            $this->info("auto-reply: aguardando transcrição do áudio (conversa {$conv->id})");
+
+                            continue;
+                        }
                     }
                 }
-            }
 
-            // O cliente mandou imagem? Descreve ANTES de responder (a IA precisa "ver" —
-            // ex.: foto da conta de luz). Síncrono: a descrição fica pronta neste tick mesmo.
-            if ($stt->visionEnabled()) {
-                $pendingImages = $conv->messages()
-                    ->where('type', 'image')->where('is_out', false)
-                    ->whereNull('transcript')->where('transcribe_attempts', '<', 3)
-                    ->whereNotNull('wa_id')
-                    ->reorder()->orderByDesc('ts')->orderByDesc('id')->take(3)->get();
-                foreach ($pendingImages as $img) {
-                    $stt->describeImage($img);
-                }
-            }
-
-            $reply = null;
-
-            // Se a conversa tem pinta de agendamento, tenta marcar sozinho (cria evento + Meet).
-            // Não tenta de novo se já enviamos um link de reunião (evita marcar duas vezes).
-            if ($googleUser && $conv->phone && $this->looksLikeScheduling($conv) && ! $this->alreadyBooked($conv)) {
-                try {
-                    $res = $scheduler->decideAndBook($googleUser, $conv, $ai->memoryContext($conv));
-                    // Usa a mensagem do agendador SEMPRE que ele rodou: se marcou, é a confirmação com
-                    // link do Meet; se não marcou (horário ocupado/dia inválido), é a proposta de horários.
-                    // Assim a IA nunca diz "confirmado" sem o evento ter sido realmente criado.
-                    if (! empty($res['message'])) {
-                        $reply = $res['message'];
+                // O cliente mandou imagem? Descreve ANTES de responder (a IA precisa "ver" —
+                // ex.: foto da conta de luz). Síncrono: a descrição fica pronta neste tick mesmo.
+                if ($stt->visionEnabled()) {
+                    $pendingImages = $conv->messages()
+                        ->where('type', 'image')->where('is_out', false)
+                        ->whereNull('transcript')->where('transcribe_attempts', '<', 3)
+                        ->whereNotNull('wa_id')
+                        ->reorder()->orderByDesc('ts')->orderByDesc('id')->take(3)->get();
+                    foreach ($pendingImages as $img) {
+                        $stt->describeImage($img);
                     }
-                } catch (\Throwable $e) {
-                    \Illuminate\Support\Facades\Log::warning('auto-reply: agendamento falhou', ['conv' => $conv->id, 'e' => $e->getMessage()]);
                 }
-            }
 
-            // Não agendou → resposta de texto normal (mesmo estilo/regras da sugestão).
-            if ($reply === null) {
-                $reply = $ai->generate($conv);
-            }
+                $reply = null;
 
-            if ($reply === null || trim($reply) === '') {
-                $conv->update(['auto_reply_due_at' => now()->addMinutes(2)]);
-                $this->warn("auto-reply: falha ao gerar para conversa {$conv->id}");
+                // Se a conversa tem pinta de agendamento, tenta marcar sozinho (cria evento + Meet).
+                // Não tenta de novo se já enviamos um link de reunião (evita marcar duas vezes).
+                if ($googleUser && $conv->phone && $this->looksLikeScheduling($conv) && ! $this->alreadyBooked($conv)) {
+                    try {
+                        $res = $scheduler->decideAndBook($googleUser, $conv, $ai->memoryContext($conv));
+                        // Usa a mensagem do agendador SEMPRE que ele rodou: se marcou, é a confirmação com
+                        // link do Meet; se não marcou (horário ocupado/dia inválido), é a proposta de horários.
+                        // Assim a IA nunca diz "confirmado" sem o evento ter sido realmente criado.
+                        if (! empty($res['message'])) {
+                            $reply = $res['message'];
+                        }
+                    } catch (\Throwable $e) {
+                        Log::warning('auto-reply: agendamento falhou', ['conv' => $conv->id, 'e' => $e->getMessage()]);
+                    }
+                }
 
-                continue;
-            }
+                // Não agendou → resposta de texto normal (mesmo estilo/regras da sugestão).
+                if ($reply === null) {
+                    $reply = $ai->generate($conv);
+                }
 
-            $waId = $conv->phone ? Evolution::sendText($conv->phone, $reply) : null;
-            if ($waId === null) {
-                $conv->update(['auto_reply_due_at' => now()->addMinutes(2)]);
-                $this->warn("auto-reply: falha ao enviar para conversa {$conv->id}");
+                if ($reply === null || trim($reply) === '') {
+                    $conv->update(['auto_reply_due_at' => now()->addMinutes(2)]);
+                    $this->warn("auto-reply: falha ao gerar para conversa {$conv->id}");
 
-                continue;
-            }
+                    continue;
+                }
 
-            $ts = time();
-            $data = [
-                'type' => 'text',
-                'is_out' => true,
-                'text' => mb_substr($reply, 0, 4000),
-                'time' => date('H:i', $ts),
-                'ts' => $ts,
-                'position' => ((int) $conv->messages()->max('position')) + 1,
-            ];
-            // Já grava com o wa_id do envio → o eco do webhook é ignorado (não duplica).
-            // updateOrCreate por wa_id fecha a corrida caso o eco tenha chegado primeiro.
-            $msg = $waId !== ''
-                ? $conv->messages()->updateOrCreate(['wa_id' => $waId], $data)
-                : $conv->messages()->create($data);
+                $waId = $conv->phone ? Wa::forConversation($conv)->sendText($conv->phone, $reply) : null;
+                if ($waId === null) {
+                    $conv->update(['auto_reply_due_at' => now()->addMinutes(2)]);
+                    $this->warn("auto-reply: falha ao enviar para conversa {$conv->id}");
 
-            $conv->update([
-                'preview' => mb_substr($reply, 0, 80),
-                'time' => date('H:i', $ts),
-                'last_message_at' => now(),
-                'auto_reply_due_at' => null,
-            ]);
-            // Depois do update: o evento carrega a linha da conversa lida do banco —
-            // broadcastar antes mandaria preview/hora velhos pro painel.
-            \App\Support\Realtime::messageCreated($msg);
+                    continue;
+                }
 
-            $this->info("auto-reply: respondeu conversa {$conv->id} ({$conv->name})");
+                $ts = time();
+                $data = [
+                    'type' => 'text',
+                    'is_out' => true,
+                    'text' => mb_substr($reply, 0, 4000),
+                    'time' => date('H:i', $ts),
+                    'ts' => $ts,
+                    'position' => ((int) $conv->messages()->max('position')) + 1,
+                ];
+                // Já grava com o wa_id do envio → o eco do webhook é ignorado (não duplica).
+                // updateOrCreate por wa_id fecha a corrida caso o eco tenha chegado primeiro.
+                $msg = $waId !== ''
+                    ? $conv->messages()->updateOrCreate(['wa_id' => $waId], $data)
+                    : $conv->messages()->create($data);
+
+                $conv->update([
+                    'preview' => mb_substr($reply, 0, 80),
+                    'time' => date('H:i', $ts),
+                    'last_message_at' => now(),
+                    'auto_reply_due_at' => null,
+                ]);
+                // Depois do update: o evento carrega a linha da conversa lida do banco —
+                // broadcastar antes mandaria preview/hora velhos pro painel.
+                Realtime::messageCreated($msg);
+
+                $this->info("auto-reply: respondeu conversa {$conv->id} ({$conv->name})");
             } catch (\Throwable $e) {
                 // Uma conversa problemática NUNCA derruba o tick (e as demais pendências):
                 // registra, reagenda e segue. (Ex.: prompt gigante matava o tick inteiro
                 // e ninguém mais era respondido.)
-                \Illuminate\Support\Facades\Log::error('auto-reply: falha na conversa', ['conv' => $conv->id, 'e' => $e->getMessage()]);
+                Log::error('auto-reply: falha na conversa', ['conv' => $conv->id, 'e' => $e->getMessage()]);
                 $conv->update(['auto_reply_due_at' => now()->addMinutes(5)]);
             } finally {
                 $tenancy->forget();

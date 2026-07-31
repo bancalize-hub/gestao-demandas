@@ -57,6 +57,15 @@ return [
         'webhook_token' => env('EVOLUTION_WEBHOOK_TOKEN'),
     ],
 
+    // WhatsApp Cloud API (API OFICIAL da Meta). As credenciais são POR NÚMERO, no banco
+    // (wa_accounts) — o CRM é multi-empresa e cada empresa tem seu app/WABA. Aqui ficam só
+    // os padrões: a versão do Graph usada quando a conta não fixa uma, e um verify token
+    // global opcional para o handshake do webhook.
+    'wa_cloud' => [
+        'graph_version' => env('WA_CLOUD_GRAPH_VERSION', 'v21.0'),
+        'verify_token' => env('WA_CLOUD_VERIFY_TOKEN'),
+    ],
+
     // Lembrete automático de reunião: a IA avisa o cliente pelo WhatsApp antes de começar.
     'meeting_reminder' => [
         'enabled' => env('MEETING_REMINDER_ENABLED', true),

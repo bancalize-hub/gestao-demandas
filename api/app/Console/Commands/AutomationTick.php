@@ -5,8 +5,9 @@ namespace App\Console\Commands;
 use App\Models\Conversation;
 use App\Models\LeadActivity;
 use App\Models\StageAutomationRun;
-use App\Support\Evolution;
+use App\Support\Realtime;
 use App\Support\Tenancy;
+use App\Support\Wa;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -66,7 +67,7 @@ class AutomationTick extends Command
         }
 
         $phone = (string) $conv->phone;
-        $inst = $conv->account?->instance;
+        $channel = Wa::forConversation($conv);
         $text = $this->renderVars((string) ($step->text ?? ''), $conv);
 
         if ($step->type === 'media') {
@@ -78,7 +79,7 @@ class AutomationTick extends Command
             $base64 = base64_encode((string) Storage::disk('local')->get($step->asset_path));
             $mime = $step->asset_mime ?: 'application/pdf';
             $fileName = $step->asset_filename ?: 'arquivo.pdf';
-            $waId = Evolution::sendMedia($phone, $base64, $mime, $fileName, $text, 'document', instance: $inst);
+            $waId = $channel->sendMedia($phone, $base64, $mime, $fileName, $text, 'document');
             if (! $waId) {
                 $run->update(['status' => 'failed', 'error' => 'falha no envio da mídia']);
 
@@ -97,7 +98,7 @@ class AutomationTick extends Command
 
                 return;
             }
-            $waId = Evolution::sendText($phone, $text, instance: $inst);
+            $waId = $channel->sendText($phone, $text);
             if (! $waId) {
                 $run->update(['status' => 'failed', 'error' => 'falha no envio do texto']);
 
@@ -136,7 +137,7 @@ class AutomationTick extends Command
             'last_message_at' => now(),
         ]);
         // Depois do update: o evento lê a linha do banco (preview/hora atualizados).
-        \App\Support\Realtime::messageCreated($msg);
+        Realtime::messageCreated($msg);
     }
 
     /** Substitui as variáveis suportadas pelo conteúdo da ficha. */

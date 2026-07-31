@@ -5,7 +5,7 @@ namespace App\Services;
 use App\Models\Conversation;
 use App\Models\LeadActivity;
 use App\Models\Stage;
-use App\Support\Evolution;
+use App\Support\Wa;
 
 /**
  * Move uma conversa/negócio de etapa do funil de forma consistente, de um único lugar:
@@ -18,7 +18,7 @@ class StageMover
     /**
      * @param  string  $stageKey  chave estável da etapa (coluna stages.key)
      * @param  ?string  $activityTitle  título da atividade na linha do tempo (null = "Movido para …")
-     * @return bool  true se a etapa mudou de fato
+     * @return bool true se a etapa mudou de fato
      */
     public static function move(Conversation $conversation, string $stageKey, ?int $userId = null, ?string $activityTitle = null): bool
     {
@@ -62,10 +62,10 @@ class StageMover
         $new = $newKey ? Stage::where('key', $newKey)->first() : null;
 
         if ($old && $old->wa_label_id) {
-            Evolution::handleLabel($number, $old->wa_label_id, 'remove');
+            Wa::forConversation($conversation)->handleLabel($number, $old->wa_label_id, 'remove');
         }
         if ($new && $new->wa_label_id) {
-            Evolution::handleLabel($number, $new->wa_label_id, 'add');
+            Wa::forConversation($conversation)->handleLabel($number, $new->wa_label_id, 'add');
         }
     }
 }

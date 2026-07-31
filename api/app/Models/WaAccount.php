@@ -3,7 +3,6 @@
 namespace App\Models;
 
 use App\Models\Concerns\BelongsToCompany;
-
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
@@ -25,7 +24,15 @@ class WaAccount extends Model
         'sent_today' => 'integer',
         'sent_date' => 'date',
         'last_sent_at' => 'datetime',
+        'coexistence' => 'boolean',
+        // Token e segredo do app da Meta são credenciais de longa duração: ficam
+        // criptografados no banco (dump/backup vazado não entrega o WhatsApp da empresa).
+        'access_token' => 'encrypted',
+        'app_secret' => 'encrypted',
     ];
+
+    /** Segredos nunca saem numa resposta de API. */
+    protected $hidden = ['access_token', 'app_secret', 'verify_token'];
 
     public function conversations(): HasMany
     {
@@ -35,6 +42,28 @@ class WaAccount extends Model
     public function isPrimary(): bool
     {
         return $this->role === 'primary';
+    }
+
+    /** Fala pela API oficial da Meta (Cloud API) em vez da Evolution? */
+    public function isCloud(): bool
+    {
+        return $this->provider === 'cloud';
+    }
+
+    /**
+     * Resolve a conta pelo phone_number_id que vem no webhook da Meta.
+     * Sem escopo de empresa: o webhook chega sem tenant e o id é único global.
+     */
+    public static function byPhoneNumberId(?string $phoneNumberId): ?self
+    {
+        if (! $phoneNumberId) {
+            return null;
+        }
+
+        return static::withoutGlobalScopes()
+            ->where('provider', 'cloud')
+            ->where('phone_number_id', $phoneNumberId)
+            ->first();
     }
 
     /**

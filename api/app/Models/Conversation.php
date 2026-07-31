@@ -2,11 +2,15 @@
 
 namespace App\Models;
 
+use App\Events\CrmUpdated;
 use App\Models\Concerns\BelongsToCompany;
-
+use App\Services\StageAutomationEnqueuer;
+use App\Support\Wa;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Conversation extends Model
 {
@@ -33,7 +37,7 @@ class Conversation extends Model
      * Query padrão da lista: colunas enxutas + última mensagem (só o necessário
      * p/ preview/✓✓) + ts da 1ª mensagem (filtro de data do Funil).
      */
-    public static function listQuery(): \Illuminate\Database\Eloquent\Builder
+    public static function listQuery(): Builder
     {
         return static::query()
             ->select(array_map(fn ($c) => "conversations.{$c}", self::LIST_COLUMNS))
@@ -87,7 +91,7 @@ class Conversation extends Model
                 return;
             }
             try {
-                broadcast(new \App\Events\CrmUpdated('conversation', $conv->company_id, $conv->slug))->toOthers();
+                broadcast(new CrmUpdated('conversation', $conv->company_id, $conv->slug))->toOthers();
             } catch (\Throwable $e) {
             }
         });
@@ -96,7 +100,7 @@ class Conversation extends Model
                 return;
             }
             try {
-                broadcast(new \App\Events\CrmUpdated('conversation', $conv->company_id, $conv->slug))->toOthers();
+                broadcast(new CrmUpdated('conversation', $conv->company_id, $conv->slug))->toOthers();
             } catch (\Throwable $e) {
             }
         });
@@ -109,7 +113,7 @@ class Conversation extends Model
                 return;
             }
             try {
-                \App\Services\StageAutomationEnqueuer::onEnterStage($c);
+                StageAutomationEnqueuer::onEnterStage($c);
             } catch (\Throwable $e) {
             }
         });
@@ -125,6 +129,26 @@ class Conversation extends Model
         return $this->hasMany(LeadActivity::class);
     }
 
+    /**
+     * Timestamp (unix) da última mensagem RECEBIDA do cliente — o marco que abre a
+     * janela de 24h da API oficial. null = o cliente nunca escreveu.
+     */
+    public function lastInboundTs(): ?int
+    {
+        $ts = $this->messages()->reorder()->where('is_out', false)->max('ts');
+
+        return $ts ? (int) $ts : null;
+    }
+
+    /**
+     * Dá para mandar texto livre agora? Na Evolution, sempre; na Cloud API, só dentro
+     * das 24h desde a última mensagem do cliente (fora disso, só template aprovado).
+     */
+    public function canSendFreeform(): bool
+    {
+        return Wa::forConversation($this)->canSendFreeform($this->lastInboundTs());
+    }
+
     public function messages(): HasMany
     {
         // Ordena cronologicamente pelo timestamp real (ts), com id como desempate.
@@ -136,7 +160,7 @@ class Conversation extends Model
     }
 
     /** Só a última mensagem (cronológica) — usada na LISTA de conversas, sem carregar a thread toda. */
-    public function lastMessage(): \Illuminate\Database\Eloquent\Relations\HasOne
+    public function lastMessage(): HasOne
     {
         return $this->hasOne(Message::class)->latestOfMany('ts');
     }

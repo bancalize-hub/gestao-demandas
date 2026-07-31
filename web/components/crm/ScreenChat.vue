@@ -10,6 +10,7 @@ let mediaInFlight = 0
 </script>
 
 <script setup lang="ts">
+import type { WaTemplate } from '~/stores/crm'
 import { fmtListTime, maskPhone, useCrmStore } from '~/stores/crm'
 
 const crm = useCrmStore()
@@ -589,6 +590,41 @@ async function send() {
 function onKeyDown(e: KeyboardEvent) {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
 }
+
+// ---- Templates (API oficial, fora da janela de 24h) ----
+const tplChosen = ref<WaTemplate | null>(null)
+const tplParams = ref<string[]>([])
+const tplSending = ref(false)
+const tplError = ref('')
+
+function chooseTemplate(t: WaTemplate) {
+  tplChosen.value = t
+  tplParams.value = Array.from({ length: t.params }, () => '')
+  tplError.value = ''
+}
+// Prévia com as variáveis já substituídas — é o que o cliente vai ler.
+const tplPreview = computed(() => {
+  const t = tplChosen.value
+  if (!t) return ''
+  return t.body.replace(/\{\{\s*(\d+)\s*\}\}/g, (_m, n) => tplParams.value[Number(n) - 1] || `{{${n}}}`)
+})
+async function doSendTemplate() {
+  const t = tplChosen.value
+  if (!t || tplSending.value) return
+  if (tplParams.value.some(p => !p.trim())) { tplError.value = 'Preencha todas as variáveis.'; return }
+  tplSending.value = true
+  tplError.value = ''
+  const err = await crm.sendTemplate(t, tplParams.value)
+  tplSending.value = false
+  if (err) { tplError.value = err; return }
+  tplChosen.value = null
+  nextTick(scrollDown)
+}
+function closeTemplates() {
+  crm.templatePanel = false
+  tplChosen.value = null
+  tplError.value = ''
+}
 function useAISuggestion() {
   const el = inputRef.value
   if (el && crm.aiSuggestion) { el.value = crm.aiSuggestion; el.focus(); nextTick(autogrow) }
@@ -1095,6 +1131,50 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
 
       <!-- composer -->
       <div :style="{ padding: isMobile ? '10px 12px 12px' : '13px 22px 18px', position: 'relative' }">
+        <!-- janela de 24h fechada (API oficial): só template aprovado sai daqui -->
+        <div v-if="crm.templatePanel" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:14px;padding:13px;margin-bottom:9px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:9px;">
+            <span style="font-size:13.5px;font-weight:800;">⏳ Janela de 24h fechada</span>
+            <span style="flex:1;font-size:12px;color:var(--c-text-muted);">o cliente não escreve há mais de 24h — envie um template aprovado</span>
+            <button title="Fechar" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:16px;" @click="closeTemplates">✕</button>
+          </div>
+
+          <div v-if="crm.templatesLoading" style="font-size:12.5px;color:var(--c-text-muted);padding:6px 0;">Carregando templates…</div>
+          <div v-else-if="crm.templateError" style="font-size:12.5px;color:var(--c-danger-soft);padding:6px 0;">{{ crm.templateError }}</div>
+
+          <template v-else>
+            <!-- lista de templates aprovados -->
+            <div v-if="!tplChosen" style="display:flex;flex-direction:column;gap:6px;max-height:220px;overflow-y:auto;">
+              <button
+                v-for="t in crm.templates" :key="t.name + t.language"
+                style="text-align:left;background:var(--c-bg);border:1px solid var(--c-surface-3);border-radius:10px;padding:9px 11px;cursor:pointer;font-family:inherit;color:var(--c-text);"
+                @click="chooseTemplate(t)"
+              >
+                <div style="font-size:12.5px;font-weight:700;display:flex;align-items:center;gap:7px;">
+                  {{ t.name }}
+                  <span style="font-size:10px;font-weight:600;color:var(--c-text-faint);">{{ t.language }}</span>
+                  <span v-if="t.params" style="font-size:10px;font-weight:600;color:var(--accent);">{{ t.params }} variável(is)</span>
+                </div>
+                <div style="font-size:12px;color:var(--c-text-muted);margin-top:3px;line-height:1.4;">{{ t.body }}</div>
+              </button>
+            </div>
+
+            <!-- template escolhido: preencher variáveis e conferir a prévia -->
+            <div v-else>
+              <div style="font-size:12.5px;font-weight:700;margin-bottom:8px;">{{ tplChosen.name }}</div>
+              <div v-for="(_, i) in tplParams" :key="i" style="margin-bottom:7px;">
+                <input v-model="tplParams[i]" :placeholder="`Variável {{${i + 1}}}`" style="width:100%;background:var(--c-bg);border:1px solid var(--c-surface-3);border-radius:9px;padding:9px 11px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;box-sizing:border-box;">
+              </div>
+              <div style="background:var(--c-bg);border-radius:10px;padding:9px 11px;font-size:12.5px;color:var(--c-text-secondary);line-height:1.45;white-space:pre-wrap;">{{ tplPreview }}</div>
+              <div v-if="tplError" style="margin-top:7px;font-size:12px;color:var(--c-danger-soft);">{{ tplError }}</div>
+              <div style="display:flex;gap:8px;margin-top:10px;">
+                <button :disabled="tplSending" :style="{ flex: 1, background: 'var(--accent)', border: 'none', color: 'var(--accent-ink)', fontFamily: 'inherit', fontSize: '13px', fontWeight: 700, padding: '10px', borderRadius: '10px', cursor: tplSending ? 'default' : 'pointer', opacity: tplSending ? 0.6 : 1 }" @click="doSendTemplate">{{ tplSending ? 'Enviando…' : 'Enviar template' }}</button>
+                <button style="background:var(--c-bg);border:none;color:var(--c-text-muted);font-family:inherit;font-size:12.5px;font-weight:600;padding:0 14px;border-radius:10px;cursor:pointer;" @click="tplChosen = null">Voltar</button>
+              </div>
+            </div>
+          </template>
+        </div>
+
         <!-- barra de citação (responder) -->
         <div v-if="replyTo" style="display:flex;align-items:stretch;gap:0;background:var(--c-surface-2);border-radius:11px 11px 0 0;margin-bottom:-6px;overflow:hidden;">
           <div style="width:4px;background:var(--accent);flex-shrink:0;" />

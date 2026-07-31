@@ -3,14 +3,22 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\CampaignContact;
+use App\Models\Company;
 use App\Models\Conversation;
 use App\Models\Message;
+use App\Models\Stage;
 use App\Models\WaAccount;
+use App\Support\Channels\CloudChannel;
+use App\Support\Realtime;
 use App\Support\Tenancy;
-use Illuminate\Http\Request;
+use App\Support\Wa;
 use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Http\Client\Response;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class WhatsAppController extends Controller
@@ -70,6 +78,20 @@ class WhatsAppController extends Controller
         $this->ensureAdmin($request);
 
         $account = $this->account($request);
+
+        // Número na API oficial: não há instância nem pareamento — o "estado" é
+        // conseguir falar com a Graph API, e o número é o que a Meta tem cadastrado.
+        if ($account->isCloud()) {
+            $channel = new CloudChannel($account);
+            $state = $channel->connectionState();
+            $number = preg_replace('/\D/', '', (string) ($channel->numberInfo()['display_phone_number'] ?? '')) ?: null;
+            if ($account->state !== $state || ($number && $account->phone !== $number)) {
+                $account->update(['state' => $state, 'phone' => $number ?: $account->phone]);
+            }
+
+            return response()->json(['state' => $state, 'number' => $number, 'provider' => 'cloud']);
+        }
+
         $inst = $account->instance;
 
         $state = $this->evo()->get("/instance/connectionState/{$inst}")
@@ -95,7 +117,11 @@ class WhatsAppController extends Controller
     {
         $this->ensureAdmin($request);
 
-        $res = $this->evo()->get('/instance/connect/'.$this->account($request)->instance);
+        $account = $this->account($request);
+        // Na API oficial quem "pareia" é a Meta, no painel dela: não existe QR.
+        abort_if($account->isCloud(), 422, 'Número na API oficial não usa QR code.');
+
+        $res = $this->evo()->get('/instance/connect/'.$account->instance);
 
         return response()->json([
             'base64' => $res->json('base64'),
@@ -111,7 +137,10 @@ class WhatsAppController extends Controller
         $data = $request->validate(['number' => 'required|string']);
         $number = preg_replace('/\D/', '', $data['number']);
 
-        $res = $this->evo()->get('/instance/connect/'.$this->account($request)->instance, ['number' => $number]);
+        $account = $this->account($request);
+        abort_if($account->isCloud(), 422, 'Número na API oficial não usa código de pareamento.');
+
+        $res = $this->evo()->get('/instance/connect/'.$account->instance, ['number' => $number]);
 
         return response()->json(['pairingCode' => $res->json('pairingCode')]);
     }
@@ -122,6 +151,12 @@ class WhatsAppController extends Controller
         $this->ensureAdmin($request);
 
         $account = $this->account($request);
+        // Cloud API não tem sessão para derrubar: desligar é parar de usar o número.
+        if ($account->isCloud()) {
+            $account->update(['is_active' => false, 'state' => 'close']);
+
+            return response()->json(['message' => 'ok']);
+        }
         $this->evo()->delete('/instance/logout/'.$account->instance);
         $account->update(['state' => 'close']);
 
@@ -136,6 +171,23 @@ class WhatsAppController extends Controller
         $accounts = WaAccount::orderByRaw("role = 'primary' DESC")->orderBy('id')->get();
 
         foreach ($accounts as $a) {
+            // Número na API oficial: o estado vem da Meta, não de instância nenhuma.
+            if ($a->isCloud()) {
+                $channel = new CloudChannel($a);
+                $state = $channel->connectionState();
+                if ($state !== $a->state) {
+                    $a->update(['state' => $state]);
+                }
+                $a->remaining_today = $a->remainingToday();
+                // A tela precisa saber o que já está configurado — sem devolver segredo algum.
+                $a->has_token = (bool) $a->access_token;
+                $a->has_app_secret = (bool) $a->app_secret;
+                $a->webhook_url = url('/api/wpp/cloud/webhook');
+                $a->webhook_verify_token = $a->verify_token;
+
+                continue;
+            }
+
             $state = $this->evo()->get("/instance/connectionState/{$a->instance}")
                 ->json('instance.state') ?? 'close';
             $patch = [];
@@ -467,7 +519,9 @@ class WhatsAppController extends Controller
     {
         $this->ensureAdmin($request);
 
-        return response()->json(['labels' => \App\Support\Evolution::findLabels()]);
+        // A API oficial não expõe as etiquetas do app Business → lista vazia, e a tela
+        // de etapas simplesmente não oferece o vínculo com etiqueta.
+        return response()->json(['labels' => Wa::primary()->findLabels()]);
     }
 
     /**
@@ -489,16 +543,21 @@ class WhatsAppController extends Controller
             $digits = '55'.$digits; // assume Brasil quando vem sem código do país
         }
 
-        // Confirma que o número está no WhatsApp e pega o jid canônico.
-        $check = collect($this->evo()->post("/chat/whatsappNumbers/{$this->instance()}", [
-            'numbers' => [$digits],
-        ])->json());
-        $first = $check->first();
-        if (! is_array($first) || empty($first['exists'])) {
-            return response()->json(['message' => 'Esse número não está no WhatsApp.'], 422);
+        // Confirma que o número está no WhatsApp e pega o jid canônico. A API oficial
+        // não oferece essa checagem: lá a conversa é criada assim mesmo e um número
+        // inválido aparece como falha de entrega no recibo.
+        $jid = $digits.'@s.whatsapp.net';
+        if (! WaAccount::primary()?->isCloud()) {
+            $check = collect($this->evo()->post("/chat/whatsappNumbers/{$this->instance()}", [
+                'numbers' => [$digits],
+            ])->json());
+            $first = $check->first();
+            if (! is_array($first) || empty($first['exists'])) {
+                return response()->json(['message' => 'Esse número não está no WhatsApp.'], 422);
+            }
+            $jid = (string) ($first['jid'] ?? $jid);
         }
 
-        $jid = (string) ($first['jid'] ?? ($digits.'@s.whatsapp.net'));
         $local = explode('@', $jid)[0];
         $slug = 'wa-'.preg_replace('/[^a-z0-9]/i', '', $local);
 
@@ -509,6 +568,9 @@ class WhatsAppController extends Controller
             $conv->initials = $this->initialsOf($conv->name);
             $conv->color = '#6b7cff';
             $conv->position = (int) (Conversation::max('position') ?? 0) + 1;
+            // Carimba por qual número a conversa sai — é o que decide o canal (Evolution
+            // ou API oficial) na hora de enviar.
+            $conv->wa_account_id = WaAccount::primary()?->id;
         } elseif ($name !== '') {
             $conv->name = $name;
             $conv->initials = $this->initialsOf($name);
@@ -605,7 +667,7 @@ class WhatsAppController extends Controller
             return;
         }
 
-        $msg = \App\Models\Message::where('wa_id', $waId)->first();
+        $msg = Message::where('wa_id', $waId)->first();
         if (! $msg || ! $msg->is_out) {
             \App\Support\Evolution::log('ack.sem_mensagem', [
                 'wa_id' => $waId,
@@ -640,7 +702,7 @@ class WhatsAppController extends Controller
         }
         $msg->update(['status' => $status]);
         // Recibo em tempo real direto na bolha — sem re-baixar a thread inteira.
-        \App\Support\Realtime::messagePatched($msg, ['status' => $status]);
+        Realtime::messagePatched($msg, ['status' => $status]);
 
         if ($status === 'error') {
             $this->retryFromSiblingAccount($msg);
@@ -656,11 +718,11 @@ class WhatsAppController extends Controller
      * Sem número irmão ativo, não faz nada — a mensagem fica com o recibo de erro e o
      * botão "Reenviar" do chat.
      */
-    private function retryFromSiblingAccount(\App\Models\Message $msg): void
+    private function retryFromSiblingAccount(Message $msg): void
     {
         // Uma tentativa por mensagem: o reenvio gera novo ack e cairia aqui de novo.
         $once = 'wa-fallback:'.$msg->id;
-        if (! \Illuminate\Support\Facades\Cache::add($once, 1, now()->addDay())) {
+        if (! Cache::add($once, 1, now()->addDay())) {
             return;
         }
         if ($msg->type !== 'text' || trim((string) $msg->text) === '') {
@@ -672,7 +734,7 @@ class WhatsAppController extends Controller
             return;
         }
 
-        $sibling = \App\Models\WaAccount::withoutGlobalScopes()
+        $sibling = WaAccount::withoutGlobalScopes()
             ->where('company_id', $conv->company_id)
             ->where('is_active', true)
             ->where('state', 'open')
@@ -684,18 +746,18 @@ class WhatsAppController extends Controller
             return;
         }
 
-        $waId = \App\Support\Evolution::sendText((string) $conv->phone, (string) $msg->text, instance: $sibling->instance);
+        $waId = Wa::for($sibling)->sendText((string) $conv->phone, (string) $msg->text);
         if ($waId === null) {
             return;
         }
 
-        \Illuminate\Support\Facades\Log::info('wpp: 463 → reenvio pelo número irmão', [
+        Log::info('wpp: 463 → reenvio pelo número irmão', [
             'message_id' => $msg->id, 'company_id' => $conv->company_id,
             'de' => $conv->wa_account_id, 'para' => $sibling->id,
         ]);
 
         $msg->update(['wa_id' => $waId, 'status' => 'sent']);
-        \App\Support\Realtime::messagePatched($msg, ['status' => 'sent']);
+        Realtime::messagePatched($msg, ['status' => 'sent']);
     }
 
     /**
@@ -704,7 +766,7 @@ class WhatsAppController extends Controller
      */
     private function ingestLabelAssociation(array $data): void
     {
-        \Illuminate\Support\Facades\Log::info('wpp: labels.association', $data);
+        Log::info('wpp: labels.association', $data);
 
         $assoc = $data['association'] ?? $data;
         $type = (string) ($data['type'] ?? $assoc['type'] ?? '');
@@ -715,7 +777,7 @@ class WhatsAppController extends Controller
             return;
         }
 
-        $stage = \App\Models\Stage::where('wa_label_id', $labelId)->first();
+        $stage = Stage::where('wa_label_id', $labelId)->first();
         if (! $stage) {
             return; // etiqueta não vinculada a nenhuma etapa
         }
@@ -759,7 +821,7 @@ class WhatsAppController extends Controller
         $p = $this->parseMessage($m);
         if (! $p) {
             // Diagnóstico: registra tipos de mensagem ainda não tratados (sem dados sensíveis).
-            \Illuminate\Support\Facades\Log::warning('wpp: mensagem descartada no parse', [
+            Log::warning('wpp: mensagem descartada no parse', [
                 'messageType' => $m['messageType'] ?? null,
                 'msgKeys' => array_keys($m['message'] ?? []),
                 'fromMe' => $key['fromMe'] ?? null,
@@ -810,8 +872,8 @@ class WhatsAppController extends Controller
             // atendimento automático ligado. Só quando é o LEAD quem inicia (mensagem
             // recebida) e só no número principal — prospecção é atendida por humano.
             if (! $isOut && (! $account || $account->isPrimary())) {
-                $companyId = $account?->company_id ?? app(\App\Support\Tenancy::class)->id();
-                $conv->auto_reply = (bool) \App\Models\Company::find($companyId)?->auto_reply_new_leads;
+                $companyId = $account?->company_id ?? app(Tenancy::class)->id();
+                $conv->auto_reply = (bool) Company::find($companyId)?->auto_reply_new_leads;
             }
         } elseif (! $isOut && $validPush && preg_match('/^\+?\d+$/', (string) $conv->name)) {
             // Tinha só o número como nome — assim que o WhatsApp mandar o nome real, usa.
@@ -842,7 +904,7 @@ class WhatsAppController extends Controller
 
         // Prospect respondeu a um disparo? Marca o contato da campanha como respondido (para o relatório).
         if (! $isOut && $account && ! $account->isPrimary() && $realNumber) {
-            $contact = \App\Models\CampaignContact::where('phone', $realNumber)
+            $contact = CampaignContact::where('phone', $realNumber)
                 ->where('status', 'sent')->orderByDesc('id')->first();
             if ($contact) {
                 $contact->update(['status' => 'replied', 'conversation_id' => $conv->id]);
@@ -882,7 +944,7 @@ class WhatsAppController extends Controller
         // Push imediato: o evento leva a mensagem + a linha da conversa, então o
         // chat e o preview atualizam na hora sem nenhum refetch da API.
         if ($broadcast) {
-            \App\Support\Realtime::messageCreated($msg);
+            Realtime::messageCreated($msg);
         }
     }
 
@@ -1077,7 +1139,7 @@ class WhatsAppController extends Controller
 
             foreach ($byNum as $num => $conv) {
                 $r = $responses[(string) $num] ?? null;
-                if ($r instanceof \Illuminate\Http\Client\Response && $r->json('profilePictureUrl')) {
+                if ($r instanceof Response && $r->json('profilePictureUrl')) {
                     $conv->avatar = $r->json('profilePictureUrl');
                     $conv->save();
                 }
@@ -1135,7 +1197,7 @@ class WhatsAppController extends Controller
             return;
         }
         $msg->update(['reaction' => $emoji !== '' ? $emoji : null]);
-        \App\Support\Realtime::messagePatched($msg, ['reaction' => $msg->reaction]);
+        Realtime::messagePatched($msg, ['reaction' => $msg->reaction]);
     }
 
     /** Extrai a citação (quoted) de uma mensagem recebida: ['reply_to'=>?, 'reply_excerpt'=>?]. */
@@ -1197,7 +1259,7 @@ class WhatsAppController extends Controller
         $limit = 150;
         $messages = $conversation->messages()->reorder()
             ->orderByDesc('ts')->orderByDesc('id')
-            ->limit($limit + 1)->get(\App\Models\Message::THREAD_COLUMNS);
+            ->limit($limit + 1)->get(Message::THREAD_COLUMNS);
         $hasMore = $messages->count() > $limit;
 
         $full = $conversation->fresh();
@@ -1211,7 +1273,10 @@ class WhatsAppController extends Controller
         // nem martelar o Evolution. O Tenancy segue vinculado no defer, então o
         // importConversation resolve a conversa da empresa certa. O que ele trouxer
         // de novo aparece na próxima atualização (Reverb) ou reabertura.
-        if ($conversation->wa_jid && Cache::add("wa-import:{$conversation->id}", true, now()->addMinutes(10))) {
+        // Só faz sentido na Evolution: a API oficial não deixa buscar mensagens antigas
+        // (o histórico dela chega uma vez só, pelo webhook de coexistência).
+        if ($conversation->wa_jid && ! $conversation->account?->isCloud()
+            && Cache::add("wa-import:{$conversation->id}", true, now()->addMinutes(10))) {
             $jid = $conversation->wa_jid;
             // Poucas páginas: o webhook já mantém o recente no banco em tempo real,
             // então aqui é só complemento. Importar 30 páginas (com mídia base64)
@@ -1233,7 +1298,7 @@ class WhatsAppController extends Controller
      * (o browser nem re-pede). Mídia que o Evolution não tem (404) entra em
      * cache negativo de 1 dia — antes cada miss segurava um worker ~5s.
      */
-    public function media(\App\Models\Message $message)
+    public function media(Message $message)
     {
         abort_unless((bool) $message->wa_id, 404);
 
@@ -1248,6 +1313,27 @@ class WhatsAppController extends Controller
             if (! is_dir($dir)) {
                 @mkdir($dir, 0775, true);
             }
+            // API oficial: a Meta entrega o binário direto (o webhook trouxe o id da
+            // mídia). Baixa em streaming para o mesmo cache em disco usado pela Evolution.
+            $account = $message->conversation?->account;
+            if ($account?->isCloud()) {
+                if (! $message->wa_media_id) {
+                    Cache::put("wa-media-miss:{$message->id}", true, now()->addDay());
+                    abort(404);
+                }
+                $mime = Wa::for($account)
+                    ->downloadMedia((string) $message->wa_id, $message->wa_media_id, $path);
+                if (! is_file($path)) {
+                    // A URL da Meta expira em ~5 min e o id de mídia dura 30 dias:
+                    // passado isso, o arquivo não existe mais para ninguém.
+                    Cache::put("wa-media-miss:{$message->id}", true, now()->addDay());
+                    abort(404);
+                }
+                file_put_contents($mimePath, $mime ?: (string) $message->meta);
+
+                return $this->serveMedia($message, $path, $mimePath);
+            }
+
             $tmp = tempnam(sys_get_temp_dir(), 'wamedia');
             try {
                 // Mídia mora na instância da conta da conversa (multi-número).
@@ -1280,6 +1366,12 @@ class WhatsAppController extends Controller
             }
         }
 
+        return $this->serveMedia($message, $path, $mimePath);
+    }
+
+    /** Devolve o arquivo já em cache, com os cabeçalhos certos (comum aos dois canais). */
+    private function serveMedia(Message $message, string $path, string $mimePath)
+    {
         $mime = is_file($mimePath) ? trim((string) file_get_contents($mimePath)) : (string) $message->meta;
 
         // Só tipos que o chat renderiza podem ir inline; o resto vira download — o

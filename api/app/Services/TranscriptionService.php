@@ -3,7 +3,9 @@
 namespace App\Services;
 
 use App\Models\Message;
-use App\Support\Evolution;
+use App\Support\Claude;
+use App\Support\Realtime;
+use App\Support\Wa;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -34,7 +36,7 @@ class TranscriptionService
         // Conta a tentativa antes de tudo — evita loop infinito se a mídia/serviço falhar.
         $message->increment('transcribe_attempts');
 
-        $base64 = Evolution::mediaBase64($message->wa_id);
+        $base64 = Wa::for($message->conversation?->account)->mediaBase64($message->wa_id, $message->wa_media_id);
         if (! $base64) {
             return null;
         }
@@ -70,7 +72,7 @@ class TranscriptionService
 
             $message->update(['transcript' => $text]);
             // Transcrição pronta aparece na bolha em tempo real.
-            \App\Support\Realtime::messagePatched($message, ['transcript' => $text]);
+            Realtime::messagePatched($message, ['transcript' => $text]);
 
             return $text;
         } catch (\Throwable $e) {
@@ -98,7 +100,7 @@ class TranscriptionService
 
         $message->increment('transcribe_attempts');
 
-        $base64 = Evolution::mediaBase64($message->wa_id);
+        $base64 = Wa::for($message->conversation?->account)->mediaBase64($message->wa_id, $message->wa_media_id);
         if (! $base64) {
             return null;
         }
@@ -121,9 +123,9 @@ class TranscriptionService
         try {
             file_put_contents($path, $bytes);
 
-            $out = \App\Support\Claude::run(
+            $out = Claude::run(
                 "Leia a imagem em {$path} e descreva o conteúdo em português, de forma objetiva e completa, "
-                ."em um parágrafo. É uma imagem enviada por um cliente em uma conversa de WhatsApp. "
+                .'em um parágrafo. É uma imagem enviada por um cliente em uma conversa de WhatsApp. '
                 .'Se for um documento (ex.: conta de luz/fatura de energia, boleto, contrato, comprovante), '
                 .'extraia os dados principais: emissor/distribuidora, nome do titular, valor total, consumo (kWh), '
                 .'mês de referência e datas. Responda SOMENTE com a descrição, sem preâmbulo.',

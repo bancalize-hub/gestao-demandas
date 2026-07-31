@@ -3,8 +3,9 @@
 namespace App\Console\Commands;
 
 use App\Models\Meeting;
-use App\Support\Evolution;
+use App\Support\Realtime;
 use App\Support\Tenancy;
+use App\Support\Wa;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 
@@ -43,41 +44,42 @@ class MeetingReminderTick extends Command
             $tenancy->set((int) $meeting->company_id);
 
             try {
-            $text = $this->buildMessage($meeting);
+                $text = $this->buildMessage($meeting);
 
-            $waId = Evolution::sendText($meeting->phone, $text);
-            if ($waId === null) {
-                $this->warn("lembrete: falha ao enviar reunião {$meeting->id} ({$meeting->phone})");
+                $waId = ($meeting->conversation ? Wa::forConversation($meeting->conversation) : Wa::primary())
+                    ->sendText($meeting->phone, $text);
+                if ($waId === null) {
+                    $this->warn("lembrete: falha ao enviar reunião {$meeting->id} ({$meeting->phone})");
 
-                continue; // tenta de novo no próximo tick (reminder_sent_at continua null)
-            }
+                    continue; // tenta de novo no próximo tick (reminder_sent_at continua null)
+                }
 
-            $meeting->update(['reminder_sent_at' => now()]);
+                $meeting->update(['reminder_sent_at' => now()]);
 
-            // Espelha o lembrete na conversa (igual ao auto-reply), p/ aparecer no chat.
-            if ($conv = $meeting->conversation) {
-                $ts = time();
-                $data = [
-                    'type' => 'text',
-                    'is_out' => true,
-                    'text' => mb_substr($text, 0, 4000),
-                    'time' => date('H:i', $ts),
-                    'ts' => $ts,
-                    'position' => ((int) $conv->messages()->max('position')) + 1,
-                ];
-                $msg = $waId !== ''
-                    ? $conv->messages()->updateOrCreate(['wa_id' => $waId], $data)
-                    : $conv->messages()->create($data);
-                $conv->update([
-                    'preview' => mb_substr($text, 0, 80),
-                    'time' => date('H:i', $ts),
-                    'last_message_at' => now(),
-                ]);
-                // Depois do update: o evento lê a linha do banco (preview/hora atualizados).
-                \App\Support\Realtime::messageCreated($msg);
-            }
+                // Espelha o lembrete na conversa (igual ao auto-reply), p/ aparecer no chat.
+                if ($conv = $meeting->conversation) {
+                    $ts = time();
+                    $data = [
+                        'type' => 'text',
+                        'is_out' => true,
+                        'text' => mb_substr($text, 0, 4000),
+                        'time' => date('H:i', $ts),
+                        'ts' => $ts,
+                        'position' => ((int) $conv->messages()->max('position')) + 1,
+                    ];
+                    $msg = $waId !== ''
+                        ? $conv->messages()->updateOrCreate(['wa_id' => $waId], $data)
+                        : $conv->messages()->create($data);
+                    $conv->update([
+                        'preview' => mb_substr($text, 0, 80),
+                        'time' => date('H:i', $ts),
+                        'last_message_at' => now(),
+                    ]);
+                    // Depois do update: o evento lê a linha do banco (preview/hora atualizados).
+                    Realtime::messageCreated($msg);
+                }
 
-            $this->info("lembrete: enviado p/ reunião {$meeting->id} ({$meeting->phone})");
+                $this->info("lembrete: enviado p/ reunião {$meeting->id} ({$meeting->phone})");
             } finally {
                 $tenancy->forget();
             }

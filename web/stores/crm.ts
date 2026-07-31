@@ -31,6 +31,9 @@ export interface Interaction { title: string, meta: string, color: string }
 export interface Activity { id: number, type: string, title: string, body: string | null, occurred_at: string, user?: { id: number, name: string } | null }
 export interface FollowUp { id: number, title: string, starts_at: string | null, column: string, ai_draft: string | null, ai_draft_at: string | null }
 export interface QuickReply { id: number, label: string, text: string }
+
+/** Template aprovado pela Meta — o único jeito de falar fora da janela de 24h. */
+export interface WaTemplate { name: string, language: string, category: string, body: string, params: number }
 export interface Stage { id?: number, key: string, name: string, color: string, goal?: string | null, wa_label_id?: string | null, position?: number }
 export interface ChatTab { id: number, name: string, stages: string[], position?: number }
 
@@ -337,6 +340,12 @@ export const useCrmStore = defineStore('crm', {
     formError: false,
     aiSuggestion: '',
     aiLoading: false,
+    // Janela de 24h da API oficial: quando fecha, o WhatsApp só aceita template aprovado.
+    // Números não-oficiais (Evolution) nunca entram nesse estado.
+    templatePanel: false,
+    templates: [] as WaTemplate[],
+    templatesLoading: false,
+    templateError: '',
     // ----- Google Agenda -----
     googleConnected: false,
     googleEmail: null as string | null,
@@ -696,7 +705,50 @@ export const useCrmStore = defineStore('crm', {
       if (reply?.waId) { body.reply_to = reply.waId; body.reply_excerpt = reply.excerpt ?? '' }
       api()<any>(`/api/conversations/${conv.id}/messages`, { method: 'POST', body })
         .then((created) => { optimistic.id = created?.id; optimistic.status = created?.status ?? 'sent' })
-        .catch(() => { optimistic.status = 'error' })
+        .catch((e: any) => {
+          optimistic.status = 'error'
+          // Janela de 24h da API oficial fechada: em vez de deixar a bolha vermelha sem
+          // explicação, tira a mensagem da thread e abre os templates aprovados.
+          if (e?.response?._data?.code === 'window_closed') {
+            const i = conv.thread.indexOf(optimistic)
+            if (i >= 0) conv.thread.splice(i, 1)
+            this.openTemplates()
+          }
+        })
+    },
+
+    /** Abre o painel de templates (e carrega a lista aprovada da Meta). */
+    async openTemplates() {
+      const conv = this.activeConv
+      if (!conv) return
+      this.templatePanel = true
+      this.templateError = ''
+      this.templatesLoading = true
+      try {
+        const r = await api()<{ templates: WaTemplate[] }>(`/api/conversations/${conv.id}/templates`)
+        this.templates = r.templates || []
+        if (!this.templates.length) this.templateError = 'Nenhum template aprovado nesta conta. Crie e aprove um no Gerenciador da Meta.'
+      }
+      catch { this.templateError = 'Não consegui carregar os templates.' }
+      finally { this.templatesLoading = false }
+    },
+
+    /** Envia um template aprovado com as variáveis preenchidas. */
+    async sendTemplate(t: WaTemplate, params: string[]): Promise<string | null> {
+      const conv = this.activeConv
+      if (!conv) return 'Conversa não encontrada.'
+      try {
+        const m = await api()<any>(`/api/conversations/${conv.id}/template`, {
+          method: 'POST',
+          body: { name: t.name, language: t.language, params, body: t.body },
+        })
+        conv.thread.push(mapMsg(m))
+        conv.preview = m.text || t.name
+        conv.time = m.time
+        this.templatePanel = false
+        return null
+      }
+      catch (e: any) { return e?.response?._data?.message || 'Falha ao enviar o template.' }
     },
 
     // Encaminha uma mensagem para outra conversa. Retorna true se foi.

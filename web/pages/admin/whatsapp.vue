@@ -4,7 +4,7 @@ import { useCrmStore } from '~/stores/crm'
 interface Account {
   id: number
   name: string
-  instance: string
+  instance: string | null
   phone: string | null
   role: 'primary' | 'outreach'
   state: 'open' | 'connecting' | 'close'
@@ -13,6 +13,15 @@ interface Account {
   warmup_day: number
   sent_today: number
   remaining_today?: number
+  // API oficial (Cloud API da Meta)
+  provider?: 'evolution' | 'cloud'
+  phone_number_id?: string | null
+  waba_id?: string | null
+  coexistence?: boolean
+  has_token?: boolean
+  has_app_secret?: boolean
+  webhook_url?: string
+  webhook_verify_token?: string
 }
 
 const api = useApi()
@@ -147,6 +156,66 @@ async function importOne() {
   finally { importing.value = false }
 }
 
+// ---- API oficial (Cloud API da Meta) ----
+// Diferente do canal não-oficial, aqui não há QR: o número é conectado no painel da
+// Meta e o CRM só guarda as credenciais + entrega a URL do webhook para colar lá.
+const cloudOpen = ref(false)
+const cloudSaving = ref(false)
+const cloudError = ref('')
+const cloudEditingId = ref<number | null>(null)
+const cloudForm = reactive({
+  name: '',
+  phone: '',
+  role: 'primary' as 'primary' | 'outreach',
+  phone_number_id: '',
+  waba_id: '',
+  access_token: '',
+  app_secret: '',
+  coexistence: true,
+})
+const cloudWebhook = ref<{ url: string, token: string } | null>(null)
+
+function openCloudForm(acc?: Account) {
+  cloudError.value = ''
+  cloudEditingId.value = acc?.id ?? null
+  cloudForm.name = acc?.name ?? ''
+  cloudForm.phone = acc?.phone ?? ''
+  cloudForm.role = acc?.role ?? 'primary'
+  cloudForm.phone_number_id = acc?.phone_number_id ?? ''
+  cloudForm.waba_id = acc?.waba_id ?? ''
+  cloudForm.access_token = ''  // nunca volta do servidor; em branco = mantém o atual
+  cloudForm.app_secret = ''
+  cloudForm.coexistence = acc?.coexistence ?? true
+  cloudWebhook.value = acc?.webhook_url ? { url: acc.webhook_url, token: acc.webhook_verify_token || '' } : null
+  cloudOpen.value = true
+}
+
+async function saveCloud() {
+  if (cloudSaving.value) return
+  if (!cloudForm.name.trim() || !cloudForm.phone_number_id.trim()) {
+    cloudError.value = 'Informe o apelido e o Phone number ID (está no painel da Meta).'
+    return
+  }
+  cloudSaving.value = true
+  cloudError.value = ''
+  try {
+    const r = await api<{ verify_token: string, webhook_url: string }>('/api/wpp/cloud/accounts', {
+      method: 'POST',
+      body: { ...cloudForm, id: cloudEditingId.value },
+    })
+    cloudWebhook.value = { url: r.webhook_url, token: r.verify_token }
+    cloudEditingId.value = null
+    await loadAccounts()
+  }
+  catch (e: any) { cloudError.value = e?.response?._data?.message || 'Falha ao salvar as credenciais.' }
+  finally { cloudSaving.value = false }
+}
+
+async function copy(text: string) {
+  try { await navigator.clipboard.writeText(text) }
+  catch { /* clipboard bloqueado: o usuário copia manualmente */ }
+}
+
 let timer: ReturnType<typeof setInterval> | null = null
 let qrTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
@@ -204,6 +273,12 @@ function stateColor(s: string) {
                   <span :style="{ fontSize: '10.5px', fontWeight: 700, padding: '2px 8px', borderRadius: '20px', background: acc.role === 'primary' ? 'rgba(124,108,245,.18)' : 'rgba(var(--accent-rgb),.14)', color: acc.role === 'primary' ? 'var(--c-ai-soft)' : 'var(--accent)' }">
                     {{ acc.role === 'primary' ? 'Principal · anúncios + IA' : 'Prospecção' }}
                   </span>
+                  <span :style="{ fontSize: '10.5px', fontWeight: 700, padding: '2px 8px', borderRadius: '20px', background: acc.provider === 'cloud' ? 'rgba(37,211,102,.16)' : 'var(--c-surface-2)', color: acc.provider === 'cloud' ? 'var(--accent)' : 'var(--c-text-faint)' }">
+                    {{ acc.provider === 'cloud' ? '✓ API oficial' : 'Não-oficial' }}
+                  </span>
+                  <span v-if="acc.provider === 'cloud' && acc.coexistence" style="font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px;background:var(--c-surface-2);color:var(--c-text-muted);">
+                    Coexistência
+                  </span>
                 </div>
                 <div style="font-size:12.5px;color:var(--c-text-muted);margin-top:2px;">
                   <span :style="{ color: stateColor(acc.state) }">{{ stateLabel(acc.state) }}</span>
@@ -214,14 +289,22 @@ function stateColor(s: string) {
                 </div>
               </div>
               <div style="display:flex;gap:8px;flex-shrink:0;">
-                <button v-if="acc.state !== 'open' && connectingId !== acc.id" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 14px;border-radius:9px;cursor:pointer;" @click="openConnect(acc)">Conectar</button>
+                <button v-if="acc.provider === 'cloud'" style="background:var(--c-surface-2);border:none;color:var(--c-text);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 14px;border-radius:9px;cursor:pointer;" @click="openCloudForm(acc)">Credenciais</button>
+                <button v-if="acc.provider !== 'cloud' && acc.state !== 'open' && connectingId !== acc.id" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 14px;border-radius:9px;cursor:pointer;" @click="openConnect(acc)">Conectar</button>
                 <button v-if="acc.state === 'open'" style="background:rgba(255,77,77,.1);border:1px solid rgba(255,77,77,.25);color:var(--c-danger-soft);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 12px;border-radius:9px;cursor:pointer;" @click="disconnect(acc)">Desconectar</button>
                 <button v-if="acc.role !== 'primary'" title="Remover número" style="background:none;border:1px solid var(--c-surface-3);color:var(--c-text-faint);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 11px;border-radius:9px;cursor:pointer;" @click="removeAccount(acc)">✕</button>
               </div>
             </div>
 
+            <!-- diagnóstico do número oficial -->
+            <div v-if="acc.provider === 'cloud'" style="margin-top:14px;border-top:1px solid var(--c-surface-1);padding-top:12px;font-size:12px;color:var(--c-text-muted);display:flex;gap:14px;flex-wrap:wrap;">
+              <span>Token: <b :style="{ color: acc.has_token ? 'var(--accent)' : 'var(--c-danger-soft)' }">{{ acc.has_token ? 'configurado' : 'faltando' }}</b></span>
+              <span>Assinatura do webhook: <b :style="{ color: acc.has_app_secret ? 'var(--accent)' : 'var(--c-warn)' }">{{ acc.has_app_secret ? 'ativa' : 'sem app secret' }}</b></span>
+              <span v-if="acc.waba_id">WABA: <b style="color:var(--c-text-secondary);">{{ acc.waba_id }}</b></span>
+            </div>
+
             <!-- painel de conexão (QR + código) deste número -->
-            <div v-if="connectingId === acc.id" style="margin-top:18px;border-top:1px solid var(--c-surface-1);padding-top:18px;">
+            <div v-if="acc.provider !== 'cloud' && connectingId === acc.id" style="margin-top:18px;border-top:1px solid var(--c-surface-1);padding-top:18px;">
               <div style="font-size:13px;color:var(--c-text-muted);line-height:1.5;margin-bottom:12px;">No WhatsApp do número: <b style="color:var(--c-text-secondary);">Aparelhos conectados → Conectar um aparelho</b> e leia o QR.</div>
               <div style="margin:0 auto;width:230px;height:230px;background:var(--c-on-accent);border-radius:14px;display:flex;align-items:center;justify-content:center;overflow:hidden;">
                 <img v-if="qr" :src="qr" alt="QR" style="width:100%;height:100%;object-fit:contain;">
@@ -242,8 +325,9 @@ function stateColor(s: string) {
               </div>
             </div>
 
-            <!-- principal conectado: sincronizar / importar conversas -->
-            <div v-if="acc.role === 'primary' && acc.state === 'open'" style="margin-top:18px;border-top:1px solid var(--c-surface-1);padding-top:18px;">
+            <!-- principal conectado: sincronizar / importar conversas (só no canal não-oficial:
+                 a API oficial não permite buscar histórico — ele chega uma vez, na coexistência) -->
+            <div v-if="acc.provider !== 'cloud' && acc.role === 'primary' && acc.state === 'open'" style="margin-top:18px;border-top:1px solid var(--c-surface-1);padding-top:18px;">
               <button :disabled="syncing" :style="{ width: '100%', background: 'var(--accent)', border: 'none', color: 'var(--accent-ink)', fontFamily: 'inherit', fontSize: '13.5px', fontWeight: 700, padding: '12px', borderRadius: '11px', cursor: syncing ? 'default' : 'pointer', opacity: syncing ? 0.7 : 1 }" @click="syncWpp">
                 {{ syncing ? 'Sincronizando…' : 'Sincronizar conversas do WhatsApp' }}
               </button>
@@ -276,7 +360,70 @@ function stateColor(s: string) {
             </template>
           </div>
 
-          <div style="font-size:11.5px;color:var(--c-text-faint);line-height:1.5;padding:0 4px;">⚠️ Integração não-oficial: use números dedicados para prospecção. Disparo em massa tem risco de bloqueio — os limites e o aquecimento ajudam a reduzir, mas não eliminam.</div>
+          <!-- conectar número pela API OFICIAL (Cloud API da Meta) -->
+          <div style="background:var(--c-bg);border:1px solid rgba(37,211,102,.25);border-radius:18px;padding:20px;">
+            <template v-if="!cloudOpen">
+              <div style="display:flex;align-items:center;gap:9px;margin-bottom:6px;">
+                <span style="font-size:14px;font-weight:800;">API oficial do WhatsApp (Meta)</span>
+                <span style="font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px;background:rgba(37,211,102,.16);color:var(--accent);">recomendado</span>
+              </div>
+              <div style="font-size:12.5px;color:var(--c-text-muted);line-height:1.55;margin-bottom:12px;">
+                Sem risco de bloqueio, com recibos e templates. Exige conta na Meta (Business verificado + WhatsApp Business Account). Com <b style="color:var(--c-text-secondary);">coexistência</b>, o mesmo número continua funcionando no app WhatsApp Business do celular e traz até ~6 meses de histórico.
+              </div>
+              <button style="width:100%;background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:13.5px;font-weight:700;padding:12px;border-radius:11px;cursor:pointer;" @click="openCloudForm()">+ Conectar número pela API oficial</button>
+            </template>
+
+            <template v-else>
+              <div style="font-size:14px;font-weight:800;margin-bottom:12px;">{{ cloudEditingId ? 'Credenciais do número oficial' : 'Novo número pela API oficial' }}</div>
+
+              <div style="display:flex;flex-direction:column;gap:9px;">
+                <input v-model="cloudForm.name" placeholder="Apelido (ex.: Comercial oficial)" style="width:100%;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:11px 12px;color:var(--c-text);font-family:inherit;font-size:13.5px;outline:none;box-sizing:border-box;">
+                <input v-model="cloudForm.phone" placeholder="Número exibido (ex.: 5511987654321)" style="width:100%;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:11px 12px;color:var(--c-text);font-family:inherit;font-size:13.5px;outline:none;box-sizing:border-box;">
+                <input v-model="cloudForm.phone_number_id" placeholder="Phone number ID (Meta → WhatsApp → Configuração da API)" style="width:100%;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:11px 12px;color:var(--c-text);font-family:inherit;font-size:13.5px;outline:none;box-sizing:border-box;">
+                <input v-model="cloudForm.waba_id" placeholder="WhatsApp Business Account ID (para os templates)" style="width:100%;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:11px 12px;color:var(--c-text);font-family:inherit;font-size:13.5px;outline:none;box-sizing:border-box;">
+                <input v-model="cloudForm.access_token" type="password" :placeholder="cloudEditingId ? 'Token de acesso (em branco = manter o atual)' : 'Token de acesso permanente (usuário do sistema)'" style="width:100%;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:11px 12px;color:var(--c-text);font-family:inherit;font-size:13.5px;outline:none;box-sizing:border-box;">
+                <input v-model="cloudForm.app_secret" type="password" :placeholder="cloudEditingId ? 'App secret (em branco = manter o atual)' : 'App secret (assina o webhook)'" style="width:100%;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:11px 12px;color:var(--c-text);font-family:inherit;font-size:13.5px;outline:none;box-sizing:border-box;">
+              </div>
+
+              <div style="display:flex;align-items:center;gap:14px;margin-top:11px;flex-wrap:wrap;font-size:12.5px;color:var(--c-text-muted);">
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                  <input v-model="cloudForm.coexistence" type="checkbox"> número também usado no app WhatsApp Business
+                </label>
+                <label style="display:flex;align-items:center;gap:6px;">
+                  Papel:
+                  <select v-model="cloudForm.role" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:8px;padding:6px 9px;color:var(--c-text);font-family:inherit;font-size:12.5px;outline:none;">
+                    <option value="primary">Principal (anúncios + IA)</option>
+                    <option value="outreach">Prospecção</option>
+                  </select>
+                </label>
+              </div>
+
+              <div v-if="cloudError" style="margin-top:10px;font-size:12.5px;color:var(--c-danger-soft);">{{ cloudError }}</div>
+
+              <!-- o que colar no painel da Meta -->
+              <div v-if="cloudWebhook" style="margin-top:14px;background:var(--c-surface-2);border-radius:12px;padding:13px;">
+                <div style="font-size:12px;font-weight:700;color:var(--c-text-secondary);margin-bottom:9px;">Cole no painel da Meta (WhatsApp → Configuração → Webhook):</div>
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px;">
+                  <code style="flex:1;min-width:0;font-size:11.5px;color:var(--accent);overflow-wrap:anywhere;">{{ cloudWebhook.url }}</code>
+                  <button style="background:var(--c-surface-3);border:none;color:var(--c-text);font-family:inherit;font-size:11.5px;font-weight:700;padding:6px 10px;border-radius:8px;cursor:pointer;" @click="copy(cloudWebhook.url)">copiar</button>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <code style="flex:1;min-width:0;font-size:11.5px;color:var(--c-text-secondary);overflow-wrap:anywhere;">Token de verificação: {{ cloudWebhook.token }}</code>
+                  <button style="background:var(--c-surface-3);border:none;color:var(--c-text);font-family:inherit;font-size:11.5px;font-weight:700;padding:6px 10px;border-radius:8px;cursor:pointer;" @click="copy(cloudWebhook.token)">copiar</button>
+                </div>
+                <div style="margin-top:9px;font-size:11.5px;color:var(--c-text-faint);line-height:1.5;">
+                  Assine os campos <b>messages</b> e, na coexistência, também <b>smb_message_echoes</b>, <b>history</b> e <b>smb_app_state_sync</b>.
+                </div>
+              </div>
+
+              <div style="display:flex;gap:8px;margin-top:14px;">
+                <button :disabled="cloudSaving" :style="{ flex: 1, background: 'var(--accent)', border: 'none', color: 'var(--accent-ink)', fontFamily: 'inherit', fontSize: '13.5px', fontWeight: 700, padding: '11px', borderRadius: '10px', cursor: cloudSaving ? 'default' : 'pointer', opacity: cloudSaving ? 0.6 : 1 }" @click="saveCloud">{{ cloudSaving ? 'Salvando…' : 'Salvar credenciais' }}</button>
+                <button style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);font-family:inherit;font-size:13px;font-weight:600;padding:0 16px;border-radius:10px;cursor:pointer;" @click="cloudOpen = false">Fechar</button>
+              </div>
+            </template>
+          </div>
+
+          <div style="font-size:11.5px;color:var(--c-text-faint);line-height:1.5;padding:0 4px;">⚠️ Números marcados como <b>Não-oficial</b> usam a integração via Baileys: use números dedicados para prospecção. Disparo em massa tem risco de bloqueio — os limites e o aquecimento ajudam a reduzir, mas não eliminam. Na <b>API oficial</b> não há esse risco, mas fora da janela de 24h só é possível falar por template aprovado pela Meta (e cada template enviado é cobrado).</div>
         </template>
       </div>
     </div>

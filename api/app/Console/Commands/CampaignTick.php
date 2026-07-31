@@ -6,8 +6,9 @@ use App\Models\Campaign;
 use App\Models\Conversation;
 use App\Models\WaAccount;
 use App\Services\CampaignMessageService;
-use App\Support\Evolution;
+use App\Support\Realtime;
 use App\Support\Tenancy;
+use App\Support\Wa;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
@@ -50,7 +51,7 @@ class CampaignTick extends Command
         }
 
         // Número precisa estar conectado.
-        $state = Evolution::connectionState($acct->instance);
+        $state = Wa::for($acct)->connectionState();
         if ($state !== 'open') {
             if ($acct->state !== $state) {
                 $acct->update(['state' => $state]);
@@ -109,7 +110,7 @@ class CampaignTick extends Command
         }
 
         // Confirma que o número está no WhatsApp antes de gastar uma mensagem.
-        if (! Evolution::isOnWhatsApp($phone, $acct->instance)) {
+        if (! Wa::for($acct)->isOnWhatsApp($phone)) {
             $contact->update(['status' => 'skipped', 'error' => 'não está no WhatsApp']);
             $campaign->refreshCounts();
 
@@ -124,7 +125,7 @@ class CampaignTick extends Command
             return;
         }
 
-        $waId = Evolution::sendText($phone, $text, instance: $acct->instance);
+        $waId = Wa::for($acct)->sendText($phone, $text);
         if ($waId === null) {
             $contact->update(['status' => 'failed', 'error' => 'falha no envio']);
             $campaign->refreshCounts();
@@ -188,7 +189,7 @@ class CampaignTick extends Command
         $msg = $waId !== ''
             ? $conv->messages()->updateOrCreate(['wa_id' => $waId], $data)
             : $conv->messages()->create($data);
-        \App\Support\Realtime::messageCreated($msg);
+        Realtime::messageCreated($msg);
 
         return $conv;
     }

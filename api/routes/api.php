@@ -19,6 +19,7 @@ use App\Http\Controllers\Api\QuickReplyController;
 use App\Http\Controllers\Api\StageAutomationController;
 use App\Http\Controllers\Api\StageController;
 use App\Http\Controllers\Api\TaskController;
+use App\Http\Controllers\Api\WhatsAppCloudController;
 use App\Http\Controllers\Api\WhatsAppController;
 use Illuminate\Support\Facades\Route;
 
@@ -38,6 +39,11 @@ Route::get('/public/branding', [BrandingController::class, 'primaryBranding']);
 
 // --- Público: webhook do Evolution (protegido por token na query) ---
 Route::post('/wpp/webhook', [WhatsAppController::class, 'webhook']);
+
+// --- Público: webhook da API OFICIAL (Meta). GET = handshake do painel da Meta;
+//     POST = eventos, autenticados pela assinatura HMAC do corpo (app secret). ---
+Route::get('/wpp/cloud/webhook', [WhatsAppCloudController::class, 'verify']);
+Route::post('/wpp/cloud/webhook', [WhatsAppCloudController::class, 'webhook']);
 
 // --- Público: callback do OAuth do Google (usuário identificado pelo state assinado) ---
 Route::get('/google/callback', [GoogleAuthController::class, 'callback']);
@@ -175,6 +181,14 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
     Route::get('/wpp/accounts', [WhatsAppController::class, 'accounts']);
     Route::post('/wpp/accounts', [WhatsAppController::class, 'createAccount']);
     Route::delete('/wpp/accounts/{account}', [WhatsAppController::class, 'destroyAccount']);
+
+    // API oficial (Cloud API da Meta): conectar número, diagnosticar e listar templates.
+    Route::post('/wpp/cloud/accounts', [WhatsAppCloudController::class, 'saveAccount']);
+    Route::get('/wpp/cloud/accounts/{account}/status', [WhatsAppCloudController::class, 'status']);
+    Route::get('/wpp/cloud/accounts/{account}/templates', [WhatsAppCloudController::class, 'templates']);
+    // Template aprovado numa conversa (único envio permitido fora da janela de 24h).
+    Route::get('/conversations/{conversation}/templates', [MessageController::class, 'templates']);
+    Route::post('/conversations/{conversation}/template', [MessageController::class, 'sendTemplate']);
 
     // Campanhas de prospecção/disparo (mensagem da IA, anti-ban conservador) — só admin.
     Route::get('/campaigns', [CampaignController::class, 'index']);

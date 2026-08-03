@@ -50,8 +50,12 @@ class ClaudeLogin
         $ttl = self::TTL_SEGUNDOS;
 
         // setsid: o processo sobrevive ao fim desta requisição do PHP-FPM.
-        Process::run(sprintf(
-            'mkfifo %s && (setsid sleep %d > %s &) && (HOME=%s SHELL=/bin/bash setsid script -qec %s /dev/null < %s > %s 2>&1 &)',
+        // TODOS os descritores dos filhos precisam sair dos canos do PHP — senão o
+        // Process::run fica esperando eles fecharem (ou seja, os 10 minutos inteiros)
+        // em vez de voltar assim que a shell termina.
+        Process::timeout(20)->run(sprintf(
+            'mkfifo %s && (setsid sleep %d > %s 2>/dev/null < /dev/null &) '
+            .'&& (HOME=%s SHELL=/bin/bash setsid script -qec %s /dev/null < %s > %s 2>&1 &)',
             escapeshellarg($fifo),
             $ttl,
             escapeshellarg($fifo),

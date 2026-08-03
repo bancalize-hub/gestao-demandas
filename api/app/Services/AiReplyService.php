@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\ChatTab;
 use App\Models\Conversation;
+use App\Models\Material;
 use App\Models\MemoryChunk;
 use App\Models\Stage;
 use App\Models\StyleProfile;
@@ -23,7 +24,8 @@ class AiReplyService
     /** Monta o prompt (voz + conhecimento + histórico) e gera a resposta. Retorna null se indisponível. */
     public function generate(Conversation $conversation, ?string $instruction = null, ?string $previous = null): ?string
     {
-        if (! config('services.claude.oauth_token')) {
+        // Token pode vir do painel (arquivo) ou do .env — Claude::token() resolve os dois.
+        if (! Claude::token()) {
             return null;
         }
 
@@ -108,6 +110,45 @@ class AiReplyService
             // sem agenda disponível → mantém a regra de perguntar a preferência
         }
 
+        // Anti-insistência. O objetivo do time é "agendar a reunião", e o modelo fecha
+        // TODA mensagem com um convite — o lead pergunta preço, adquirente, maquininha, e
+        // leva três "vamos marcar uma call?" seguidos. Regra determinística: se as nossas
+        // últimas mensagens já convidaram e o lead não tocou no assunto, esta responde só
+        // a dúvida dele.
+        $ultimasNossas = $conversation->messages()
+            ->where('is_out', true)->where('type', 'text')->whereNotNull('text')
+            ->reorder()->orderByDesc('ts')->orderByDesc('id')->take(2)->pluck('text');
+        $ultimaDoLead = (string) $conversation->messages()
+            ->where('is_out', false)
+            ->reorder()->orderByDesc('ts')->orderByDesc('id')
+            ->value('text');
+
+        $convite = '/\b(call|reuni[õoãa]|agend|hor[áa]rio|meet|apresenta[çc])/iu';
+        $aceite = '/\b(pode ser|topo|bora|vamos|fechado|amanh[ãa]|hoje|segunda|ter[çc]a|quarta|quinta|sexta|\d{1,2}\s*h|\d{1,2}:\d{2})/iu';
+
+        $jaConvidou = $ultimasNossas->contains(fn ($t) => (bool) preg_match($convite, (string) $t));
+        $leadTocouNoAssunto = (bool) (preg_match($convite, $ultimaDoLead) || preg_match($aceite, $ultimaDoLead));
+
+        $regraConvite = ($jaConvidou && ! $leadTocouNoAssunto)
+            ? '- Você JÁ convidou para a reunião e o lead não respondeu sobre isso. NÃO convide de novo nesta mensagem: '
+                .'responda só o que ele perguntou e pare por aí. Insistir a cada mensagem afasta o lead.'
+            : '- Se fizer sentido, convide para a reunião UMA vez — nunca em duas mensagens seguidas.';
+
+        // Materiais (PDF etc.): a IA recebe a lista com o "quando" de cada um e decide se
+        // algum ajuda AGORA — em vez de a configuração ter que adivinhar o momento certo.
+        $materiais = $this->materiaisDisponiveis($team?->id);
+        $materialBlock = '';
+        $regraMaterial = '';
+        if ($materiais->isNotEmpty()) {
+            $lista = $materiais
+                ->map(fn ($m) => "- #{$m->id} \"{$m->name}\"".(trim((string) $m->quando) !== '' ? ' — enviar quando: '.$m->quando : ''))
+                ->implode("\n");
+            $materialBlock = "MATERIAIS QUE VOCÊ PODE ENVIAR:\n{$lista}\n\n";
+            $regraMaterial = '- Se (e SÓ se) um dos materiais acima ajudar exatamente agora, acrescente no FIM uma última linha isolada '
+                .'no formato [MATERIAL: #id]. Nunca cite essa linha no texto, nunca mande mais de um, e não mande material '
+                ."que você já enviou nesta conversa.\n";
+        }
+
         $task = ($instruction && $previous)
             ? "Você ia mandar esta mensagem:\n\"{$previous}\"\n\nReescreva-a aplicando este ajuste pedido pelo atendente: \"{$instruction}\". Mantenha o estilo, as regras, o conhecimento e o objetivo da etapa."
             : 'Escreva a próxima mensagem do Atendente.';
@@ -116,7 +157,7 @@ class AiReplyService
         Você é o ATENDENTE escrevendo a próxima mensagem para um lead no WhatsApp.
         Lead: {$conversation->name}. Etapa do funil: {$stageName}.
 
-        {$agora}{$objetivo}{$context}{$agendaBlock}
+        {$agora}{$objetivo}{$context}{$materialBlock}{$agendaBlock}
         Conversa (Atendente = você; {$conversation->name} = lead):
         {$transcript}
 
@@ -125,7 +166,8 @@ class AiReplyService
         - Use EXATAMENTE o estilo/voz e as regras descritas acima (se houver).
         - Use o conhecimento acima quando fizer sentido; nunca invente preços/políticas.
         - Respeite SEU PAPEL e persiga o OBJETIVO (se houver) de forma sutil, no ritmo da conversa.
-        {$agendaRule}
+        {$regraConvite}
+        {$regraMaterial}{$agendaRule}
         - NUNCA diga que enviou o convite, que marcou/agendou a reunião nem que "está confirmado/agendado":
           a confirmação real (com o link do Meet) é enviada automaticamente pelo sistema, não por você.
         - Só cumprimente ("{$saudacao}") no início da conversa ou após uma longa pausa; ao saudar, respeite o horário atual indicado acima.
@@ -136,6 +178,29 @@ class AiReplyService
         $out = Claude::run($prompt, 60);
 
         return $out !== null ? trim($out) : null;
+    }
+
+    /** Materiais ativos que este time pode enviar (sem time = de todos). */
+    public function materiaisDisponiveis(?int $teamId): Collection
+    {
+        return Material::where('is_active', true)
+            ->where(fn ($q) => $q->whereNull('chat_tab_id')->when($teamId, fn ($w) => $w->orWhere('chat_tab_id', $teamId)))
+            ->orderBy('id')->get();
+    }
+
+    /**
+     * Separa o marcador [MATERIAL: #id] do texto da resposta.
+     * Devolve [texto limpo, material ou null] — quem envia decide o que fazer com o anexo.
+     */
+    public static function extrairMaterial(string $reply): array
+    {
+        if (! preg_match('/\[\s*MATERIAL\s*:\s*#?(\d+)\s*\]/i', $reply, $m)) {
+            return [$reply, null];
+        }
+
+        $texto = trim(preg_replace('/\[\s*MATERIAL\s*:\s*#?\d+\s*\]/i', '', $reply) ?? $reply);
+
+        return [$texto, Material::where('is_active', true)->find((int) $m[1])];
     }
 
     /** Linha do histórico para uma imagem: descrição da visão (se houver) + legenda. */

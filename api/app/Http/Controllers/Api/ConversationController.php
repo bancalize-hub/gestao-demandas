@@ -4,10 +4,12 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Conversation;
+use App\Models\LeadActivity;
 use App\Models\Stage;
 use App\Services\AiReplyService;
 use App\Services\MeetingScheduler;
-use App\Support\Evolution;
+use App\Services\StageMover;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 
 class ConversationController extends Controller
@@ -40,8 +42,8 @@ class ConversationController extends Controller
     public function todayStats()
     {
         $tz = config('app.timezone', 'America/Sao_Paulo');
-        $start = \Carbon\Carbon::today($tz)->timestamp;
-        $end = \Carbon\Carbon::tomorrow($tz)->timestamp;
+        $start = Carbon::today($tz)->timestamp;
+        $end = Carbon::tomorrow($tz)->timestamp;
 
         $convs = Conversation::query()
             ->where('archived', false)
@@ -88,9 +90,9 @@ class ConversationController extends Controller
 
         // Mudou a etapa → registra na linha do tempo e sincroniza a etiqueta no WhatsApp.
         if ($conversation->wasChanged('stage')) {
-            $stageName = \App\Models\Stage::where('key', $conversation->stage)->value('name') ?? $conversation->stage;
-            \App\Models\LeadActivity::log($conversation->id, 'etapa', "Movido para “{$stageName}”", null, $request->user()?->id);
-            \App\Services\StageMover::syncWhatsAppLabel($conversation, $oldStage, $conversation->stage);
+            $stageName = Stage::where('key', $conversation->stage)->value('name') ?? $conversation->stage;
+            LeadActivity::log($conversation->id, 'etapa', "Movido para “{$stageName}”", null, $request->user()?->id);
+            StageMover::syncWhatsAppLabel($conversation, $oldStage, $conversation->stage);
         }
 
         return $conversation->load('messages');
@@ -108,7 +110,14 @@ class ConversationController extends Controller
             return response()->json(['message' => 'Falha ao gerar sugestão'], 502);
         }
 
-        return response()->json(['suggestion' => $reply]);
+        // O marcador de material é para o envio automático; na sugestão manual o vendedor
+        // anexa o que quiser — devolver "[MATERIAL: #3]" no campo de texto seria ruído.
+        [$texto, $material] = AiReplyService::extrairMaterial($reply);
+
+        return response()->json([
+            'suggestion' => $texto,
+            'material' => $material ? ['id' => $material->id, 'name' => $material->name] : null,
+        ]);
     }
 
     /**
@@ -144,5 +153,4 @@ class ConversationController extends Controller
             'slot_label' => $result['slot_label'] ?? null,
         ], fn ($v) => $v !== null));
     }
-
 }

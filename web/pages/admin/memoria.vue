@@ -78,6 +78,77 @@ async function saveAiToken() {
   finally { aiBusy.value = false; loadAi() }
 }
 
+// ---- Materiais que a IA envia (PDF etc.) ----
+interface Material { id: number, name: string, quando: string | null, filename: string, mime: string, size: number, is_active: boolean, chat_tab_id: number | null }
+const materials = ref<Material[]>([])
+const matForm = reactive({ name: '', quando: '', chat_tab_id: null as number | null })
+const matFile = ref<File | null>(null)
+const matSaving = ref(false)
+const matError = ref('')
+const matInput = ref<HTMLInputElement | null>(null)
+
+function pickMaterial(e: Event) {
+  const f = (e.target as HTMLInputElement).files?.[0] || null
+  matFile.value = f
+  if (f && !matForm.name.trim()) matForm.name = f.name.replace(/\.[^.]+$/, '')
+}
+async function loadMaterials() {
+  try { materials.value = (await api<{ materials: Material[] }>('/api/materials')).materials }
+  catch { /* */ }
+}
+async function saveMaterial() {
+  if (!matFile.value || !matForm.name.trim() || matSaving.value) return
+  matSaving.value = true
+  matError.value = ''
+  try {
+    const fd = new FormData()
+    fd.append('file', matFile.value)
+    fd.append('name', matForm.name.trim())
+    if (matForm.quando.trim()) fd.append('quando', matForm.quando.trim())
+    if (matForm.chat_tab_id) fd.append('chat_tab_id', String(matForm.chat_tab_id))
+    const m = await api<Material>('/api/materials', { method: 'POST', body: fd })
+    materials.value.unshift(m)
+    matFile.value = null
+    if (matInput.value) matInput.value.value = ''
+    Object.assign(matForm, { name: '', quando: '', chat_tab_id: null })
+  }
+  catch (e: any) {
+    const errs = e?.response?._data?.errors
+    matError.value = errs ? Object.values(errs).flat().join(' ') : (e?.response?._data?.message || 'Erro ao enviar.')
+  }
+  finally { matSaving.value = false }
+}
+async function delMaterial(m: Material) {
+  if (!confirm(`Excluir "${m.name}"? A IA deixa de poder enviar este material.`)) return
+  materials.value = materials.value.filter(x => x.id !== m.id)
+  try { await api(`/api/materials/${m.id}`, { method: 'DELETE' }) }
+  catch { /* */ }
+}
+function fmtSize(b: number) {
+  return b > 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`
+}
+
+// ---- IA automática para leads novos (veio da antiga tela de Automações) ----
+const autoReplyNewLeads = ref(false)
+const savingSetting = ref(false)
+async function loadSettings() {
+  try { autoReplyNewLeads.value = (await api<{ auto_reply_new_leads: boolean }>('/api/automation-settings')).auto_reply_new_leads }
+  catch { /* */ }
+}
+async function toggleAutoReplyNewLeads() {
+  if (savingSetting.value) return
+  savingSetting.value = true
+  try {
+    const r = await api<{ auto_reply_new_leads: boolean }>('/api/automation-settings', {
+      method: 'PATCH',
+      body: { auto_reply_new_leads: !autoReplyNewLeads.value },
+    })
+    autoReplyNewLeads.value = r.auto_reply_new_leads
+  }
+  catch (e: any) { alert(e?.response?._data?.message || 'Não consegui salvar.') }
+  finally { savingSetting.value = false }
+}
+
 const chunks = ref<Chunk[]>([])
 const teams = ref<Team[]>([])
 const savingTeam = ref<number | null>(null)
@@ -208,7 +279,7 @@ function kindColor(k: string) {
   return ({ preco: '#25D366', faq: '#53bdeb', objecao: '#ff6b6b', procedimento: '#ffb443', fato: '#a89bf9' } as Record<string, string>)[k] || '#8696a0'
 }
 
-onMounted(() => { load(); loadAi() })
+onMounted(() => { load(); loadAi(); loadMaterials(); loadSettings() })
 </script>
 
 <template>
@@ -303,6 +374,63 @@ onMounted(() => { load(); loadAi() })
                 <span style="color:var(--accent-soft);flex-shrink:0;">✓</span>
                 <div style="flex:1;font-size:13px;">{{ r.rule }}</div>
                 <button title="Excluir" class="delk" style="background:none;border:none;color:var(--c-text-faint);cursor:pointer;flex-shrink:0;display:flex;" @click="delRule(r.id)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+              </div>
+            </div>
+          </div>
+
+          <!-- atendimento automático de leads novos (veio da tela de Automações) -->
+          <div style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:16px;padding:22px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+            <div style="flex:1;min-width:200px;">
+              <div style="font-size:15px;font-weight:800;">IA atende os leads novos sozinha</div>
+              <div style="font-size:12.5px;color:var(--c-text-muted);margin-top:3px;line-height:1.5;">
+                Conversa nova que chega no número principal já nasce com o atendimento automático ligado. Prospecção continua com humano.
+              </div>
+            </div>
+            <button
+              :disabled="savingSetting"
+              :style="{ width: '52px', height: '30px', borderRadius: '20px', border: 'none', cursor: savingSetting ? 'default' : 'pointer', position: 'relative', flexShrink: 0, background: autoReplyNewLeads ? 'var(--accent)' : 'var(--c-surface-3)', opacity: savingSetting ? 0.6 : 1, transition: 'background .15s' }"
+              @click="toggleAutoReplyNewLeads"
+            >
+              <span :style="{ position: 'absolute', top: '3px', left: autoReplyNewLeads ? '25px' : '3px', width: '24px', height: '24px', borderRadius: '50%', background: 'var(--c-on-accent)', transition: 'left .15s' }" />
+            </button>
+          </div>
+
+          <!-- materiais que a IA envia -->
+          <div style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:16px;padding:24px;">
+            <div style="font-size:16px;font-weight:800;margin-bottom:4px;">Materiais da IA ({{ materials.length }})</div>
+            <div style="font-size:12.5px;color:var(--c-text-muted);margin-bottom:16px;line-height:1.5;">
+              Arquivos que a IA pode mandar para o lead (apresentação, tabela de taxas, contrato). Ela lê o campo <b>quando enviar</b> e decide na hora se aquele material ajuda — você não precisa amarrar a uma etapa.
+            </div>
+
+            <div style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px;margin-bottom:14px;">
+              <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                <input ref="matInput" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg" style="flex:1;min-width:220px;font-size:12.5px;color:var(--c-text-muted);font-family:inherit;" @change="pickMaterial">
+                <select v-model="matForm.chat_tab_id" title="Quem pode enviar" style="background:var(--c-bg-deep);border:1px solid var(--c-surface-3);border-radius:9px;padding:9px 11px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;cursor:pointer;">
+                  <option :value="null">Todos os times</option>
+                  <option v-for="t in teams" :key="t.id" :value="t.id">{{ t.name }}</option>
+                </select>
+              </div>
+              <input v-model="matForm.name" placeholder="Nome do material (ex.: Apresentação institucional)" style="background:var(--c-bg-deep);border:1px solid var(--c-surface-3);border-radius:9px;padding:9px 11px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;">
+              <textarea v-model="matForm.quando" rows="2" placeholder="Quando enviar — ex.: quando o lead pedir material, ou quando perguntar sobre taxas antes da reunião" style="background:var(--c-bg-deep);border:1px solid var(--c-surface-3);border-radius:9px;padding:10px 11px;color:var(--c-text);font-family:inherit;font-size:13px;line-height:1.5;outline:none;resize:vertical;" />
+              <div v-if="matError" style="color:var(--c-danger);font-size:12px;">{{ matError }}</div>
+              <div style="display:flex;justify-content:flex-end;">
+                <button :disabled="matSaving || !matFile || !matForm.name.trim()" :style="{ background: 'var(--c-ai)', border: 'none', color: 'var(--c-on-accent)', fontFamily: 'inherit', fontSize: '13px', fontWeight: 700, padding: '9px 16px', borderRadius: '9px', cursor: (matSaving || !matFile || !matForm.name.trim()) ? 'default' : 'pointer', opacity: (matSaving || !matFile || !matForm.name.trim()) ? 0.6 : 1 }" @click="saveMaterial">{{ matSaving ? 'Enviando…' : 'Adicionar material' }}</button>
+              </div>
+            </div>
+
+            <div v-if="!materials.length" style="font-size:13px;color:var(--c-text-faint);">Nenhum material ainda.</div>
+            <div v-else style="display:flex;flex-direction:column;gap:9px;">
+              <div v-for="m in materials" :key="m.id" style="background:var(--c-surface-2);border-radius:12px;padding:12px 14px;display:flex;gap:12px;align-items:flex-start;">
+                <span style="font-size:19px;flex-shrink:0;line-height:1.2;">📄</span>
+                <div style="flex:1;min-width:0;">
+                  <div style="font-size:13.5px;font-weight:700;display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
+                    {{ m.name }}
+                    <span :style="{ fontSize: '10px', fontWeight: 700, padding: '2px 7px', borderRadius: '20px', background: m.chat_tab_id ? 'rgba(124,108,245,.18)' : 'var(--c-bg-deep)', color: m.chat_tab_id ? 'var(--c-ai-soft)' : 'var(--c-text-faint)' }">{{ teamName(m.chat_tab_id) }}</span>
+                  </div>
+                  <div v-if="m.quando" style="font-size:12.5px;color:var(--c-text-secondary);margin-top:3px;line-height:1.45;">Enviar quando: {{ m.quando }}</div>
+                  <div style="font-size:11px;color:var(--c-text-faint);margin-top:4px;">{{ m.filename }} · {{ fmtSize(m.size) }}</div>
+                </div>
+                <button title="Excluir" class="delk" style="background:none;border:none;color:var(--c-text-faint);cursor:pointer;flex-shrink:0;display:flex;" @click="delMaterial(m)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
               </div>
             </div>
           </div>

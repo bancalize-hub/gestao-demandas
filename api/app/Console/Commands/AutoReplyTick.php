@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\Conversation;
+use App\Models\Material;
 use App\Models\User;
 use App\Services\AiReplyService;
 use App\Services\MeetingScheduler;
@@ -14,6 +15,7 @@ use App\Support\Tenancy;
 use App\Support\Wa;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * Atendimento automático: para cada conversa com auto_reply ligado e uma resposta
@@ -175,6 +177,12 @@ class AutoReplyTick extends Command
                     continue;
                 }
 
+                // A IA pode anexar um material (PDF etc.) marcando [MATERIAL: #id] no fim.
+                [$reply, $material] = AiReplyService::extrairMaterial($reply);
+                if (trim($reply) === '') {
+                    $reply = 'Segue o material.';
+                }
+
                 $waId = $conv->phone ? Wa::forConversation($conv)->sendText($conv->phone, $reply) : null;
                 if ($waId === null) {
                     $conv->update(['auto_reply_due_at' => now()->addMinutes(2)]);
@@ -213,6 +221,10 @@ class AutoReplyTick extends Command
                 // broadcastar antes mandaria preview/hora velhos pro painel.
                 Realtime::messageCreated($msg);
 
+                if ($material) {
+                    $this->enviarMaterial($conv, $material);
+                }
+
                 $this->info("auto-reply: respondeu conversa {$conv->id} ({$conv->name})");
             } catch (\Throwable $e) {
                 // Uma conversa problemática NUNCA derruba o tick (e as demais pendências):
@@ -226,6 +238,61 @@ class AutoReplyTick extends Command
         }
 
         return self::SUCCESS;
+    }
+
+    /** Envia o material escolhido pela IA e espelha a bolha no chat. */
+    private function enviarMaterial(Conversation $conv, Material $material): void
+    {
+        $path = Storage::path($material->path);
+        if (! is_file($path)) {
+            Evolution::log('auto_reply.material_sumiu', ['material' => $material->id, 'path' => $material->path], 'error');
+
+            return;
+        }
+
+        $waId = Wa::forConversation($conv)->sendMedia(
+            (string) $conv->phone,
+            base64_encode((string) file_get_contents($path)),
+            $material->mime,
+            $material->filename,
+            '',
+            'document',
+        );
+
+        if ($waId === null) {
+            Evolution::log('auto_reply.material_falhou', ['material' => $material->id, 'conversation_id' => $conv->id], 'error');
+
+            return;
+        }
+
+        $ts = time();
+        $data = [
+            'type' => 'file',
+            'is_out' => true,
+            'file_name' => $material->filename,
+            'meta' => $material->mime,
+            'status' => 'sent',
+            'time' => date('H:i', $ts),
+            'ts' => $ts,
+            'position' => ((int) $conv->messages()->max('position')) + 1,
+        ];
+        $msg = $waId !== ''
+            ? $conv->messages()->updateOrCreate(['wa_id' => $waId], $data)
+            : $conv->messages()->create($data);
+
+        // Cache local da mídia enviada: a Meta não deixa baixar de volta o que saiu daqui,
+        // então sem esta cópia a bolha ficaria sem o arquivo para abrir.
+        $dir = storage_path('app/wa-media');
+        if (! is_dir($dir)) {
+            @mkdir($dir, 0775, true);
+        }
+        if (@copy($path, "{$dir}/{$msg->id}")) {
+            @file_put_contents("{$dir}/{$msg->id}.mime", $material->mime);
+        }
+
+        $conv->update(['preview' => '📄 '.$material->filename, 'time' => $data['time'], 'last_message_at' => now()]);
+        Realtime::messageCreated($msg);
+        Evolution::log('auto_reply.material_enviado', ['material' => $material->id, 'conversation_id' => $conv->id]);
     }
 
     /** Heurística barata: as últimas mensagens falam de horário/agendamento? Evita chamada extra à IA. */

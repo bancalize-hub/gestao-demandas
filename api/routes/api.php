@@ -14,6 +14,7 @@ use App\Http\Controllers\Api\FollowUpController;
 use App\Http\Controllers\Api\GoogleAuthController;
 use App\Http\Controllers\Api\LabelController;
 use App\Http\Controllers\Api\LeadActivityController;
+use App\Http\Controllers\Api\MaterialController;
 use App\Http\Controllers\Api\MemoryController;
 use App\Http\Controllers\Api\MessageController;
 use App\Http\Controllers\Api\QuickReplyController;
@@ -171,6 +172,13 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
     Route::delete('/memory/chunks/{memoryChunk}', [MemoryController::class, 'destroyChunk']);
     Route::put('/memory/style', [MemoryController::class, 'updateStyle']);
     Route::post('/memory/rules', [MemoryController::class, 'storeRule']);
+
+    // Materiais (PDF etc.) que a IA envia quando julgar pertinente — no lugar da
+    // automação por etapa, que exigia adivinhar o momento na configuração.
+    Route::get('/materials', [MaterialController::class, 'index']);
+    Route::post('/materials', [MaterialController::class, 'store']);
+    Route::patch('/materials/{material}', [MaterialController::class, 'update']);
+    Route::delete('/materials/{material}', [MaterialController::class, 'destroy']);
     Route::delete('/memory/rules/{styleRule}', [MemoryController::class, 'destroyRule']);
 
     // WhatsApp (Evolution) — somente admin (checado no controller)

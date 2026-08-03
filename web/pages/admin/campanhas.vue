@@ -6,7 +6,6 @@ interface Campaign {
   status: 'draft' | 'running' | 'paused' | 'done'
   objective: string | null
   wa_account_id: number
-  account?: { id: number, name: string, role: string }
   min_gap_s: number
   max_gap_s: number
   daily_cap: number
@@ -16,6 +15,12 @@ interface Campaign {
   sent: number
   replied: number
   failed: number
+  pending?: number
+  sent_today?: number
+  restante_hoje?: number
+  motivo?: string | null
+  template_name?: string | null
+  account?: { id: number, name: string, role: string, provider?: string, state?: string }
 }
 
 const api = useApi()
@@ -136,6 +141,25 @@ async function create() {
   finally { saving.value = false }
 }
 
+async function escolherTemplateDaCampanha(c: Campaign, nome: string) {
+  const t = templates.value.find(x => x.name === nome)
+  if (!t) return
+  try {
+    await api(`/api/campaigns/${c.id}`, {
+      method: 'PATCH',
+      body: {
+        template_name: t.name,
+        template_language: t.language,
+        template_body: t.body,
+        // Um valor por {{n}}; o padrão cobre o caso comum (a 1ª variável é o nome).
+        template_params: Array.from({ length: t.params }, (_, i) => (i === 0 ? '{nome}' : '-')),
+      },
+    })
+    await load()
+  }
+  catch (e: any) { alert(e?.response?._data?.message || 'Falha ao salvar o template.') }
+}
+
 async function setStatus(c: Campaign, status: string) {
   try {
     await api(`/api/campaigns/${c.id}`, { method: 'PATCH', body: { status } })
@@ -180,6 +204,9 @@ function statusPill(s: string) {
 }
 function progress(c: Campaign) {
   return c.total > 0 ? Math.round((c.sent / c.total) * 100) : 0
+}
+function taxaResposta(c: Campaign) {
+  return c.sent > 0 ? Math.round((c.replied / c.sent) * 100) : 0
 }
 
 let timer: ReturnType<typeof setInterval> | null = null
@@ -315,17 +342,67 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
             </div>
           </div>
 
+          <!-- por que não está andando (mesmas condições do motor de disparo) -->
+          <div v-if="c.motivo" style="margin-top:12px;background:rgba(255,180,67,.1);border:1px solid rgba(255,180,67,.28);border-radius:10px;padding:9px 12px;font-size:12px;color:var(--c-warn-soft);">
+            ⏸ Parada agora: <b>{{ c.motivo }}</b>
+          </div>
+
+          <!-- mensagem que vai sair -->
+          <div v-if="c.account?.provider === 'cloud'" style="margin-top:12px;font-size:12px;color:var(--c-text-muted);">
+            Template: <b :style="{ color: c.template_name ? 'var(--c-text-secondary)' : 'var(--c-danger-soft)' }">{{ c.template_name || 'nenhum escolhido' }}</b>
+          </div>
+
           <!-- progresso -->
           <div style="margin-top:14px;">
+            <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--c-text-faint);margin-bottom:5px;">
+              <span>{{ progress(c) }}% da lista</span>
+              <span>{{ c.sent }}/{{ c.total }}</span>
+            </div>
             <div style="height:8px;background:var(--c-surface-2);border-radius:6px;overflow:hidden;">
               <div :style="{ width: progress(c) + '%', height: '100%', background: 'var(--accent)', transition: 'width .4s' }" />
             </div>
-            <div style="display:flex;gap:16px;margin-top:8px;font-size:12px;color:var(--c-text-muted);">
-              <span><b style="color:var(--c-text);">{{ c.total }}</b> contatos</span>
-              <span><b style="color:var(--accent);">{{ c.sent }}</b> enviados</span>
-              <span><b style="color:var(--c-ai-soft);">{{ c.replied }}</b> responderam</span>
-              <span v-if="c.failed"><b style="color:var(--c-danger-soft);">{{ c.failed }}</b> falhas</span>
+          </div>
+
+          <!-- métricas -->
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(92px,1fr));gap:8px;margin-top:12px;">
+            <div style="background:var(--c-surface-2);border-radius:10px;padding:9px 11px;">
+              <div style="font-size:18px;font-weight:800;letter-spacing:-.5px;">{{ c.total }}</div>
+              <div style="font-size:10.5px;color:var(--c-text-faint);margin-top:1px;">contatos</div>
             </div>
+            <div style="background:var(--c-surface-2);border-radius:10px;padding:9px 11px;">
+              <div style="font-size:18px;font-weight:800;letter-spacing:-.5px;color:var(--accent);">{{ c.sent }}</div>
+              <div style="font-size:10.5px;color:var(--c-text-faint);margin-top:1px;">enviados</div>
+            </div>
+            <div style="background:var(--c-surface-2);border-radius:10px;padding:9px 11px;">
+              <div style="font-size:18px;font-weight:800;letter-spacing:-.5px;color:var(--c-ai-soft);">{{ c.replied }}</div>
+              <div style="font-size:10.5px;color:var(--c-text-faint);margin-top:1px;">responderam<template v-if="c.sent"> · {{ taxaResposta(c) }}%</template></div>
+            </div>
+            <div style="background:var(--c-surface-2);border-radius:10px;padding:9px 11px;">
+              <div style="font-size:18px;font-weight:800;letter-spacing:-.5px;">{{ c.pending ?? 0 }}</div>
+              <div style="font-size:10.5px;color:var(--c-text-faint);margin-top:1px;">na fila</div>
+            </div>
+            <div style="background:var(--c-surface-2);border-radius:10px;padding:9px 11px;">
+              <div :style="{ fontSize:'18px',fontWeight:800,letterSpacing:'-.5px', color: c.failed ? 'var(--c-danger-soft)' : 'var(--c-text)' }">{{ c.failed }}</div>
+              <div style="font-size:10.5px;color:var(--c-text-faint);margin-top:1px;">falhas</div>
+            </div>
+            <div style="background:var(--c-surface-2);border-radius:10px;padding:9px 11px;">
+              <div style="font-size:18px;font-weight:800;letter-spacing:-.5px;">{{ c.sent_today ?? 0 }}</div>
+              <div style="font-size:10.5px;color:var(--c-text-faint);margin-top:1px;">hoje<template v-if="c.restante_hoje"> · cabem +{{ c.restante_hoje }}</template></div>
+            </div>
+          </div>
+
+          <!-- escolher/trocar o template já com a campanha criada -->
+          <div v-if="c.account?.provider === 'cloud'" style="margin-top:12px;border-top:1px solid var(--c-surface-1);padding-top:12px;">
+            <div style="font-size:12px;font-weight:700;color:var(--c-text-secondary);margin-bottom:7px;">Template do disparo</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+              <select :value="c.template_name || ''" style="flex:1;min-width:200px;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:9px;padding:9px 11px;color:var(--c-text);font-family:inherit;font-size:12.5px;outline:none;" @focus="carregarTemplates(c.wa_account_id)" @change="(e:any) => escolherTemplateDaCampanha(c, e.target.value)">
+                <option value="">Escolha o template…</option>
+                <option v-for="t in templates" :key="t.name" :value="t.name" :disabled="t.status !== 'APPROVED'">
+                  {{ t.status === 'APPROVED' ? '' : '⏳ ' }}{{ t.name }} ({{ t.language }}){{ t.status === 'APPROVED' ? '' : ' — em análise' }}
+                </option>
+              </select>
+            </div>
+            <div v-if="templateErro" style="font-size:11.5px;color:var(--c-warn-soft);margin-top:6px;">{{ templateErro }}</div>
           </div>
 
           <!-- upload CSV -->

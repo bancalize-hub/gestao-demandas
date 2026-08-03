@@ -21,11 +21,55 @@ class CampaignController extends Controller
     {
         $this->ensureAdmin($request);
 
-        $campaigns = Campaign::with('account:id,name,role')
+        $campaigns = Campaign::with('account:id,name,role,provider,state,is_active,daily_cap,warmup_day,sent_today,sent_date')
             ->orderByDesc('id')
             ->get();
 
+        $hoje = now()->toDateString();
+        foreach ($campaigns as $c) {
+            $c->pending = $c->contacts()->where('status', 'pending')->count();
+            $c->sent_today = $c->contacts()->whereIn('status', ['sent', 'replied'])->whereDate('sent_at', $hoje)->count();
+            $c->restante_hoje = $c->account?->remainingToday() ?? 0;
+            $c->motivo = $this->porQueNaoDispara($c);
+        }
+
         return response()->json(['campaigns' => $campaigns]);
+    }
+
+    /**
+     * Campanha "disparando" que não anda é a dúvida número um da tela. Em vez de deixar
+     * o usuário adivinhar, devolve o motivo — as mesmas condições que o CampaignTick usa.
+     */
+    private function porQueNaoDispara(Campaign $c): ?string
+    {
+        if ($c->status !== 'running') {
+            return null;
+        }
+        $acct = $c->account;
+        if (! $acct || ! $acct->is_active) {
+            return 'número desligado';
+        }
+        if ($acct->isCloud() && ! $c->template_name) {
+            return 'sem template escolhido';
+        }
+        if ($acct->state !== 'open') {
+            return 'número desconectado';
+        }
+        $hm = now()->format('H:i');
+        if ($hm < $c->window_start || $hm > $c->window_end) {
+            return "fora da janela ({$c->window_start}–{$c->window_end})";
+        }
+        if ($acct->remainingToday() <= 0) {
+            return 'teto diário do número atingido';
+        }
+        if ($c->daily_cap > 0 && $c->sent_today >= $c->daily_cap) {
+            return 'teto diário da campanha atingido';
+        }
+        if ($c->pending === 0) {
+            return 'sem contatos pendentes';
+        }
+
+        return null;
     }
 
     public function show(Request $request, Campaign $campaign)
@@ -70,15 +114,9 @@ class CampaignController extends Controller
             422,
             'O número principal não pode ser usado para disparo. Conecte um número de prospecção.'
         );
-        // Canal oficial: o contato nunca escreveu, a janela de 24h está fechada e a Meta
-        // só aceita TEMPLATE aprovado. Então aqui a campanha não usa a mensagem que a IA
-        // escreveria por contato — ela dispara o template escolhido, com as variáveis
-        // preenchidas por contato.
-        abort_if(
-            $acct->isCloud() && empty($data['template_name']),
-            422,
-            'Número na API oficial dispara por template aprovado: escolha o template da campanha.'
-        );
+        // O template do canal oficial é cobrado só ao INICIAR (ver update): exigir aqui
+        // travava a criação enquanto os templates estão em análise na Meta — dá para
+        // montar a campanha e carregar as listas antes da aprovação sair.
 
         $campaign = Campaign::create([
             'name' => $data['name'],
@@ -112,11 +150,21 @@ class CampaignController extends Controller
             'window_start' => 'sometimes|date_format:H:i',
             'window_end' => 'sometimes|date_format:H:i',
             'status' => 'sometimes|in:draft,running,paused,done',
+            'template_name' => 'sometimes|nullable|string|max:191',
+            'template_language' => 'sometimes|nullable|string|max:16',
+            'template_body' => 'sometimes|nullable|string|max:2000',
+            'template_params' => 'sometimes|nullable|array|max:10',
+            'template_params.*' => 'nullable|string|max:300',
         ]);
 
-        // Não deixa iniciar uma campanha sem contatos.
-        if (($data['status'] ?? null) === 'running' && $campaign->contacts()->where('status', 'pending')->count() === 0) {
-            return response()->json(['message' => 'Adicione contatos (CSV) antes de iniciar.'], 422);
+        if (($data['status'] ?? null) === 'running') {
+            if ($campaign->contacts()->where('status', 'pending')->count() === 0) {
+                return response()->json(['message' => 'Adicione contatos (por lista ou CSV) antes de iniciar.'], 422);
+            }
+            // No canal oficial, quem nunca escreveu só recebe template aprovado.
+            if ($campaign->account?->isCloud() && ! $campaign->template_name) {
+                return response()->json(['message' => 'Este número dispara pela API oficial: escolha um template aprovado antes de iniciar.'], 422);
+            }
         }
 
         $campaign->update($data);

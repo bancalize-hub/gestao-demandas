@@ -22,6 +22,9 @@ class Campaign extends Model
         'sent' => 'integer',
         'replied' => 'integer',
         'failed' => 'integer',
+        // Um valor por variável do template ({{1}}, {{2}}…). Sem o cast, o insert
+        // estourava "Array to string conversion" e a campanha não era criada.
+        'template_params' => 'array',
     ];
 
     public function account(): BelongsTo

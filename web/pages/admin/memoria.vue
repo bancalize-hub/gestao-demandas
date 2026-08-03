@@ -18,7 +18,10 @@ const aiOk = ref(false)
 
 async function loadAi() {
   if (!user.value?.is_super_admin) return
-  try { ai.value = await api<AiStatus>('/api/ai/status') }
+  try {
+    ai.value = await api<AiStatus>('/api/ai/status')
+    if (!ai.value.no_ar) aberto.ai = true // problema não pode ficar escondido atrás de um clique
+  }
   catch { ai.value = null }
 }
 async function testAi() {
@@ -149,6 +152,12 @@ async function toggleAutoReplyNewLeads() {
   finally { savingSetting.value = false }
 }
 
+// Sanfona: a página junta conexão da IA, materiais, times, voz, regras e 70+ conhecimentos.
+// Tudo aberto vira um paredão — cada seção abre no clique. A conexão da IA é a exceção:
+// quando está fora do ar ela abre sozinha, porque esconder falha foi o que já custou 4 dias.
+const aberto = reactive<Record<string, boolean>>({ ai: false, materiais: false, times: false, voz: false, regras: false, base: false })
+function alternar(k: string) { aberto[k] = !aberto[k] }
+
 const chunks = ref<Chunk[]>([])
 const teams = ref<Team[]>([])
 const savingTeam = ref<number | null>(null)
@@ -168,6 +177,7 @@ const savingChunk = ref(false)
 const chunkError = ref('')
 
 function startAdd() {
+  aberto.base = true // o formulário não pode abrir dentro de uma seção fechada
   editingId.value = 0
   // Adicionando com um time filtrado? Já nasce daquele time.
   Object.assign(form, { kind: 'faq', gatilho: '', conteudo: '', keywords: '', chat_tab_id: teamFilter.value === 'all' ? null : teamFilter.value })
@@ -299,16 +309,18 @@ onMounted(() => { load(); loadAi(); loadMaterials(); loadSettings() })
         <template v-else>
           <!-- credencial da IA (só o dono da plataforma vê) -->
           <div v-if="ai" :style="{ background: 'var(--c-bg)', border: `1px solid ${ai.no_ar ? 'var(--c-surface-1)' : 'rgba(255,77,77,.35)'}`, borderRadius: '16px', padding: '24px' }">
-            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px;">
+            <div role="button" tabindex="0" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;cursor:pointer;user-select:none;" @click="alternar('ai')" @keydown.enter="alternar('ai')">
+              <svg :style="{ transform: aberto.ai ? 'rotate(90deg)' : 'none', transition: 'transform .15s', flexShrink: 0 }" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--c-text-faint)" stroke-width="2.5"><path d="m9 6 6 6-6 6" stroke-linecap="round" stroke-linejoin="round" /></svg>
               <span style="font-size:16px;font-weight:800;">Conexão da IA</span>
               <span :style="{ fontSize: '11px', fontWeight: 700, padding: '3px 10px', borderRadius: '20px', background: ai.no_ar ? 'rgba(37,211,102,.16)' : 'rgba(255,77,77,.14)', color: ai.no_ar ? 'var(--accent)' : 'var(--c-danger-soft)' }">
                 {{ ai.no_ar ? 'no ar' : 'fora do ar' }}
               </span>
               <span style="font-size:11px;color:var(--c-text-faint);">token: {{ ai.origem === 'painel' ? 'salvo aqui' : (ai.origem === 'env' ? 'do .env' : 'nenhum') }}</span>
               <div style="flex:1;" />
-              <button :disabled="aiBusy" :style="{ background: 'var(--c-surface-2)', border: 'none', color: 'var(--c-text)', fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 700, padding: '8px 14px', borderRadius: '9px', cursor: 'pointer', opacity: aiBusy ? 0.6 : 1 }" @click="testAi">{{ aiBusy ? 'Testando…' : 'Testar agora' }}</button>
+              <button v-if="aberto.ai" :disabled="aiBusy" :style="{ background: 'var(--c-surface-2)', border: 'none', color: 'var(--c-text)', fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 700, padding: '8px 14px', borderRadius: '9px', cursor: 'pointer', opacity: aiBusy ? 0.6 : 1 }" @click.stop="testAi">{{ aiBusy ? 'Testando…' : 'Testar agora' }}</button>
             </div>
-            <div style="font-size:12.5px;color:var(--c-text-muted);line-height:1.5;">
+            <div v-if="aberto.ai">
+            <div style="font-size:12.5px;color:var(--c-text-muted);line-height:1.5;margin-top:9px;">
               É esta credencial que faz a IA responder os leads, sugerir mensagens, aprender a memória e escrever as campanhas. Quando ela cai, tudo isso para em silêncio — por isso o estado fica aqui.
             </div>
 
@@ -344,17 +356,19 @@ onMounted(() => { load(); loadAi(); loadMaterials(); loadSettings() })
               </div>
               <div v-if="aiMsg" :style="{ marginTop: '10px', fontSize: '12.5px', lineHeight: 1.5, color: aiOk ? 'var(--accent)' : 'var(--c-danger-soft)', fontFamily: 'ui-monospace,monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }">{{ aiMsg }}</div>
             </div>
+            </div>
           </div>
 
           <!-- perfil de voz -->
           <div style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:16px;padding:24px;">
-            <div style="display:flex;align-items:center;justify-content:space-between;">
-              <div>
-                <div style="font-size:16px;font-weight:800;">Seu jeito de falar (voz)</div>
-                <div style="font-size:12.5px;color:var(--c-text-muted);margin-top:3px;">Refinado a cada conversa adicionada. Pode editar à mão.</div>
-              </div>
-              <button :disabled="savingStyle" :style="{ background: 'var(--c-ai)', border: 'none', color: 'var(--c-on-accent)', fontFamily: 'inherit', fontSize: '13px', fontWeight: 700, padding: '9px 16px', borderRadius: '10px', cursor: 'pointer', opacity: savingStyle ? 0.7 : 1 }" @click="saveStyle">{{ savingStyle ? 'Salvando…' : (styleSaved ? 'Salvo ✓' : 'Salvar') }}</button>
+            <div role="button" tabindex="0" style="width:100%;cursor:pointer;display:flex;align-items:center;gap:10px;user-select:none;" @click="alternar('voz')" @keydown.enter="alternar('voz')">
+              <svg :style="{ transform: aberto.voz ? 'rotate(90deg)' : 'none', transition: 'transform .15s', flexShrink: 0 }" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--c-text-faint)" stroke-width="2.5"><path d="m9 6 6 6-6 6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              <span style="font-size:16px;font-weight:800;">Seu jeito de falar (voz)</span>
+              <span style="flex:1;" />
+              <button v-if="aberto.voz" :disabled="savingStyle" :style="{ background: 'var(--c-ai)', border: 'none', color: 'var(--c-on-accent)', fontFamily: 'inherit', fontSize: '13px', fontWeight: 700, padding: '9px 16px', borderRadius: '10px', cursor: 'pointer', opacity: savingStyle ? 0.7 : 1 }" @click.stop="saveStyle">{{ savingStyle ? 'Salvando…' : (styleSaved ? 'Salvo ✓' : 'Salvar') }}</button>
             </div>
+            <div v-if="aberto.voz">
+            <div style="font-size:12.5px;color:var(--c-text-muted);margin-top:9px;">Refinado a cada conversa adicionada. Pode editar à mão.</div>
             <textarea v-model="style" rows="8" placeholder="Ainda vazio — adicione conversas à memória pra começar." style="width:100%;margin-top:14px;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:11px;padding:12px 13px;color:var(--c-text);font-family:inherit;font-size:13px;line-height:1.55;outline:none;resize:vertical;" />
             <div v-if="samples.length" style="margin-top:14px;">
               <div style="font-size:11px;font-weight:700;color:var(--c-text-muted);letter-spacing:.4px;margin-bottom:8px;">EXEMPLOS DE MENSAGENS SUAS ({{ samples.length }})</div>
@@ -362,12 +376,19 @@ onMounted(() => { load(); loadAi(); loadMaterials(); loadSettings() })
                 <div v-for="s in samples.slice(0, 6)" :key="s.id" style="font-size:12.5px;color:var(--c-text-secondary);background:var(--c-surface-2);border-radius:8px;padding:8px 11px;">“{{ s.text }}”</div>
               </div>
             </div>
+            </div>
           </div>
 
           <!-- regras de resposta -->
           <div style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:16px;padding:24px;">
-            <div style="font-size:16px;font-weight:800;margin-bottom:4px;">Regras de resposta ({{ rules.length }})</div>
-            <div style="font-size:12.5px;color:var(--c-text-muted);margin-bottom:16px;">Correções que você salvou — a IA segue todas ao sugerir. Crie pelo botão "Salvar correção" no chat.</div>
+            <div role="button" tabindex="0" style="width:100%;cursor:pointer;display:flex;align-items:center;gap:10px;user-select:none;" @click="alternar('regras')" @keydown.enter="alternar('regras')">
+              <svg :style="{ transform: aberto.regras ? 'rotate(90deg)' : 'none', transition: 'transform .15s', flexShrink: 0 }" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--c-text-faint)" stroke-width="2.5"><path d="m9 6 6 6-6 6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              <span style="font-size:16px;font-weight:800;">Regras de resposta</span>
+              <span style="font-size:12px;font-weight:700;color:var(--c-text-faint);">{{ rules.length }}</span>
+              <span style="flex:1;" />
+            </div>
+            <div v-if="aberto.regras">
+            <div style="font-size:12.5px;color:var(--c-text-muted);margin:9px 0 16px;">Correções que você salvou — a IA segue todas ao sugerir. Crie pelo botão "Salvar correção" no chat.</div>
             <div v-if="!rules.length" style="font-size:13px;color:var(--c-text-faint);">Nenhuma regra ainda.</div>
             <div v-else style="display:flex;flex-direction:column;gap:8px;">
               <div v-for="r in rules" :key="r.id" style="background:var(--c-surface-2);border-radius:10px;padding:11px 14px;display:flex;gap:12px;align-items:center;">
@@ -375,6 +396,7 @@ onMounted(() => { load(); loadAi(); loadMaterials(); loadSettings() })
                 <div style="flex:1;font-size:13px;">{{ r.rule }}</div>
                 <button title="Excluir" class="delk" style="background:none;border:none;color:var(--c-text-faint);cursor:pointer;flex-shrink:0;display:flex;" @click="delRule(r.id)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
               </div>
+            </div>
             </div>
           </div>
 
@@ -397,8 +419,14 @@ onMounted(() => { load(); loadAi(); loadMaterials(); loadSettings() })
 
           <!-- materiais que a IA envia -->
           <div style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:16px;padding:24px;">
-            <div style="font-size:16px;font-weight:800;margin-bottom:4px;">Materiais da IA ({{ materials.length }})</div>
-            <div style="font-size:12.5px;color:var(--c-text-muted);margin-bottom:16px;line-height:1.5;">
+            <div role="button" tabindex="0" style="width:100%;cursor:pointer;display:flex;align-items:center;gap:10px;user-select:none;" @click="alternar('materiais')" @keydown.enter="alternar('materiais')">
+              <svg :style="{ transform: aberto.materiais ? 'rotate(90deg)' : 'none', transition: 'transform .15s', flexShrink: 0 }" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--c-text-faint)" stroke-width="2.5"><path d="m9 6 6 6-6 6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              <span style="font-size:16px;font-weight:800;">Materiais da IA</span>
+              <span style="font-size:12px;font-weight:700;color:var(--c-text-faint);">{{ materials.length }}</span>
+              <span style="flex:1;" />
+            </div>
+            <div v-if="aberto.materiais">
+            <div style="font-size:12.5px;color:var(--c-text-muted);margin:9px 0 16px;line-height:1.5;">
               Arquivos que a IA pode mandar para o lead (apresentação, tabela de taxas, contrato). Ela lê o campo <b>quando enviar</b> e decide na hora se aquele material ajuda — você não precisa amarrar a uma etapa.
             </div>
 
@@ -433,12 +461,19 @@ onMounted(() => { load(); loadAi(); loadMaterials(); loadSettings() })
                 <button title="Excluir" class="delk" style="background:none;border:none;color:var(--c-text-faint);cursor:pointer;flex-shrink:0;display:flex;" @click="delMaterial(m)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
               </div>
             </div>
+            </div>
           </div>
 
           <!-- objetivo por time (SDR / Closer / CS) -->
           <div style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:16px;padding:24px;">
-            <div style="font-size:16px;font-weight:800;margin-bottom:4px;">Objetivo por time ({{ teams.length }})</div>
-            <div style="font-size:12.5px;color:var(--c-text-muted);margin-bottom:16px;">
+            <div role="button" tabindex="0" style="width:100%;cursor:pointer;display:flex;align-items:center;gap:10px;user-select:none;" @click="alternar('times')" @keydown.enter="alternar('times')">
+              <svg :style="{ transform: aberto.times ? 'rotate(90deg)' : 'none', transition: 'transform .15s', flexShrink: 0 }" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--c-text-faint)" stroke-width="2.5"><path d="m9 6 6 6-6 6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              <span style="font-size:16px;font-weight:800;">Objetivo por time</span>
+              <span style="font-size:12px;font-weight:700;color:var(--c-text-faint);">{{ teams.length }}</span>
+              <span style="flex:1;" />
+            </div>
+            <div v-if="aberto.times">
+            <div style="font-size:12.5px;color:var(--c-text-muted);margin:9px 0 16px;">
               Cada time é uma tab do chat e cobre etapas do funil. A IA lê o objetivo do time em que o lead está — e só o conhecimento daquele time (mais o que vale para todos).
             </div>
             <div v-if="!teams.length" style="font-size:13px;color:var(--c-text-faint);">Nenhum time ainda. Crie as tabs no chat (⋮ → Tabs por etiqueta).</div>
@@ -454,20 +489,27 @@ onMounted(() => { load(); loadAi(); loadMaterials(); loadSettings() })
                 <textarea v-model="t.objetivo" rows="5" placeholder="O que a IA deve fazer com os leads deste time (missão, tom, o que buscar, o que NÃO fazer)." style="width:100%;background:var(--c-bg-deep);border:1px solid var(--c-surface-3);border-radius:10px;padding:11px 12px;color:var(--c-text);font-family:inherit;font-size:13px;line-height:1.55;outline:none;resize:vertical;box-sizing:border-box;" />
               </div>
             </div>
+            </div>
           </div>
 
           <!-- base de conhecimento -->
           <div style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:16px;padding:24px;">
-            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px;">
+            <div role="button" tabindex="0" style="width:100%;cursor:pointer;display:flex;align-items:center;gap:10px;user-select:none;" @click="alternar('base')" @keydown.enter="alternar('base')">
+              <svg :style="{ transform: aberto.base ? 'rotate(90deg)' : 'none', transition: 'transform .15s', flexShrink: 0 }" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--c-text-faint)" stroke-width="2.5"><path d="m9 6 6 6-6 6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              <span style="font-size:16px;font-weight:800;">Base de conhecimento</span>
+              <span style="font-size:12px;font-weight:700;color:var(--c-text-faint);">{{ visibleChunks.length }}</span>
+              <span style="flex:1;" />
+              <button v-if="aberto.base && editingId !== 0" style="background:var(--c-ai);border:none;color:var(--c-on-accent);font-family:inherit;font-size:13px;font-weight:700;padding:9px 14px;border-radius:10px;cursor:pointer;flex-shrink:0;white-space:nowrap;" @click.stop="startAdd">+ Adicionar</button>
+            </div>
+            <div v-if="aberto.base">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin:9px 0 16px;">
               <div>
-                <div style="font-size:16px;font-weight:800;margin-bottom:4px;">Base de conhecimento ({{ visibleChunks.length }})</div>
                 <div style="font-size:12.5px;color:var(--c-text-muted);">O que a IA "sabe" para responder os clientes. Adicione, edite ou exclua.</div>
                 <div v-if="teams.length" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:11px;">
                   <button :style="{ fontSize: '11.5px', fontWeight: 700, padding: '5px 11px', borderRadius: '20px', border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: teamFilter === 'all' ? 'var(--c-ai)' : 'var(--c-surface-2)', color: teamFilter === 'all' ? 'var(--c-on-accent)' : 'var(--c-text-muted)' }" @click="teamFilter = 'all'">Tudo</button>
                   <button v-for="t in teams" :key="t.id" :style="{ fontSize: '11.5px', fontWeight: 700, padding: '5px 11px', borderRadius: '20px', border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: teamFilter === t.id ? 'var(--c-ai)' : 'var(--c-surface-2)', color: teamFilter === t.id ? 'var(--c-on-accent)' : 'var(--c-text-muted)' }" @click="teamFilter = t.id">{{ t.name }}</button>
                 </div>
               </div>
-              <button v-if="editingId !== 0" style="background:var(--c-ai);border:none;color:var(--c-on-accent);font-family:inherit;font-size:13px;font-weight:700;padding:9px 14px;border-radius:10px;cursor:pointer;flex-shrink:0;white-space:nowrap;" @click="startAdd">+ Adicionar</button>
             </div>
 
             <!-- formulário de novo conhecimento -->
@@ -531,6 +573,7 @@ onMounted(() => { load(); loadAi(); loadMaterials(); loadSettings() })
                   <button title="Excluir" style="background:none;border:none;color:var(--c-text-faint);cursor:pointer;flex-shrink:0;display:flex;" class="delk" @click="delChunk(c.id)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
                 </div>
               </template>
+            </div>
             </div>
           </div>
         </template>

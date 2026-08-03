@@ -32,7 +32,7 @@ async function abrirLista(id: number | null) {
 const nomeDaLista = computed(() => listaAtiva.value ? (listas.value.find(l => l.id === listaAtiva.value)?.name || '') : 'Todos os contatos')
 
 function iconeDaLista(kind: string) {
-  return ({ google: '🔵', planilha: '📄', crm: '💬' } as Record<string, string>)[kind] || '🏷️'
+  return ({ google: '🔵', planilha: '📄', crm: '💬', anuncio: '📣' } as Record<string, string>)[kind] || '🏷️'
 }
 
 // ---- Importar planilha / puxar do CRM ----
@@ -61,7 +61,8 @@ function escolherArquivo(e: Event) {
   if (f && !impNome.value.trim()) impNome.value = f.name.replace(/\.[^.]+$/, '')
 }
 async function importar() {
-  if (impSalvando.value || !impNome.value.trim()) return
+  if (impSalvando.value) return
+  if (!impSoAnuncio.value && !impNome.value.trim()) return
   if (importTab.value === 'planilha' && !impArquivo.value) { impErro.value = 'Escolha o arquivo da planilha (CSV).'; return }
   impSalvando.value = true
   impErro.value = ''
@@ -76,7 +77,11 @@ async function importar() {
     else {
       r = await api('/api/contact-lists/from-crm', {
         method: 'POST',
-        body: { name: impNome.value.trim(), stage: impStage.value || undefined, somente_anuncio: impSoAnuncio.value },
+        body: {
+          name: impSoAnuncio.value ? 'Leads de anúncio' : impNome.value.trim(),
+          stage: impSoAnuncio.value ? undefined : (impStage.value || undefined),
+          somente_anuncio: impSoAnuncio.value,
+        },
       })
     }
     importOpen.value = false
@@ -252,8 +257,8 @@ function remove() {
           <button :style="{ flex:1,fontSize:'12.5px',fontWeight:700,padding:'8px',borderRadius:'9px',border:'none',cursor:'pointer',fontFamily:'inherit',background: importTab==='crm' ? 'var(--accent)' : 'var(--c-surface-2)', color: importTab==='crm' ? 'var(--accent-ink)' : 'var(--c-text-muted)' }" @click="importTab = 'crm'">💬 Do CRM</button>
         </div>
 
-        <label class="lbl">Nome da lista</label>
-        <input v-model="impNome" class="inp" placeholder="Ex.: Leads do anúncio julho">
+        <label v-if="!(importTab === 'crm' && impSoAnuncio)" class="lbl">Nome da lista</label>
+        <input v-if="!(importTab === 'crm' && impSoAnuncio)" v-model="impNome" class="inp" placeholder="Ex.: Base de fornecedores">
 
         <template v-if="importTab === 'planilha'">
           <label class="lbl">Arquivo CSV</label>
@@ -264,25 +269,33 @@ function remove() {
         </template>
 
         <template v-else>
-          <label class="lbl">Etapa do funil (opcional)</label>
-          <select v-model="impStage" class="inp" style="cursor:pointer;">
-            <option value="">Todas as etapas</option>
-            <option v-for="s in crm.stages" :key="s.key" :value="s.key">{{ s.name }}</option>
-          </select>
           <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:12.5px;color:var(--c-text-secondary);cursor:pointer;">
             <input v-model="impSoAnuncio" type="checkbox" style="cursor:pointer;">
-            Só quem veio de anúncio (clique-para-WhatsApp)
+            📣 Só quem veio de anúncio (clique-para-WhatsApp)
           </label>
-          <div style="font-size:11.5px;color:var(--c-text-faint);margin-top:8px;line-height:1.5;">
-            Cria a lista com quem já conversou com a gente no WhatsApp — é assim que os leads de anúncio viram lista.
-          </div>
+
+          <template v-if="impSoAnuncio">
+            <div style="font-size:11.5px;color:var(--c-text-faint);margin-top:10px;line-height:1.55;">
+              Vai para a lista fixa <b>Leads de anúncio</b> — a mesma que se alimenta sozinha: todo lead novo que chegar pelo anúncio entra nela na hora. Rodar aqui só completa o histórico, sem duplicar ninguém.
+            </div>
+          </template>
+          <template v-else>
+            <label class="lbl">Etapa do funil (opcional)</label>
+            <select v-model="impStage" class="inp" style="cursor:pointer;">
+              <option value="">Todas as etapas</option>
+              <option v-for="s in crm.stages" :key="s.key" :value="s.key">{{ s.name }}</option>
+            </select>
+            <div style="font-size:11.5px;color:var(--c-text-faint);margin-top:8px;line-height:1.5;">
+              Cria a lista com quem já conversou com a gente no WhatsApp.
+            </div>
+          </template>
         </template>
 
         <div v-if="impErro" style="margin-top:12px;font-size:12.5px;color:var(--c-danger-soft);">{{ impErro }}</div>
 
         <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px;">
           <button style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);font-family:inherit;font-size:13px;padding:9px 15px;border-radius:9px;cursor:pointer;" @click="importOpen = false">Cancelar</button>
-          <button class="wabtn" :disabled="impSalvando || !impNome.trim()" :style="{ background:'var(--accent)',border:'none',color:'var(--accent-ink)',fontFamily:'inherit',fontSize:'13px',fontWeight:700,padding:'9px 18px',borderRadius:'9px',cursor:'pointer',opacity:(impSalvando||!impNome.trim())?0.6:1 }" @click="importar">{{ impSalvando ? 'Importando…' : 'Importar' }}</button>
+          <button class="wabtn" :disabled="impSalvando || (!impNome.trim() && !(importTab === 'crm' && impSoAnuncio))" :style="{ background:'var(--accent)',border:'none',color:'var(--accent-ink)',fontFamily:'inherit',fontSize:'13px',fontWeight:700,padding:'9px 18px',borderRadius:'9px',cursor:'pointer',opacity:(impSalvando || (!impNome.trim() && !(importTab === 'crm' && impSoAnuncio)))?0.6:1 }" @click="importar">{{ impSalvando ? 'Importando…' : 'Importar' }}</button>
         </div>
       </div>
     </div>

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Contact;
 use App\Models\ContactList;
 use App\Models\Conversation;
+use App\Services\LeadsDeAnuncio;
 use App\Support\Csv;
 use Illuminate\Http\Request;
 
@@ -134,11 +135,22 @@ class ContactListController extends Controller
             'somente_anuncio' => 'boolean',
         ]);
 
+        // "Só anúncio" tem lista própria e fixa: é a mesma que os webhooks alimentam
+        // sozinhos, então rodar de novo só completa o que faltava (nada duplica).
+        if ($request->boolean('somente_anuncio')) {
+            $r = LeadsDeAnuncio::sincronizarHistorico();
+
+            return response()->json([
+                'list' => $r['list'],
+                'novos' => $r['adicionados'],
+                'sem_telefone' => $r['sem_telefone'],
+            ], 201);
+        }
+
         $conversas = Conversation::query()
             ->where('origin', 'WhatsApp')
             ->whereNotNull('phone')
             ->when(! empty($data['stage']), fn ($q) => $q->where('stage', $data['stage']))
-            ->when($request->boolean('somente_anuncio'), fn ($q) => $q->whereNotNull('custom_fields->anuncio'))
             ->get(['id', 'name', 'phone']);
 
         if ($conversas->isEmpty()) {

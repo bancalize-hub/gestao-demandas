@@ -8,6 +8,7 @@ use App\Models\Company;
 use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\WaAccount;
+use App\Services\LeadsDeAnuncio;
 use App\Support\Channels\CloudChannel;
 use App\Support\Evolution;
 use App\Support\Realtime;
@@ -378,8 +379,11 @@ class WhatsAppCloudController extends Controller
             $conv->wa_account_id = $account->id;
         }
 
+        $temReferral = ! $isOut && isset($raw['referral']) && is_array($raw['referral']);
+        $conversaNova = ! $conv->exists;
+
         // Lead de anúncio clicável (Click-to-WhatsApp): guarda de onde veio.
-        if (! $isOut && isset($raw['referral']) && is_array($raw['referral'])) {
+        if ($temReferral) {
             $custom = (array) ($conv->custom_fields ?? []);
             $custom['anuncio'] = array_filter([
                 'titulo' => $raw['referral']['headline'] ?? null,
@@ -402,11 +406,21 @@ class WhatsAppCloudController extends Controller
             if ($conv->auto_reply && $account->isPrimary()) {
                 $conv->auto_reply_due_at = now()->addSeconds(10);
             }
+            // O lead voltou a falar: encerra a rodada de retomada ativa (recomeça do zero
+            // se ele sumir de novo).
+            $conv->nudge_count = 0;
+            $conv->nudge_last_at = null;
         } else {
             $conv->auto_reply_due_at = null;
         }
 
         $conv->save();
+
+        // Lead de anúncio entra na lista de contatos na hora — é o que mantém a lista
+        // "Leads de anúncio" viva sem ninguém importar nada à mão.
+        if (! $isOut) {
+            LeadsDeAnuncio::registrarSeAnuncio($conv, $preview, $temReferral, $conversaNova);
+        }
 
         // Prospect respondeu a um disparo → marca o contato da campanha.
         if (! $isOut && ! $account->isPrimary()) {

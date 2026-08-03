@@ -9,6 +9,7 @@ use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\Stage;
 use App\Models\WaAccount;
+use App\Services\LeadsDeAnuncio;
 use App\Support\Channels\CloudChannel;
 use App\Support\Evolution;
 use App\Support\Realtime;
@@ -942,6 +943,7 @@ class WhatsAppController extends Controller
         $ts = (int) ($m['messageTimestamp'] ?? time());
 
         $conv = Conversation::firstOrNew(['slug' => $slug]);
+        $conversaNova = ! $conv->exists;
         $push = trim((string) ($m['pushName'] ?? ''));
         // Nome de verdade tem letras; pushName só-dígitos é id @lid, não serve.
         // E pushName de mensagem ENVIADA é o próprio dono ("Você") — não nomeia o contato.
@@ -993,11 +995,22 @@ class WhatsAppController extends Controller
             if ($conv->auto_reply && (! $account || $account->isPrimary())) {
                 $conv->auto_reply_due_at = now()->addSeconds(10);
             }
+            // O lead voltou a falar: a rodada de retomada ativa termina aqui. Se ele sumir
+            // de novo, a contagem recomeça do zero (e não fica travada no teto para sempre).
+            $conv->nudge_count = 0;
+            $conv->nudge_last_at = null;
         } else {
             // Nós (humano) respondemos → cancela qualquer resposta automática pendente.
             $conv->auto_reply_due_at = null;
         }
         $conv->save();
+
+        // Lead de anúncio (clique-para-WhatsApp): entra na lista de contatos na hora.
+        // Aqui não há `referral` como no canal oficial — o que denuncia é o texto que a
+        // Meta pré-preenche na primeira mensagem.
+        if (! $isOut) {
+            LeadsDeAnuncio::registrarSeAnuncio($conv, $p['preview'] ?? null, false, $conversaNova);
+        }
 
         // Prospect respondeu a um disparo? Marca o contato da campanha como respondido (para o relatório).
         if (! $isOut && $account && ! $account->isPrimary() && $realNumber) {

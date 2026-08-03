@@ -197,20 +197,25 @@ class AiReplyService
         $words = collect(preg_split('/\W+/u', mb_strtolower($recent)))
             ->filter(fn ($w) => mb_strlen($w) >= 4)->unique();
 
-        // Conhecimento do time do lead + o que vale para todos. Assim o SDR não sai
-        // falando de pós-venda e o CS não repete pitch de prospecção.
+        // O playbook do TIME (como o SDR/Closer/CS atende) entra SEMPRE: é sobre o nosso
+        // comportamento, não sobre o que o lead escreveu — depender de palavra-chave fazia
+        // ele quase nunca aparecer. O conhecimento geral (produto, preço, objeções) segue
+        // por relevância, que é o que evita despejar 60 chunks no prompt.
         $teamId = ChatTab::forStage($conversation->stage)?->id;
-        $all = MemoryChunk::where(fn ($q) => $q->whereNull('chat_tab_id')->when($teamId, fn ($w) => $w->orWhere('chat_tab_id', $teamId)))->get();
+        $team = $teamId ? MemoryChunk::where('chat_tab_id', $teamId)->latest('id')->take(8)->get() : collect();
 
-        if ($words->isEmpty() || $all->isEmpty()) {
-            return $all->take(5);
+        $geral = MemoryChunk::whereNull('chat_tab_id')->get();
+        if ($words->isEmpty() || $geral->isEmpty()) {
+            return $team->concat($geral->take(5))->values();
         }
 
-        return $all->map(function ($c) use ($words) {
+        $relevantes = $geral->map(function ($c) use ($words) {
             $hay = mb_strtolower(($c->keywords ?? '').' '.$c->gatilho);
             $c->score = $words->filter(fn ($w) => str_contains($hay, $w))->count();
 
             return $c;
-        })->filter(fn ($c) => $c->score > 0)->sortByDesc('score')->take(5)->values();
+        })->filter(fn ($c) => $c->score > 0)->sortByDesc('score')->take(5);
+
+        return $team->concat($relevantes)->values();
     }
 }

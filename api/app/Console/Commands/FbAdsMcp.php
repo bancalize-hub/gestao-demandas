@@ -105,8 +105,13 @@ class FbAdsMcp extends Command
 
     private function ferramentas(): array
     {
+        // `properties` vazio TEM de virar {} e não []: o JSON Schema exige objeto, e um
+        // array vazio reprova a validação do cliente com "tools fetch failed".
         $obj = fn (array $props, array $req = []) => [
-            'type' => 'object', 'properties' => $props, 'required' => $req, 'additionalProperties' => false,
+            'type' => 'object',
+            'properties' => $props ?: new \stdClass,
+            'required' => $req,
+            'additionalProperties' => false,
         ];
         $str = fn (string $d) => ['type' => 'string', 'description' => $d];
         $num = fn (string $d) => ['type' => 'number', 'description' => $d];

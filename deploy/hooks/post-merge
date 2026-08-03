@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Instalado por deploy/install-hooks.sh. Ver deploy/refresh.sh para o porquê.
+#
+# Os hooks são compartilhados por TODOS os worktrees do repositório (.git/hooks é um só),
+# então só age no working tree que é a produção — nos worktrees de desenvolvimento
+# recachear seria pior do que não fazer nada.
+[ "$(git rev-parse --show-toplevel 2>/dev/null)" = "/var/www/gestao" ] || exit 0
+
+exec /var/www/gestao/deploy/refresh.sh

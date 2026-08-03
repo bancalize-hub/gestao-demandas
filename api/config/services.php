@@ -93,10 +93,16 @@ return [
         'end_hour' => (int) env('NUDGE_END_HOUR', 19),
         'per_tick' => (int) env('NUDGE_PER_TICK', 15),
 
-        // Número na API oficial: retomada de 3+ dias cai fora da janela de 24h e a Meta só
-        // aceita TEMPLATE aprovado. O template tem 2 variáveis: {{1}} primeiro nome do lead,
-        // {{2}} assunto que estava sendo tratado (a IA preenche). `template_text` é a MESMA
-        // frase aprovada, usada só para espelhar a bolha no chat — manter as duas em sincronia.
+        // Número na API oficial: todo degrau a partir do de 20h cai fora da janela de 24h e a
+        // Meta só aceita TEMPLATE aprovado — sem isto a retomada não existe no número oficial.
+        //
+        // `template_text` é a MESMA frase aprovada e é a fonte da verdade das variáveis:
+        // :nome (= {{1}}, primeiro nome do lead) e :assunto (= {{2}}, o assunto que estava em
+        // jogo, preenchido pela IA). O tick manda exatamente os parâmetros que aparecem aqui,
+        // então trocar para um template de 1 variável é tirar o :assunto desta frase — mandar
+        // parâmetro a mais do que o template declara é recusa na hora (erro 132000).
+        // Serve também para espelhar a bolha no chat: mantenha a frase igual à aprovada.
+        //
         // Sem template configurado, a rodada é encerrada com registro (nada é enviado).
         'template' => env('NUDGE_TEMPLATE', 'retomada_conversa'),
         'template_language' => env('NUDGE_TEMPLATE_LANG', 'pt_BR'),

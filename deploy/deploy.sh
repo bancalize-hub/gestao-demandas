@@ -13,9 +13,7 @@ cd "$APP_DIR/api"
 composer install --no-dev --optimize-autoloader --no-interaction
 php artisan migrate --force
 php artisan storage:link || true
-php artisan config:cache
-php artisan route:cache
-php artisan view:cache
+"$APP_DIR/deploy/refresh.sh" "$APP_DIR"
 
 # ---- Front (Nuxt) ----
 cd "$APP_DIR/web"

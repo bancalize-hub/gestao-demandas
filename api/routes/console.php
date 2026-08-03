@@ -2,6 +2,7 @@
 
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schedule;
 
 Artisan::command('inspire', function () {
@@ -73,3 +74,11 @@ Schedule::command('meetings:attendance-tick')
     ->everyFiveMinutes()
     ->withoutOverlapping()
     ->runInBackground();
+
+// Batimento do agendador: o painel do super-admin usa isto para dizer se o scheduler
+// está vivo. Sem ele, "os ticks pararam" só é descoberto quando alguém repara que a IA
+// não responde mais — e não dá para perguntar ao pm2, que é do root.
+Schedule::call(fn () => Cache::put('super.heartbeat', now(), 3600))
+    ->everyMinute()
+    ->name('super-heartbeat')
+    ->withoutOverlapping();

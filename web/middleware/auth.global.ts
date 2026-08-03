@@ -21,8 +21,8 @@ export default defineNuxtRouteMiddleware(async (to) => {
   if (to.path.startsWith('/admin') && !user.value?.is_admin) {
     return navigateTo('/', { replace: true })
   }
-  // Agente (opera a VPS): EXCLUSIVO do dono da plataforma (super-admin).
-  if (to.path === '/agente' && !user.value?.is_super_admin) {
+  // Agente (opera a VPS) e painel da plataforma: EXCLUSIVOS do dono (super-admin).
+  if ((to.path === '/agente' || to.path.startsWith('/super')) && !user.value?.is_super_admin) {
     return navigateTo('/', { replace: true })
   }
 })

@@ -149,6 +149,11 @@ onBeforeUnmount(() => {
           Marca (cores e logo)
         </button>
 
+        <button v-if="user?.is_super_admin" class="usermenu-item" :class="{ active: route.path === '/super' }" role="menuitem" @click="goFromMenu('/super')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2.8 4.5 6v5.5c0 4.4 3.1 8.2 7.5 9.7 4.4-1.5 7.5-5.3 7.5-9.7V6L12 2.8Z" stroke-linejoin="round" /><path d="M9.2 12.2 11 14l4-4.2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+          Plataforma (todas as empresas)
+        </button>
+
         <button v-if="user?.is_super_admin" class="usermenu-item" :class="{ active: route.path === '/agente' }" role="menuitem" @click="goFromMenu('/agente')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="6" width="16" height="13" rx="2.5" /><path d="M9 2.5v3.5M15 2.5v3.5M9.5 12h.01M14.5 12h.01M9 16h6" stroke-linecap="round" /></svg>
           Agente (opera a VPS)

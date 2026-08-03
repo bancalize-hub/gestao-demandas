@@ -22,6 +22,7 @@ use App\Http\Controllers\Api\MessageController;
 use App\Http\Controllers\Api\QuickReplyController;
 use App\Http\Controllers\Api\StageAutomationController;
 use App\Http\Controllers\Api\StageController;
+use App\Http\Controllers\Api\SuperController;
 use App\Http\Controllers\Api\TaskController;
 use App\Http\Controllers\Api\WhatsAppCloudController;
 use App\Http\Controllers\Api\WhatsAppController;
@@ -121,6 +122,14 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
         Route::patch('/marketing/creatives/{creative}', [MarketingController::class, 'atualizarCriativo']);
         Route::delete('/marketing/creatives/{creative}', [MarketingController::class, 'apagarCriativo']);
         Route::get('/marketing/creatives/{creative}/arquivo', [MarketingController::class, 'arquivo']);
+
+        // Painel da PLATAFORMA (página /super): fala de todas as empresas ao mesmo tempo,
+        // por isso vive aqui dentro e nunca no grupo comum. Ver PLANO-SUPER-ADMIN.md.
+        Route::get('/super/companies', [SuperController::class, 'empresas']);
+        Route::patch('/super/companies/{company}', [SuperController::class, 'alternarEmpresa']);
+        Route::get('/super/wa-accounts', [SuperController::class, 'numeros']);
+        Route::patch('/super/wa-accounts/{conta}', [SuperController::class, 'alternarNumero']);
+        Route::get('/super/platform', [SuperController::class, 'plataforma']);
     });
 
     Route::get('/stages', [StageController::class, 'index']);

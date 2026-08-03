@@ -89,12 +89,15 @@ const showStages = ref(false)
 const newStageName = ref('')
 // Etiquetas do WhatsApp Business (para vincular a cada etapa).
 const waLabels = ref<{ id: string, name: string, color?: string }[]>([])
+// Na API oficial da Meta não existem etiquetas: o vínculo etapa↔etiqueta fica indisponível.
+const waLabelsSupported = ref(true)
 async function openStagesModal() {
   showStages.value = true
   if (!waLabels.value.length) {
     try {
-      const r = await useApi()<{ labels: any[] }>('/api/wpp/labels')
+      const r = await useApi()<{ labels: any[], supported?: boolean }>('/api/wpp/labels')
       waLabels.value = (r.labels || []).map(l => ({ id: String(l.id), name: l.name, color: l.color }))
+      waLabelsSupported.value = r.supported !== false
     }
     catch { /* WhatsApp pode estar desconectado */ }
   }
@@ -387,10 +390,11 @@ const cols = computed(() => crm.stages.map((st) => {
             <textarea :value="s.goal ?? ''" rows="2" placeholder="Objetivo da IA nesta etapa (ex.: conduzir sutilmente o lead a agendar uma reunião)" style="background:var(--c-bg);border:1px solid var(--c-surface-3);border-radius:8px;padding:8px 10px;color:var(--c-text);font-family:inherit;font-size:12.5px;outline:none;resize:vertical;line-height:1.4;" @change="s.id && crm.updateStage(s.id, { goal: ($event.target as HTMLTextAreaElement).value })" />
             <div style="display:flex;align-items:center;gap:8px;">
               <span style="font-size:11.5px;color:var(--c-text-muted);display:flex;align-items:center;gap:5px;flex-shrink:0;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7.2-7.2A2 2 0 0 1 2.8 12V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.4.6l7.4 7.4a2 2 0 0 1 0 2.8Z" stroke-linejoin="round"/></svg>Etiqueta WhatsApp</span>
-              <select :value="s.wa_label_id ?? ''" style="flex:1;background:var(--c-bg);border:1px solid var(--c-surface-3);border-radius:8px;padding:7px 9px;color:var(--c-text);font-family:inherit;font-size:12.5px;outline:none;color-scheme:dark;" @change="s.id && crm.updateStage(s.id, { wa_label_id: ($event.target as HTMLSelectElement).value || null })">
+              <select v-if="waLabelsSupported" :value="s.wa_label_id ?? ''" style="flex:1;background:var(--c-bg);border:1px solid var(--c-surface-3);border-radius:8px;padding:7px 9px;color:var(--c-text);font-family:inherit;font-size:12.5px;outline:none;color-scheme:dark;" @change="s.id && crm.updateStage(s.id, { wa_label_id: ($event.target as HTMLSelectElement).value || null })">
                 <option value="">— Não sincronizar —</option>
                 <option v-for="l in waLabels" :key="l.id" :value="l.id">{{ l.name }}</option>
               </select>
+              <span v-else style="flex:1;font-size:11.5px;color:var(--c-text-faint);line-height:1.35;">Indisponível no número oficial da Meta — a Cloud API não expõe as etiquetas do app Business.</span>
             </div></div>
         </div>
         <div style="display:flex;gap:8px;margin-top:14px;flex-shrink:0;">

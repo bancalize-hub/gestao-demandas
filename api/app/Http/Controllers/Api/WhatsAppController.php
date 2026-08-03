@@ -39,12 +39,19 @@ class WhatsAppController extends Controller
      */
     private function instance(?string $instance = null): string
     {
-        if ($instance) {
-            return $instance;
-        }
-        $primary = WaAccount::primary();
+        // Uma única regra de resolução para todo o CRM (ver Evolution::instanceFor):
+        // nunca cai no default global do .env quando a empresa já tem número próprio.
+        return Evolution::instanceFor($instance);
+    }
 
-        return $primary?->instance ?: (string) config('services.evolution.instance');
+    /** Recusa funções que só existem na Evolution quando o número é oficial. */
+    private function abortIfCloud(?WaAccount $account, string $oQue): void
+    {
+        abort_if(
+            (bool) $account?->isCloud(),
+            422,
+            "{$oQue} não existe na API oficial da Meta — a Cloud API não dá acesso ao histórico nem à agenda do aparelho."
+        );
     }
 
     /** Conta-alvo da requisição (?account=<id> ou body account_id); default = principal. */
@@ -286,20 +293,44 @@ class WhatsAppController extends Controller
         return response()->json(['message' => 'ok']);
     }
 
+    /**
+     * Liga/desliga um número sem apagá-lo. Existe principalmente para o canal oficial:
+     * lá "desconectar" é só parar de usar (não há sessão para derrubar), e sem isto não
+     * havia caminho de volta na tela — o botão "Conectar" é do QR, que a Meta não usa.
+     */
+    public function setActive(Request $request, WaAccount $account)
+    {
+        $this->ensureAdmin($request);
+
+        $ativo = $request->boolean('is_active');
+        abort_if(! $ativo && $account->isPrimary(), 422, 'Desative outro número como principal antes de desligar este.');
+
+        $account->update(['is_active' => $ativo]);
+        if ($ativo && $account->isCloud()) {
+            // Estado real vem da Meta, não de sessão local.
+            $account->update(['state' => (new CloudChannel($account))->connectionState()]);
+        }
+
+        return response()->json(['message' => 'ok', 'is_active' => $account->is_active, 'state' => $account->state]);
+    }
+
     /** Remove um número de prospecção (logout + delete na Evolution). O principal é protegido. */
     public function destroyAccount(Request $request, WaAccount $account)
     {
         $this->ensureAdmin($request);
         abort_if($account->isPrimary(), 422, 'Não é possível remover o número principal.');
 
-        // Best-effort na Evolution: desconecta e apaga a instância.
-        try {
-            $this->evo()->delete("/instance/logout/{$account->instance}");
-        } catch (\Throwable $e) {
-        }
-        try {
-            $this->evo()->delete("/instance/delete/{$account->instance}");
-        } catch (\Throwable $e) {
+        // Best-effort na Evolution: desconecta e apaga a instância. Número oficial não
+        // tem instância — chamar /instance/logout/ sem nome bateria numa URL sem sentido.
+        if (! $account->isCloud()) {
+            try {
+                $this->evo()->delete("/instance/logout/{$account->instance}");
+            } catch (\Throwable $e) {
+            }
+            try {
+                $this->evo()->delete("/instance/delete/{$account->instance}");
+            } catch (\Throwable $e) {
+            }
         }
 
         // Conversas dessa origem permanecem no histórico, mas sem vínculo de conta.
@@ -313,6 +344,7 @@ class WhatsAppController extends Controller
     public function import(Request $request)
     {
         $this->ensureAdmin($request);
+        $this->abortIfCloud(WaAccount::primary(), 'Importar conversa');
 
         $number = preg_replace('/\D/', '', $request->validate(['number' => 'required|string'])['number']);
 
@@ -335,6 +367,7 @@ class WhatsAppController extends Controller
     public function sync(Request $request)
     {
         $this->ensureAdmin($request);
+        $this->abortIfCloud(WaAccount::primary(), 'Sincronizar conversas');
 
         $removeDemo = $request->boolean('remove_demo', true);
         if ($removeDemo) {
@@ -547,9 +580,12 @@ class WhatsAppController extends Controller
     {
         $this->ensureAdmin($request);
 
-        // A API oficial não expõe as etiquetas do app Business → lista vazia, e a tela
-        // de etapas simplesmente não oferece o vínculo com etiqueta.
-        return response()->json(['labels' => Wa::primary()->findLabels()]);
+        // A API oficial não expõe as etiquetas do app Business → lista vazia. `supported`
+        // deixa a tela explicar o porquê, em vez de mostrar um select vazio sem motivo.
+        return response()->json([
+            'labels' => Wa::primary()->findLabels(),
+            'supported' => ! (bool) WaAccount::primary()?->isCloud(),
+        ]);
     }
 
     /**
@@ -934,8 +970,18 @@ class WhatsAppController extends Controller
         $conv->origin = 'WhatsApp';
         $conv->phone = $conv->phone ?: ($realNumber ? '+'.$realNumber : null);
         $conv->wa_jid = $conv->wa_jid ?: $remoteJid;
-        // Conversa antiga sem origem definida → carimba com a conta que recebeu agora.
-        $conv->wa_account_id = $conv->wa_account_id ?: $account?->id;
+        // O número que RECEBEU passa a ser o dono da conversa (mesma regra do canal
+        // oficial). Manter o carimbo antigo fazia a resposta sair pelo número errado
+        // quando o cliente migrava de canal — inclusive por um número deslogado.
+        if ($account && $conv->wa_account_id !== $account->id) {
+            Evolution::log('webhook.conversa_recarimbada', [
+                'conversation_id' => $conv->id,
+                'slug' => $slug,
+                'de' => $conv->wa_account_id,
+                'para' => $account->id,
+            ]);
+            $conv->wa_account_id = $account->id;
+        }
         $conv->preview = mb_substr($p['preview'], 0, 80);
         $conv->time = $this->humanDate($ts);
         $conv->last_message_at = date('Y-m-d H:i:s', $ts);

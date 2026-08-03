@@ -181,6 +181,7 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
     Route::get('/wpp/accounts', [WhatsAppController::class, 'accounts']);
     Route::post('/wpp/accounts', [WhatsAppController::class, 'createAccount']);
     Route::post('/wpp/accounts/{account}/primary', [WhatsAppController::class, 'setPrimary']);
+    Route::post('/wpp/accounts/{account}/active', [WhatsAppController::class, 'setActive']);
     Route::delete('/wpp/accounts/{account}', [WhatsAppController::class, 'destroyAccount']);
 
     // API oficial (Cloud API da Meta): conectar número, diagnosticar e listar templates.

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-interface Account { id: number, name: string, role: string, state: string }
+interface Account { id: number, name: string, role: string, state: string, provider?: 'evolution' | 'cloud' }
 interface Campaign {
   id: number
   name: string
@@ -24,7 +24,10 @@ const campaigns = ref<Campaign[]>([])
 const accounts = ref<Account[]>([])
 const loading = ref(true)
 
-const outreach = computed(() => accounts.value.filter(a => a.role === 'outreach'))
+// Disparo só existe no canal não-oficial: na API oficial o contato nunca escreveu,
+// a janela de 24h está fechada e a Meta só aceita template aprovado (texto fixo).
+const outreach = computed(() => accounts.value.filter(a => a.role === 'outreach' && a.provider !== 'cloud'))
+const temNumeroOficial = computed(() => accounts.value.some(a => a.provider === 'cloud'))
 
 async function load() {
   try {
@@ -125,6 +128,9 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
         <!-- aviso sem número de prospecção -->
         <div v-if="!loading && outreach.length === 0" style="background:rgba(255,180,67,.1);border:1px solid rgba(255,180,67,.3);border-radius:14px;padding:16px;font-size:13px;color:var(--c-warn-soft);line-height:1.5;">
           Você ainda não tem nenhum <b>número de prospecção</b>. Vá em <b>WhatsApp</b> e adicione/conecte um número antes de criar campanhas.
+          <template v-if="temNumeroOficial">
+            <br><br>Número na <b>API oficial da Meta</b> não faz disparo: quem nunca te escreveu está fora da janela de 24h, e lá só sai <b>template aprovado</b> (texto fixo, não a mensagem que a IA escreve pra cada contato). Para prospecção ativa, conecte um número pela Evolution.
+          </template>
         </div>
 
         <!-- nova campanha -->

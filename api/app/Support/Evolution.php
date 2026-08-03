@@ -2,8 +2,11 @@
 
 namespace App\Support;
 
+use App\Models\WaAccount;
 use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 /** Acesso à Evolution API (WhatsApp) para etiquetas. Key fica server-side. */
 class Evolution
@@ -19,7 +22,7 @@ class Evolution
     public static function log(string $event, array $ctx = [], string $level = 'info'): void
     {
         try {
-            \Illuminate\Support\Facades\Log::channel('whatsapp')->{$level}($event, $ctx);
+            Log::channel('whatsapp')->{$level}($event, $ctx);
         } catch (\Throwable $e) {
             // Log nunca pode derrubar o envio.
         }
@@ -30,7 +33,7 @@ class Evolution
      * truncada), status HTTP, corpo e duração. Devolve a Response para o chamador
      * decidir. Sem isto, um 4xx/5xx da Evolution virava `return null` mudo.
      */
-    private static function post(string $path, string $instance, array $payload, int $timeout = 20): ?\Illuminate\Http\Client\Response
+    private static function post(string $path, string $instance, array $payload, int $timeout = 20): ?Response
     {
         // Base64 de mídia polui (e estoura) o log: guarda só o tamanho.
         $safe = $payload;
@@ -75,14 +78,46 @@ class Evolution
     /** Resolve a instância: a passada explicitamente, ou a principal (config) por padrão. */
     private static function instance(?string $instance = null): string
     {
+        return self::instanceFor($instance);
+    }
+
+    /**
+     * Instância-alvo da EMPRESA ATUAL (as queries são escopadas pelo tenant).
+     *
+     * A ordem importa por causa do multi-provedor: com o principal na API oficial ele
+     * não tem instância, e cair direto no default do `.env` mandaria a mensagem pela
+     * instância da empresa LEGADA — ou seja, pelo WhatsApp de outra empresa. Por isso
+     * o penúltimo passo é o primeiro número Evolution da própria empresa, e o default
+     * global só vale para quem ainda não tem número nenhum cadastrado.
+     */
+    public static function instanceFor(?string $instance = null): string
+    {
         if ($instance) {
             return $instance;
         }
-        // Sem instância explícita, usa a PRINCIPAL da empresa atual (escopada pelo tenant).
-        // Só cai no config global quando não há empresa/primary — compatível com a Empresa 1.
-        $primary = \App\Models\WaAccount::primary();
 
-        return $primary?->instance ?: (string) config('services.evolution.instance');
+        $primary = WaAccount::primary();
+        if ($primary?->instance) {
+            return $primary->instance;
+        }
+
+        $evo = WaAccount::where('provider', 'evolution')
+            ->whereNotNull('instance')->orderBy('id')->first();
+        if ($evo?->instance) {
+            return $evo->instance;
+        }
+
+        // Empresa já tem número (só que nenhum na Evolution): sem instância — a chamada
+        // falha e fica registrada, em vez de sair pelo número de outro tenant.
+        if (WaAccount::query()->exists()) {
+            self::log('instancia.indisponivel', [
+                'motivo' => 'empresa sem número na Evolution (principal está na API oficial)',
+            ], 'warning');
+
+            return '';
+        }
+
+        return (string) config('services.evolution.instance');
     }
 
     /** Lista as etiquetas do WhatsApp Business conectado. */
@@ -169,7 +204,7 @@ class Evolution
 
             return $res->successful();
         } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning('Evolution sendReaction exceção', ['e' => $e->getMessage()]);
+            Log::warning('Evolution sendReaction exceção', ['e' => $e->getMessage()]);
 
             return false;
         }
@@ -256,7 +291,7 @@ class Evolution
 
             return $res->json('base64') ?: null;
         } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning('Evolution mediaBase64 falhou', ['e' => $e->getMessage()]);
+            Log::warning('Evolution mediaBase64 falhou', ['e' => $e->getMessage()]);
 
             return null;
         }
@@ -278,7 +313,7 @@ class Evolution
 
             return $res->successful();
         } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning('Evolution handleLabel falhou', ['e' => $e->getMessage()]);
+            Log::warning('Evolution handleLabel falhou', ['e' => $e->getMessage()]);
 
             return false;
         }

@@ -133,6 +133,15 @@ async function disconnect(acc: Account) {
   catch { /* */ }
   await loadAccounts()
 }
+// Número oficial não conecta por QR: ligar/desligar é só ativar a conta na Meta.
+async function setActive(acc: Account, ativo: boolean) {
+  if (!ativo && !confirm(`Desligar "${acc.name}"? O CRM para de enviar e receber por este número.`)) return
+  try {
+    await api(`/api/wpp/accounts/${acc.id}/active`, { method: 'POST', body: { is_active: ativo } })
+    await loadAccounts()
+  }
+  catch (e: any) { alert(e?.response?._data?.message || 'Não consegui alterar o número.') }
+}
 
 // ---- Sincronizar / importar (somente número principal) ----
 const syncing = ref(false)
@@ -291,6 +300,9 @@ function stateColor(s: string) {
                   <span v-if="acc.provider === 'cloud' && acc.coexistence" style="font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px;background:var(--c-surface-2);color:var(--c-text-muted);">
                     Coexistência
                   </span>
+                  <span v-if="!acc.is_active" style="font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px;background:rgba(255,77,77,.12);color:var(--c-danger-soft);">
+                    Desligado
+                  </span>
                 </div>
                 <div style="font-size:12.5px;color:var(--c-text-muted);margin-top:2px;">
                   <span :style="{ color: stateColor(acc.state) }">{{ stateLabel(acc.state) }}</span>
@@ -304,7 +316,10 @@ function stateColor(s: string) {
                 <button v-if="acc.role !== 'primary'" title="Passar a falar por este número (troca entre API oficial e Evolution)" style="background:rgba(124,108,245,.16);border:none;color:var(--c-ai-soft);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 14px;border-radius:9px;cursor:pointer;" @click="makePrimary(acc)">Tornar principal</button>
                 <button v-if="acc.provider === 'cloud'" style="background:var(--c-surface-2);border:none;color:var(--c-text);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 14px;border-radius:9px;cursor:pointer;" @click="openCloudForm(acc)">Credenciais</button>
                 <button v-if="acc.provider !== 'cloud' && acc.state !== 'open' && connectingId !== acc.id" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 14px;border-radius:9px;cursor:pointer;" @click="openConnect(acc)">Conectar</button>
-                <button v-if="acc.state === 'open'" style="background:rgba(255,77,77,.1);border:1px solid rgba(255,77,77,.25);color:var(--c-danger-soft);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 12px;border-radius:9px;cursor:pointer;" @click="disconnect(acc)">Desconectar</button>
+                <!-- oficial: não há sessão para derrubar, é ligar/desligar o número na Meta -->
+                <button v-if="acc.provider === 'cloud' && !acc.is_active" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 14px;border-radius:9px;cursor:pointer;" @click="setActive(acc, true)">Ligar</button>
+                <button v-else-if="acc.provider === 'cloud'" style="background:rgba(255,77,77,.1);border:1px solid rgba(255,77,77,.25);color:var(--c-danger-soft);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 12px;border-radius:9px;cursor:pointer;" @click="setActive(acc, false)">Desligar</button>
+                <button v-if="acc.provider !== 'cloud' && acc.state === 'open'" style="background:rgba(255,77,77,.1);border:1px solid rgba(255,77,77,.25);color:var(--c-danger-soft);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 12px;border-radius:9px;cursor:pointer;" @click="disconnect(acc)">Desconectar</button>
                 <button v-if="acc.role !== 'primary'" title="Remover número" style="background:none;border:1px solid var(--c-surface-3);color:var(--c-text-faint);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 11px;border-radius:9px;cursor:pointer;" @click="removeAccount(acc)">✕</button>
               </div>
             </div>

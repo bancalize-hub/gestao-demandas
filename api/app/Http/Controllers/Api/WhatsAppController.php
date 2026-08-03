@@ -10,6 +10,7 @@ use App\Models\Message;
 use App\Models\Stage;
 use App\Models\WaAccount;
 use App\Support\Channels\CloudChannel;
+use App\Support\Evolution;
 use App\Support\Realtime;
 use App\Support\Tenancy;
 use App\Support\Wa;
@@ -17,6 +18,7 @@ use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -256,6 +258,32 @@ class WhatsAppController extends Controller
         ]);
 
         return response()->json($account, 201);
+    }
+
+    /**
+     * Elege o número PRINCIPAL da empresa — é assim que se alterna entre o canal
+     * oficial (Cloud API) e a Evolution sem mexer no banco.
+     *
+     * Só pode haver um: os demais voltam a ser de prospecção. Isso importa porque
+     * WaAccount::primary() é quem responde "de qual número o CRM fala" nas conversas
+     * iniciadas por aqui (e com dois primary o desempate era o menor id, o que fazia
+     * a conversa nova sair pelo número errado).
+     */
+    public function setPrimary(Request $request, WaAccount $account)
+    {
+        $this->ensureAdmin($request);
+
+        // Número oficial sem token não fala com a Meta: promover seria deixar a
+        // empresa sem canal nenhum (e o erro só apareceria no primeiro envio).
+        abort_if($account->isCloud() && ! $account->access_token, 422, 'Configure o token da API oficial antes de tornar este número principal.');
+
+        DB::transaction(function () use ($account) {
+            // Escopado pela empresa (CompanyScope) — não toca em número de outro tenant.
+            WaAccount::where('role', 'primary')->whereKeyNot($account->id)->update(['role' => 'outreach']);
+            $account->update(['role' => 'primary', 'is_active' => true]);
+        });
+
+        return response()->json(['message' => 'ok']);
     }
 
     /** Remove um número de prospecção (logout + delete na Evolution). O principal é protegido. */
@@ -527,12 +555,15 @@ class WhatsAppController extends Controller
     /**
      * Inicia (ou abre) uma conversa por número — útil para contatos que o
      * Evolution não sincronizou (sem histórico). Valida que o número existe no WhatsApp.
+     *
+     * `account_id` escolhe por qual número sair; sem ele, vai pelo principal.
      */
     public function start(Request $request)
     {
         $data = $request->validate([
             'number' => 'required|string',
             'name' => 'nullable|string|max:255',
+            'account_id' => 'nullable|integer',
         ]);
 
         $digits = preg_replace('/\D/', '', $data['number']);
@@ -543,15 +574,30 @@ class WhatsAppController extends Controller
             $digits = '55'.$digits; // assume Brasil quando vem sem código do país
         }
 
+        // Remetente: o escolhido na tela ou o principal da empresa (query escopada
+        // por tenant, então account_id de outra empresa simplesmente não existe aqui).
+        $sender = ! empty($data['account_id'])
+            ? WaAccount::find($data['account_id'])
+            : WaAccount::primary();
+        if (! $sender) {
+            return response()->json(['message' => 'Nenhum número de WhatsApp conectado.'], 422);
+        }
+
         // Confirma que o número está no WhatsApp e pega o jid canônico. A API oficial
         // não oferece essa checagem: lá a conversa é criada assim mesmo e um número
         // inválido aparece como falha de entrega no recibo.
         $jid = $digits.'@s.whatsapp.net';
-        if (! WaAccount::primary()?->isCloud()) {
-            $check = collect($this->evo()->post("/chat/whatsappNumbers/{$this->instance()}", [
-                'numbers' => [$digits],
-            ])->json());
-            $first = $check->first();
+        if (! $sender->isCloud()) {
+            $res = $this->evo()->post("/chat/whatsappNumbers/{$sender->instance}", ['numbers' => [$digits]]);
+            // Instância deslogada devolve erro, não "número inexistente" — sem esta
+            // distinção o usuário via "esse número não está no WhatsApp" e ia caçar
+            // problema no contato em vez de reconectar o aparelho.
+            if (! $res->successful()) {
+                return response()->json([
+                    'message' => "O número {$sender->name} está desconectado do WhatsApp — reconecte em Números do WhatsApp.",
+                ], 422);
+            }
+            $first = collect($res->json())->first();
             if (! is_array($first) || empty($first['exists'])) {
                 return response()->json(['message' => 'Esse número não está no WhatsApp.'], 422);
             }
@@ -570,7 +616,7 @@ class WhatsAppController extends Controller
             $conv->position = (int) (Conversation::max('position') ?? 0) + 1;
             // Carimba por qual número a conversa sai — é o que decide o canal (Evolution
             // ou API oficial) na hora de enviar.
-            $conv->wa_account_id = WaAccount::primary()?->id;
+            $conv->wa_account_id = $sender->id;
         } elseif ($name !== '') {
             $conv->name = $name;
             $conv->initials = $this->initialsOf($name);
@@ -580,7 +626,12 @@ class WhatsAppController extends Controller
         $conv->origin = 'WhatsApp';
         $conv->save(); // hook define a 1ª etapa do funil
 
-        return response()->json($conv->load('messages'), 201);
+        $conv->load('messages');
+        // Conversa nova no canal oficial já nasce fora da janela de 24h: o chat
+        // precisa saber disso para abrir os templates em vez de oferecer texto livre.
+        $conv->setAttribute('wa_cloud', $sender->isCloud());
+
+        return response()->json($conv, 201);
     }
 
     public function webhook(Request $request)
@@ -596,7 +647,7 @@ class WhatsAppController extends Controller
         // Instância desconhecida: não dá para atribuir a nenhuma empresa. Ignora com segurança
         // (NUNCA cair na principal de outra empresa — isso vazaria mensagens entre tenants).
         if (! $account || ! $account->company_id) {
-            \App\Support\Evolution::log('webhook.instancia_desconhecida', [
+            Evolution::log('webhook.instancia_desconhecida', [
                 'event' => $event,
                 'instance' => $request->input('instance'),
             ], 'error');
@@ -605,7 +656,7 @@ class WhatsAppController extends Controller
         }
 
         if (in_array($event, ['messages.update', 'messages.edit'], true)) {
-            \App\Support\Evolution::log('webhook.recebido', [
+            Evolution::log('webhook.recebido', [
                 'event' => $event,
                 'instance' => $request->input('instance'),
                 'company_id' => $account->company_id,
@@ -650,7 +701,7 @@ class WhatsAppController extends Controller
         $waId = (string) ($u['keyId'] ?? ($u['key']['id'] ?? ($u['message']['key']['id'] ?? '')));
         $raw = strtoupper((string) ($u['status'] ?? ($u['update']['status'] ?? '')));
         if ($waId === '' || $raw === '') {
-            \App\Support\Evolution::log('ack.ignorado', ['motivo' => 'sem wa_id ou sem status', 'payload' => $u], 'warning');
+            Evolution::log('ack.ignorado', ['motivo' => 'sem wa_id ou sem status', 'payload' => $u], 'warning');
 
             return;
         }
@@ -662,14 +713,14 @@ class WhatsAppController extends Controller
         ];
         $status = $map[$raw] ?? null;
         if (! $status) {
-            \App\Support\Evolution::log('ack.status_desconhecido', ['wa_id' => $waId, 'raw' => $raw], 'warning');
+            Evolution::log('ack.status_desconhecido', ['wa_id' => $waId, 'raw' => $raw], 'warning');
 
             return;
         }
 
         $msg = Message::where('wa_id', $waId)->first();
         if (! $msg || ! $msg->is_out) {
-            \App\Support\Evolution::log('ack.sem_mensagem', [
+            Evolution::log('ack.sem_mensagem', [
                 'wa_id' => $waId,
                 'status' => $status,
                 'motivo' => $msg ? 'mensagem nao e de saida' : 'nenhuma mensagem com esse wa_id',
@@ -678,7 +729,7 @@ class WhatsAppController extends Controller
             return;
         }
 
-        \App\Support\Evolution::log('ack.recebido', [
+        Evolution::log('ack.recebido', [
             'wa_id' => $waId,
             'message_id' => $msg->id,
             'conversation_id' => $msg->conversation_id,
@@ -1265,6 +1316,9 @@ class WhatsAppController extends Controller
         $full = $conversation->fresh();
         $full->setRelation('messages', $messages->take($limit)->reverse()->values());
         $full->setAttribute('messages_has_more', $hasMore);
+        // Canal oficial: o chat usa isto para saber que fora da janela de 24h só sai
+        // template aprovado (e já oferecer a lista em vez de deixar o envio falhar).
+        $full->setAttribute('wa_cloud', (bool) $conversation->account?->isCloud());
         $payload = response()->json($full);
 
         // Backfill do histórico via Evolution (até 30 páginas) é caro (~20s e era

@@ -44,10 +44,24 @@ class MeetingReminderTick extends Command
             $tenancy->set((int) $meeting->company_id);
 
             try {
-                $text = $this->buildMessage($meeting);
+                $parts = $this->messageParts($meeting);
+                $text = $this->buildMessage($parts);
 
-                $waId = ($meeting->conversation ? Wa::forConversation($meeting->conversation) : Wa::primary())
-                    ->sendText($meeting->phone, $text);
+                $channel = $meeting->conversation ? Wa::forConversation($meeting->conversation) : Wa::primary();
+
+                // Na API oficial o lembrete quase sempre cai fora da janela de 24h (a reunião
+                // foi marcada dias antes), e texto livre seria recusado — silenciosamente, já
+                // que o tick só reclama no log. Nesse caso vai por template aprovado, que é o
+                // caminho que a Meta oferece para avisar o cliente fora da janela.
+                $waId = $channel->canSendFreeform($meeting->conversation?->lastInboundTs())
+                    ? $channel->sendText($meeting->phone, $text)
+                    : $channel->sendTemplate(
+                        $meeting->phone,
+                        (string) config('services.meeting_reminder.template'),
+                        (string) config('services.meeting_reminder.template_language', 'pt_BR'),
+                        [$parts['nome'], $parts['quando'], $parts['link']],
+                    );
+
                 if ($waId === null) {
                     $this->warn("lembrete: falha ao enviar reunião {$meeting->id} ({$meeting->phone})");
 
@@ -88,8 +102,12 @@ class MeetingReminderTick extends Command
         return self::SUCCESS;
     }
 
-    /** Monta o texto do lembrete (servidor — garante que o horário bate com o agendado). */
-    private function buildMessage(Meeting $meeting): string
+    /**
+     * Pedaços do lembrete (servidor — garante que o horário bate com o agendado).
+     * São exatamente as 3 variáveis do template da Meta, para o cliente ler a mesma
+     * coisa venha o aviso por texto livre ou por template.
+     */
+    private function messageParts(Meeting $meeting): array
     {
         $tz = config('app.timezone', 'America/Sao_Paulo');
         $start = Carbon::parse($meeting->starts_at)->setTimezone($tz);
@@ -97,7 +115,6 @@ class MeetingReminderTick extends Command
         $nome = trim((string) ($meeting->conversation->name ?? ''));
         $firstName = $nome !== '' ? (preg_split('/\s+/', $nome)[0] ?? '') : '';
         $hasName = $firstName !== '' && ! preg_match('/^\+?\d+$/', $firstName);
-        $saudacao = $hasName ? "Oi, {$firstName}! 👋" : 'Oi! 👋';
 
         // "hoje às 14:00" / "amanhã às 14:00" / "na quinta, 20/06 às 14:00"
         $hora = $start->format('H:i');
@@ -111,11 +128,21 @@ class MeetingReminderTick extends Command
             $quando = 'na '.$start->locale('pt_BR')->isoFormat('dddd, DD/MM')." às {$hora}";
         }
 
-        $msg = "{$saudacao} Passando pra lembrar da nossa reunião {$quando}. Até logo! 😊";
-        if ($meeting->meet_link) {
-            $msg .= "\n\nLink do Google Meet: {$meeting->meet_link}";
-        }
+        return [
+            // Variável de template não pode ir vazia: sem nome, vira uma saudação neutra.
+            'nome' => $hasName ? $firstName : 'tudo bem',
+            'quando' => $quando,
+            'link' => $meeting->meet_link
+                ? "Link do Google Meet: {$meeting->meet_link}"
+                : 'Qualquer coisa, é só me chamar por aqui.',
+        ];
+    }
 
-        return $msg;
+    /** Texto livre (dentro da janela de 24h) — mesmo conteúdo do template. */
+    private function buildMessage(array $parts): string
+    {
+        return "Oi, {$parts['nome']}! 👋 Passando pra lembrar da nossa reunião {$parts['quando']}."
+            ."\n\n{$parts['link']}"
+            ."\n\nAté logo! 😊";
     }
 }

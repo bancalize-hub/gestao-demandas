@@ -70,6 +70,11 @@ return [
     'meeting_reminder' => [
         'enabled' => env('MEETING_REMINDER_ENABLED', true),
         'lead_minutes' => (int) env('MEETING_REMINDER_LEAD_MINUTES', 60), // quanto antes lembrar (padrão: 1h)
+        // Número na API oficial: 1h antes da reunião a janela de 24h quase sempre está
+        // fechada (o cliente marcou dias atrás), e aí a Meta só aceita TEMPLATE aprovado.
+        // O template precisa de 3 variáveis: {{1}} nome, {{2}} quando, {{3}} link/recado.
+        'template' => env('MEETING_REMINDER_TEMPLATE', 'lembrete_reuniao'),
+        'template_language' => env('MEETING_REMINDER_TEMPLATE_LANG', 'pt_BR'),
     ],
 
     // Transcrição de áudios (voice) do WhatsApp via Groq Whisper (free tier). A IA "ouve"

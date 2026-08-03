@@ -180,6 +180,7 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
     // Múltiplos números (contas): listar / criar (prospecção) / remover.
     Route::get('/wpp/accounts', [WhatsAppController::class, 'accounts']);
     Route::post('/wpp/accounts', [WhatsAppController::class, 'createAccount']);
+    Route::post('/wpp/accounts/{account}/primary', [WhatsAppController::class, 'setPrimary']);
     Route::delete('/wpp/accounts/{account}', [WhatsAppController::class, 'destroyAccount']);
 
     // API oficial (Cloud API da Meta): conectar número, diagnosticar e listar templates.

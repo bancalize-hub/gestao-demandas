@@ -625,6 +625,22 @@ function closeTemplates() {
   tplChosen.value = null
   tplError.value = ''
 }
+// Canal oficial (Cloud API): só dá para mandar texto livre até 24h depois da última
+// mensagem DO CLIENTE. Sem nenhuma entrada (conversa nova), a janela nunca esteve
+// aberta — o primeiro contato tem que ser um template aprovado.
+const lastInboundTs = computed(() => {
+  const all = conv.value?.thread || []
+  for (let i = all.length - 1; i >= 0; i--) {
+    const m: any = all[i]
+    if (!m.isOut && m.ts) return m.ts as number
+  }
+  return 0
+})
+const windowClosed = computed(() => {
+  if (!conv.value?.waCloud) return false
+  return (Date.now() / 1000 - lastInboundTs.value) >= 24 * 3600
+})
+const neverTalked = computed(() => !(conv.value?.thread || []).some((m: any) => !m.isOut))
 function useAISuggestion() {
   const el = inputRef.value
   if (el && crm.aiSuggestion) { el.value = crm.aiSuggestion; el.focus(); nextTick(autogrow) }
@@ -1134,8 +1150,8 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
         <!-- janela de 24h fechada (API oficial): só template aprovado sai daqui -->
         <div v-if="crm.templatePanel" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:14px;padding:13px;margin-bottom:9px;">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:9px;">
-            <span style="font-size:13.5px;font-weight:800;">⏳ Janela de 24h fechada</span>
-            <span style="flex:1;font-size:12px;color:var(--c-text-muted);">o cliente não escreve há mais de 24h — envie um template aprovado</span>
+            <span style="font-size:13.5px;font-weight:800;">{{ neverTalked ? '🚀 Iniciar conversa' : '⏳ Janela de 24h fechada' }}</span>
+            <span style="flex:1;font-size:12px;color:var(--c-text-muted);">{{ neverTalked ? 'no número oficial, o primeiro contato tem que ser um template aprovado' : 'o cliente não escreve há mais de 24h — envie um template aprovado' }}</span>
             <button title="Fechar" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:16px;" @click="closeTemplates">✕</button>
           </div>
 
@@ -1173,6 +1189,16 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
               </div>
             </div>
           </template>
+        </div>
+
+        <!-- aviso permanente: canal oficial com a janela fechada. Texto livre não sai
+             daqui, então a saída (template) fica a um clique, sem precisar errar antes. -->
+        <div v-if="windowClosed && !crm.templatePanel" style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;background:rgba(255,176,32,.1);border:1px solid rgba(255,176,32,.28);border-radius:12px;padding:9px 12px;margin-bottom:9px;">
+          <span style="flex:1;min-width:180px;font-size:12.5px;color:var(--c-text-secondary);line-height:1.45;">
+            <b>{{ neverTalked ? 'Conversa nova no número oficial' : 'Janela de 24h fechada' }}</b> —
+            {{ neverTalked ? 'a primeira mensagem' : 'para retomar, a mensagem' }} tem que ser um template aprovado pela Meta.
+          </span>
+          <button style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 13px;border-radius:9px;cursor:pointer;flex-shrink:0;" @click="crm.openTemplates()">Escolher template</button>
         </div>
 
         <!-- barra de citação (responder) -->

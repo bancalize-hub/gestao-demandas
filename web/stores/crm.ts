@@ -73,6 +73,7 @@ export interface Conversation {
   interactions: Interaction[]
   thread: Msg[]
   threadHasMore: boolean // há mensagens mais antigas no servidor (paginação da thread)
+  waCloud: boolean // sai pela API oficial da Meta → vale a janela de 24h / templates
 }
 
 export interface Deal {
@@ -258,6 +259,7 @@ function mapConv(c: any): Conversation {
     interactions: c.interactions ?? [],
     thread: (c.messages ?? []).map(mapMsg),
     threadHasMore: !!c.messages_has_more,
+    waCloud: !!c.wa_cloud, // só vem no /full e no /wpp/start (a lista não carrega a conta)
   }
 }
 function mapMsg(m: any): Msg {
@@ -435,8 +437,9 @@ export const useCrmStore = defineStore('crm', {
         const mapped = mapConv(r)
         const existing = byId.get(mapped.id)
         if (!existing) return mapped
-        // A lista não traz mais a thread (só a última msg); preserva a que já está carregada.
-        Object.assign(existing, mapped, { thread: existing.thread, threadHasMore: existing.threadHasMore })
+        // A lista não traz mais a thread (só a última msg) nem o canal; preserva o que já
+        // está carregado — senão a conversa aberta "esquece" que é da API oficial.
+        Object.assign(existing, mapped, { thread: existing.thread, threadHasMore: existing.threadHasMore, waCloud: existing.waCloud })
         // Conversa aberta recebeu mensagem nova? (última do servidor != última carregada)
         if (existing.id === this.activeId && r.last_message) {
           const lastLoaded = [...existing.thread].reverse().find(o => o.id)
@@ -505,8 +508,12 @@ export const useCrmStore = defineStore('crm', {
           const prev = conv.thread
           conv.thread = (c.messages ?? []).map(mapMsg)
           conv.threadHasMore = !!c.messages_has_more
+          conv.waCloud = !!c.wa_cloud
           const newest = conv.thread.length ? (conv.thread[conv.thread.length - 1].ts ?? 0) : 0
           mergeIncoming(conv, prev.filter(m => !m.id || (m.ts ?? 0) >= newest))
+          // Conversa nova no canal oficial: não existe janela de 24h para abrir texto
+          // livre, então já traz a lista de templates em vez de deixar o envio falhar.
+          if (conv.waCloud && !conv.thread.length && this.activeId === id) this.openTemplates()
         }
       }
       catch { if (!force) fullLoaded.delete(id) }
@@ -553,7 +560,7 @@ export const useCrmStore = defineStore('crm', {
         this.conversations.unshift(conv)
       }
       else {
-        Object.assign(conv, mapConv(row), { thread: conv.thread, threadHasMore: conv.threadHasMore })
+        Object.assign(conv, mapConv(row), { thread: conv.thread, threadHasMore: conv.threadHasMore, waCloud: conv.waCloud })
         // Conversa com mensagem nova sobe pro topo (mesma ordem do servidor).
         const idx = this.conversations.indexOf(conv)
         if (idx > 0) {
@@ -602,7 +609,8 @@ export const useCrmStore = defineStore('crm', {
       try {
         const row = await api()<any>(`/api/conversations/${slug}`)
         const conv = this.conversations.find(c => c.id === slug)
-        if (conv) Object.assign(conv, mapConv(row), { thread: conv.thread, threadHasMore: conv.threadHasMore })
+        // waCloud não vem na linha da lista: preserva o que o /full já descobriu.
+        if (conv) Object.assign(conv, mapConv(row), { thread: conv.thread, threadHasMore: conv.threadHasMore, waCloud: conv.waCloud })
         else this.conversations.unshift(mapConv(row))
         this.linkContactNames()
       }
@@ -619,6 +627,7 @@ export const useCrmStore = defineStore('crm', {
       this.chatOpen = true
       this.threadError = false
       this.aiSuggestion = ''
+      this.templatePanel = false // o painel é da conversa anterior
       const c = this.conversations.find(x => x.id === id)
       // Thread em cache aparece NA HORA; só o delta vem da rede. Sem cache, carrega a última página.
       if (c && c.thread.some(m => m.id)) this.syncThread(id)
@@ -997,7 +1006,8 @@ export const useCrmStore = defineStore('crm', {
       this.go('chat')
     },
     // Inicia/abre uma conversa por número (contatos sem histórico no Evolution).
-    async startConversation(payload: { number: string, name?: string }) {
+    // account_id escolhe o número remetente; sem ele, sai pelo principal.
+    async startConversation(payload: { number: string, name?: string, account_id?: number }) {
       const created = await api()<any>('/api/wpp/start', { method: 'POST', body: payload })
       const mapped = mapConv(created)
       const idx = this.conversations.findIndex(c => c.id === mapped.id)
@@ -1005,6 +1015,8 @@ export const useCrmStore = defineStore('crm', {
       else this.conversations.unshift(mapped)
       this.activeId = mapped.id
       this.chatOpen = true
+      // Sem histórico e no canal oficial → a conversa só começa por template.
+      if (mapped.waCloud && !mapped.thread.length) this.openTemplates()
       return mapped
     },
 

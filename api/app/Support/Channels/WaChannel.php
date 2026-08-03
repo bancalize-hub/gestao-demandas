@@ -63,6 +63,13 @@ interface WaChannel
      */
     public function canSendFreeform(?int $lastInboundTs): bool;
 
+    /**
+     * Envia um template aprovado — o único caminho fora da janela de 24h.
+     * Devolve o id da mensagem no WhatsApp, ou null se o canal não tem templates
+     * (Evolution) ou a Meta recusou.
+     */
+    public function sendTemplate(string $number, string $name, string $language = 'pt_BR', array $bodyParams = [], array $headerParams = []): ?string;
+
     /** Marca as mensagens do cliente como lidas no WhatsApp dele (best-effort). */
     public function markRead(string $waId): bool;
 }

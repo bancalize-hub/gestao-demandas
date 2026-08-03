@@ -115,6 +115,18 @@ async function removeAccount(acc: Account) {
   }
   catch (e: any) { alert(e?.response?._data?.message || 'Falha ao remover.') }
 }
+// Alterna o canal em uso: o principal é quem atende os leads com IA e sai como
+// remetente das conversas iniciadas pelo CRM. Trocar aqui = trocar oficial ↔ Evolution.
+async function makePrimary(acc: Account) {
+  if (acc.role === 'primary') return
+  const canal = acc.provider === 'cloud' ? 'API oficial da Meta' : 'Evolution (não-oficial)'
+  if (!confirm(`Passar a falar pelo número "${acc.name}" (${canal})?\n\nEle vira o principal: atende os leads com IA e é o remetente das conversas iniciadas pelo CRM. O número atual volta a ser de prospecção.`)) return
+  try {
+    await api(`/api/wpp/accounts/${acc.id}/primary`, { method: 'POST' })
+    await loadAccounts()
+  }
+  catch (e: any) { alert(e?.response?._data?.message || 'Falha ao trocar o número principal.') }
+}
 async function disconnect(acc: Account) {
   if (!confirm(`Desconectar o WhatsApp de "${acc.name}"?`)) return
   try { await api(`/api/wpp/logout?account=${acc.id}`, { method: 'DELETE' }) }
@@ -289,6 +301,7 @@ function stateColor(s: string) {
                 </div>
               </div>
               <div style="display:flex;gap:8px;flex-shrink:0;">
+                <button v-if="acc.role !== 'primary'" title="Passar a falar por este número (troca entre API oficial e Evolution)" style="background:rgba(124,108,245,.16);border:none;color:var(--c-ai-soft);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 14px;border-radius:9px;cursor:pointer;" @click="makePrimary(acc)">Tornar principal</button>
                 <button v-if="acc.provider === 'cloud'" style="background:var(--c-surface-2);border:none;color:var(--c-text);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 14px;border-radius:9px;cursor:pointer;" @click="openCloudForm(acc)">Credenciais</button>
                 <button v-if="acc.provider !== 'cloud' && acc.state !== 'open' && connectingId !== acc.id" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 14px;border-radius:9px;cursor:pointer;" @click="openConnect(acc)">Conectar</button>
                 <button v-if="acc.state === 'open'" style="background:rgba(255,77,77,.1);border:1px solid rgba(255,77,77,.25);color:var(--c-danger-soft);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 12px;border-radius:9px;cursor:pointer;" @click="disconnect(acc)">Desconectar</button>

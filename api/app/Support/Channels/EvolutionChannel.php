@@ -88,6 +88,12 @@ class EvolutionChannel implements WaChannel
         return true;
     }
 
+    /** Não existe template no canal não-oficial — aqui texto livre sempre sai. */
+    public function sendTemplate(string $number, string $name, string $language = 'pt_BR', array $bodyParams = [], array $headerParams = []): ?string
+    {
+        return null;
+    }
+
     /** A Evolution marca como lido por chat, não por mensagem; não usamos aqui. */
     public function markRead(string $waId): bool
     {

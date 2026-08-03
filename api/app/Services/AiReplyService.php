@@ -131,7 +131,7 @@ class AiReplyService
 
         $regraConvite = ($jaConvidou && ! $leadTocouNoAssunto)
             ? '- Você JÁ convidou para a reunião e o lead não respondeu sobre isso. NÃO convide de novo nesta mensagem: '
-                .'responda só o que ele perguntou e pare por aí. Insistir a cada mensagem afasta o lead.'
+                .'fique no assunto que ele levantou e pare por aí. Insistir a cada mensagem afasta o lead.'
             : '- Se fizer sentido, convide para a reunião UMA vez — nunca em duas mensagens seguidas.';
 
         // Materiais (PDF etc.): a IA recebe a lista com o "quando" de cada um e decide se
@@ -149,9 +149,14 @@ class AiReplyService
                 ."que você já enviou nesta conversa.\n";
         }
 
-        $task = ($instruction && $previous)
-            ? "Você ia mandar esta mensagem:\n\"{$previous}\"\n\nReescreva-a aplicando este ajuste pedido pelo atendente: \"{$instruction}\". Mantenha o estilo, as regras, o conhecimento e o objetivo da etapa."
-            : 'Escreva a próxima mensagem do Atendente.';
+        // Três modos: reescrever uma mensagem com o ajuste pedido, escrever sob uma instrução
+        // específica (follow-up, retomada ativa) ou simplesmente responder o lead.
+        // Instrução sem `previous` era ignorada em silêncio — o follow-up caía na genérica.
+        $task = match (true) {
+            $instruction && $previous => "Você ia mandar esta mensagem:\n\"{$previous}\"\n\nReescreva-a aplicando este ajuste pedido pelo atendente: \"{$instruction}\". Mantenha o estilo, as regras, o conhecimento e o objetivo da etapa.",
+            (bool) $instruction => $instruction,
+            default => 'Escreva a próxima mensagem do Atendente.',
+        };
 
         $prompt = <<<TXT
         Você é o ATENDENTE escrevendo a próxima mensagem para um lead no WhatsApp.

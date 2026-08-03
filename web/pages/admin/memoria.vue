@@ -131,18 +131,25 @@ function fmtSize(b: number) {
   return b > 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`
 }
 
-// ---- IA automática para leads novos (veio da antiga tela de Automações) ----
+// ---- IA automática para leads novos + retomada ativa (veio da antiga tela de Automações) ----
+type AutomationSettings = { auto_reply_new_leads: boolean, nudge_enabled: boolean }
 const autoReplyNewLeads = ref(false)
+const nudgeEnabled = ref(false)
 const savingSetting = ref(false)
+const savingNudge = ref(false)
 async function loadSettings() {
-  try { autoReplyNewLeads.value = (await api<{ auto_reply_new_leads: boolean }>('/api/automation-settings')).auto_reply_new_leads }
+  try {
+    const r = await api<AutomationSettings>('/api/automation-settings')
+    autoReplyNewLeads.value = r.auto_reply_new_leads
+    nudgeEnabled.value = r.nudge_enabled
+  }
   catch { /* */ }
 }
 async function toggleAutoReplyNewLeads() {
   if (savingSetting.value) return
   savingSetting.value = true
   try {
-    const r = await api<{ auto_reply_new_leads: boolean }>('/api/automation-settings', {
+    const r = await api<AutomationSettings>('/api/automation-settings', {
       method: 'PATCH',
       body: { auto_reply_new_leads: !autoReplyNewLeads.value },
     })
@@ -150,6 +157,19 @@ async function toggleAutoReplyNewLeads() {
   }
   catch (e: any) { alert(e?.response?._data?.message || 'Não consegui salvar.') }
   finally { savingSetting.value = false }
+}
+async function toggleNudge() {
+  if (savingNudge.value) return
+  savingNudge.value = true
+  try {
+    const r = await api<AutomationSettings>('/api/automation-settings', {
+      method: 'PATCH',
+      body: { nudge_enabled: !nudgeEnabled.value },
+    })
+    nudgeEnabled.value = r.nudge_enabled
+  }
+  catch (e: any) { alert(e?.response?._data?.message || 'Não consegui salvar.') }
+  finally { savingNudge.value = false }
 }
 
 // Sanfona: a página junta conexão da IA, materiais, times, voz, regras e 70+ conhecimentos.
@@ -414,6 +434,25 @@ onMounted(() => { load(); loadAi(); loadMaterials(); loadSettings() })
               @click="toggleAutoReplyNewLeads"
             >
               <span :style="{ position: 'absolute', top: '3px', left: autoReplyNewLeads ? '25px' : '3px', width: '24px', height: '24px', borderRadius: '50%', background: 'var(--c-on-accent)', transition: 'left .15s' }" />
+            </button>
+          </div>
+
+          <!-- retomada ativa: a IA vai atrás de quem sumiu -->
+          <div style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:16px;padding:22px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+            <div style="flex:1;min-width:200px;">
+              <div style="font-size:15px;font-weight:800;">IA busca o lead que sumiu</div>
+              <div style="font-size:12.5px;color:var(--c-text-muted);margin-top:3px;line-height:1.5;">
+                Parou de responder no meio da conversa? A IA retoma sozinha: 30 minutos depois (enquanto a conversa está
+                quente), no dia seguinte, 3 dias depois e uma semana depois — sempre em horário comercial e mudando de
+                abordagem. Volta a zero assim que ele responde.
+              </div>
+            </div>
+            <button
+              :disabled="savingNudge"
+              :style="{ width: '52px', height: '30px', borderRadius: '20px', border: 'none', cursor: savingNudge ? 'default' : 'pointer', position: 'relative', flexShrink: 0, background: nudgeEnabled ? 'var(--accent)' : 'var(--c-surface-3)', opacity: savingNudge ? 0.6 : 1, transition: 'background .15s' }"
+              @click="toggleNudge"
+            >
+              <span :style="{ position: 'absolute', top: '3px', left: nudgeEnabled ? '25px' : '3px', width: '24px', height: '24px', borderRadius: '50%', background: 'var(--c-on-accent)', transition: 'left .15s' }" />
             </button>
           </div>
 

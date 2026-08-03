@@ -17,6 +17,7 @@ use App\Http\Controllers\Api\LabelController;
 use App\Http\Controllers\Api\LeadActivityController;
 use App\Http\Controllers\Api\MaterialController;
 use App\Http\Controllers\Api\MemoryController;
+use App\Http\Controllers\Api\MarketingController;
 use App\Http\Controllers\Api\MessageController;
 use App\Http\Controllers\Api\QuickReplyController;
 use App\Http\Controllers\Api\StageAutomationController;
@@ -109,6 +110,17 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
         Route::post('/agent/sessions/{session}/messages', [AgentController::class, 'message']);
         Route::get('/agent/jobs/{job}', [AgentController::class, 'job']);
         Route::post('/agent/jobs/{job}/stop', [AgentController::class, 'stop']);
+
+        // Marketing: credencial do Facebook Ads + biblioteca de criativos. O terminal
+        // do agente de marketing usa as rotas /agent acima (sessões com kind=marketing).
+        Route::get('/marketing/status', [MarketingController::class, 'status']);
+        Route::post('/marketing/credentials', [MarketingController::class, 'salvar']);
+        Route::post('/marketing/test', [MarketingController::class, 'testar']);
+        Route::get('/marketing/creatives', [MarketingController::class, 'criativos']);
+        Route::post('/marketing/creatives', [MarketingController::class, 'subirCriativo']);
+        Route::patch('/marketing/creatives/{creative}', [MarketingController::class, 'atualizarCriativo']);
+        Route::delete('/marketing/creatives/{creative}', [MarketingController::class, 'apagarCriativo']);
+        Route::get('/marketing/creatives/{creative}/arquivo', [MarketingController::class, 'arquivo']);
     });
 
     Route::get('/stages', [StageController::class, 'index']);

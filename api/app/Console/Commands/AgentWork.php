@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\AgentJob;
+use App\Models\AgentSession;
 use App\Support\Claude;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
@@ -20,10 +21,31 @@ class AgentWork extends Command
 
     private const RUN_AS = 'gestao-agent';
 
+    /** O agente de marketing roda como www-data: seu servidor MCP é um artisan. */
+    private const RUN_AS_MARKETING = 'www-data';
+
     private const CLAUDE = '/usr/local/bin/claude';
 
     /** Espelho do token do painel, legível só pelo gestao-agent (ver sincronizaCredencial). */
     private const TOKEN_FILE = '/home/'.self::RUN_AS.'/.claude-token';
+
+    /**
+     * Ferramentas nativas bloqueadas no agente de marketing.
+     *
+     * NÃO simplifique isto para só `--tools ""`: testado em 03/08/2026, `--tools ""`
+     * sozinho ainda deixou Monitor, PushNotification e RemoteTrigger de pé — e o
+     * Monitor executa comando de shell (o agente rodou `grep` no servidor no teste).
+     * A lista explícita é o que zera de fato (`tools: []` no evento de init).
+     * Ao atualizar o CLI, conferir se surgiu ferramenta nova: rode um `claude -p`
+     * sem restrição e compare o array `tools` do evento system/init com esta lista.
+     */
+    private const NATIVAS_BLOQUEADAS = [
+        'Task', 'AskUserQuestion', 'Bash', 'CronCreate', 'CronDelete', 'CronList', 'DesignSync',
+        'Edit', 'EnterPlanMode', 'EnterWorktree', 'ExitPlanMode', 'ExitWorktree', 'Monitor',
+        'NotebookEdit', 'PushNotification', 'Read', 'RemoteTrigger', 'ScheduleWakeup', 'Skill',
+        'TaskCreate', 'TaskGet', 'TaskList', 'TaskOutput', 'TaskStop', 'TaskUpdate', 'ToolSearch',
+        'WebFetch', 'WebSearch', 'Workflow', 'Write',
+    ];
 
     public function handle(): int
     {
@@ -51,24 +73,75 @@ class AgentWork extends Command
      * Aqui o token do painel (o mesmo do resto da IA, trocável em Admin → Memória, sem SSH)
      * é espelhado num arquivo que só o gestao-agent lê, e o comando o exporta na hora.
      */
-    private function sincronizaCredencial(): bool
+    private function sincronizaCredencial(string $usuario, string $arquivo): bool
     {
         $token = Claude::token();
         if (! $token) {
             return false;
         }
 
-        if (! is_file(self::TOKEN_FILE) || trim((string) @file_get_contents(self::TOKEN_FILE)) !== $token) {
+        if (! is_file($arquivo) || trim((string) @file_get_contents($arquivo)) !== $token) {
             // Fecha as permissões ANTES de escrever: um arquivo 0644 com o token, mesmo
             // por um instante, é o tipo de janela que não precisa existir.
-            touch(self::TOKEN_FILE);
-            @chmod(self::TOKEN_FILE, 0600);
-            file_put_contents(self::TOKEN_FILE, $token."\n");
-            @chown(self::TOKEN_FILE, self::RUN_AS);
-            @chgrp(self::TOKEN_FILE, self::RUN_AS);
+            touch($arquivo);
+            @chmod($arquivo, 0600);
+            file_put_contents($arquivo, $token."\n");
+            @chown($arquivo, $usuario);
+            @chgrp($arquivo, $usuario);
         }
 
         return true;
+    }
+
+    /**
+     * Agente de MARKETING: mesma tela e mesmo streaming, superfície completamente
+     * diferente. `--tools ""` desliga TODAS as ferramentas nativas (sem bash, sem ler
+     * ou escrever arquivo, sem web) e o `--strict-mcp-config` faz o CLI ignorar
+     * qualquer MCP configurado em outro lugar. Sobra exatamente o servidor fbads —
+     * cujas ferramentas criam tudo PAUSADO. Sem `--dangerously-skip-permissions`:
+     * o allowlist abaixo é a única autorização que existe.
+     *
+     * Roda como www-data (não gestao-agent) porque o servidor MCP é um `artisan` e
+     * precisa do .env e do storage do Laravel — que são de www-data.
+     */
+    private function comandoMarketing(AgentSession $session, string $tokenFile): array
+    {
+        $mcp = json_encode(['mcpServers' => ['fbads' => [
+            'command' => PHP_BINARY,
+            'args' => [base_path('artisan'), 'fbads:mcp', '--company='.(int) $session->company_id],
+        ]]], JSON_UNESCAPED_SLASHES);
+
+        $permitidas = implode(',', array_map(
+            fn ($t) => 'mcp__fbads__'.$t,
+            ['conta_status', 'listar_criativos', 'listar_campanhas', 'criar_campanha', 'criar_conjunto', 'criar_anuncio', 'metricas'],
+        ));
+
+        $sistema = 'Você é o agente de marketing deste CRM e cuida da conta de Facebook Ads do usuário. '
+            .'Fale português do Brasil, direto e sem enrolação. Você NÃO tem acesso a shell, arquivos ou internet: '
+            .'suas únicas ações são as ferramentas mcp__fbads__*. Tudo que você criar nasce PAUSADO por decisão do '
+            .'usuário — nunca prometa que algo está no ar, e ao terminar diga que ele precisa revisar e publicar. '
+            .'Antes de criar um anúncio, use listar_criativos: as imagens são as que ele subiu pela tela, chamadas '
+            .'"Criativo 1", "Criativo 2" e assim por diante. Orçamento vai na campanha OU no conjunto, nunca nos dois. '
+            .'Se faltar informação essencial (objetivo, público, orçamento, link), pergunte em vez de inventar.';
+
+        $args = self::CLAUDE.' -p --output-format stream-json --verbose'
+            .' --tools ""'
+            .' --disallowedTools '.escapeshellarg(implode(',', self::NATIVAS_BLOQUEADAS))
+            .' --mcp-config '.escapeshellarg($mcp)
+            .' --strict-mcp-config'
+            .' --allowedTools '.escapeshellarg($permitidas)
+            .' --append-system-prompt '.escapeshellarg($sistema);
+
+        $sid = $session->claude_session_id;
+        if ($sid && preg_match('/^[A-Za-z0-9\-]{8,}$/', $sid)) {
+            $args .= ' --resume '.escapeshellarg($sid);
+        }
+
+        $inner = 'export CLAUDE_CODE_OAUTH_TOKEN="$(cat '.escapeshellarg($tokenFile).')"; '
+            .'export HOME='.escapeshellarg(storage_path('app/claude-home')).'; '
+            .'cd '.escapeshellarg(base_path()).' && exec '.$args;
+
+        return ['sudo', '-u', self::RUN_AS_MARKETING, 'bash', '-lc', $inner];
     }
 
     private function runJob(AgentJob $job): void
@@ -76,10 +149,11 @@ class AgentWork extends Command
         $session = $job->session;
         $job->update(['status' => 'running', 'started_at' => now(), 'output' => '']);
 
-        $cwd = $session->cwd ?: '/var/www/gestao';
-        $sid = $session->claude_session_id;
+        $marketing = $session->kind === 'marketing';
+        $usuario = $marketing ? self::RUN_AS_MARKETING : self::RUN_AS;
+        $tokenFile = $marketing ? storage_path('app/claude-token-www') : self::TOKEN_FILE;
 
-        if (! $this->sincronizaCredencial()) {
+        if (! $this->sincronizaCredencial($usuario, $tokenFile)) {
             $job->update([
                 'status' => 'error',
                 'error' => 'Nenhum token da IA configurado. Vá em Admin → Memória → Conexão da IA e conecte.',
@@ -89,15 +163,22 @@ class AgentWork extends Command
             return;
         }
 
-        // Comando: roda como gestao-agent; prompt vai por STDIN (sem injeção). cwd/sid são escapados.
-        $claudeArgs = self::CLAUDE.' -p --output-format stream-json --verbose --dangerously-skip-permissions';
-        if ($sid && preg_match('/^[A-Za-z0-9\-]{8,}$/', $sid)) {
-            $claudeArgs .= ' --resume '.escapeshellarg($sid);
+        if ($marketing) {
+            $cmd = $this->comandoMarketing($session, $tokenFile);
+        } else {
+            $cwd = $session->cwd ?: '/var/www/gestao';
+            $sid = $session->claude_session_id;
+
+            // Comando: roda como gestao-agent; prompt vai por STDIN (sem injeção). cwd/sid são escapados.
+            $claudeArgs = self::CLAUDE.' -p --output-format stream-json --verbose --dangerously-skip-permissions';
+            if ($sid && preg_match('/^[A-Za-z0-9\-]{8,}$/', $sid)) {
+                $claudeArgs .= ' --resume '.escapeshellarg($sid);
+            }
+            // O token vai por ARQUIVO, não por argumento: em `ps` a linha de comando é pública.
+            $inner = 'export CLAUDE_CODE_OAUTH_TOKEN="$(cat '.escapeshellarg($tokenFile).')"; '
+                .'cd '.escapeshellarg($cwd).' && exec '.$claudeArgs;
+            $cmd = ['sudo', '-u', $usuario, '-H', 'bash', '-lc', $inner];
         }
-        // O token vai por ARQUIVO, não por argumento: em `ps` a linha de comando é pública.
-        $inner = 'export CLAUDE_CODE_OAUTH_TOKEN="$(cat '.escapeshellarg(self::TOKEN_FILE).')"; '
-            .'cd '.escapeshellarg($cwd).' && exec '.$claudeArgs;
-        $cmd = ['sudo', '-u', self::RUN_AS, '-H', 'bash', '-lc', $inner];
 
         $descriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
         $proc = proc_open($cmd, $descriptors, $pipes);
@@ -210,6 +291,27 @@ class AgentWork extends Command
         $this->info("job {$job->id} concluído");
     }
 
+    /** "nome=Tráfego · objetivo=OUTCOME_TRAFFIC" — o suficiente para auditar sem abrir nada. */
+    private function resumoArgs(array $in): string
+    {
+        $partes = [];
+        foreach ($in as $chave => $valor) {
+            if (is_array($valor)) {
+                $valor = implode('/', array_map(fn ($v) => is_scalar($v) ? (string) $v : '…', $valor));
+            }
+            $valor = trim((string) $valor);
+            if ($valor === '') {
+                continue;
+            }
+            $partes[] = $chave.'='.mb_strimwidth(preg_replace('/\s+/', ' ', $valor) ?? '', 0, 60, '…');
+            if (count($partes) >= 4) {
+                break;
+            }
+        }
+
+        return $partes ? ' '.implode(' · ', $partes) : '';
+    }
+
     /** Converte um evento stream-json numa linha legível; devolve [texto, session_id?]. */
     private function renderEvent(string $line): array
     {
@@ -236,6 +338,10 @@ class AgentWork extends Command
                     $in = $block['input'] ?? [];
                     if ($name === 'Bash' && isset($in['command'])) {
                         $out .= "\n$ ".$in['command']."\n";
+                    } elseif (str_starts_with($name, 'mcp__fbads__')) {
+                        // Ferramenta do agente de marketing: o nome cru (mcp__fbads__criar_campanha)
+                        // e um input vazio não dizem nada na tela — mostra a ação e os argumentos.
+                        $out .= "\n[".substr($name, 12).$this->resumoArgs($in)."]\n";
                     } else {
                         $brief = $in['file_path'] ?? ($in['path'] ?? ($in['pattern'] ?? ''));
                         $out .= "\n[".$name.($brief ? ' '.$brief : '')."]\n";

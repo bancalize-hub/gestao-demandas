@@ -53,7 +53,7 @@ function save(field: keyof typeof form) {
 const inputStyle = 'background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:9px;padding:8px 11px;color:var(--c-text);font-family:inherit;font-size:13.5px;font-weight:600;outline:none;text-align:right;width:170px;'
 
 // --- Linha do tempo de atividades (real) ---
-const ACT_COLOR: Record<string, string> = { nota: 'var(--c-info)', etapa: 'var(--c-ai)', reuniao: 'var(--accent)', followup: 'var(--c-warn)', whatsapp: 'var(--accent)' }
+const ACT_COLOR: Record<string, string> = { nota: 'var(--c-info)', etapa: 'var(--c-ai)', reuniao: 'var(--accent)', followup: 'var(--c-warn)', whatsapp: 'var(--accent)', nudge: 'var(--c-ai)' }
 function actColor(t: string) { return ACT_COLOR[t] ?? 'var(--c-text-muted)' }
 function fmtWhen(iso: string) {
   if (!iso) return ''

@@ -32,6 +32,13 @@ Schedule::command('auto-reply:tick')
     ->everyMinute()
     ->withoutOverlapping();
 
+// Retomada ativa: a IA vai atrás do lead que sumiu no meio da conversa (até 3 mensagens
+// com espaçamento crescente, só em horário comercial). A cada 5 min basta — o gatilho é
+// silêncio de horas/dias, não a mensagem que acabou de chegar.
+Schedule::command('nudge:tick')
+    ->everyFiveMinutes()
+    ->withoutOverlapping();
+
 // Lembrete de reunião: avisa o cliente pelo WhatsApp X min antes de começar (padrão 1h).
 Schedule::command('meetings:remind-tick')
     ->everyMinute()

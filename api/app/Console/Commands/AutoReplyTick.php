@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Services\AiReplyService;
 use App\Services\MeetingScheduler;
 use App\Services\TranscriptionService;
+use App\Support\Claude;
 use App\Support\Evolution;
 use App\Support\Realtime;
 use App\Support\Tenancy;
@@ -52,6 +53,34 @@ class AutoReplyTick extends Command
                 // Dono da agenda Google DESTA empresa (conta usada para marcar as reuniões).
                 $googleUser = User::where('company_id', $conv->company_id)
                     ->whereNotNull('google_refresh_token')->first();
+
+                // IA fora do ar (ex.: token revogado): não adianta rodar as 30 conversas
+                // pendentes a cada 2 min. Espera a trégua do circuit breaker.
+                if ($motivo = Claude::indisponivel()) {
+                    $conv->update(['auto_reply_due_at' => now()->addMinutes(10)]);
+                    Evolution::log('auto_reply.ia_fora_do_ar', [
+                        'conversation_id' => $conv->id,
+                        'motivo' => $motivo,
+                    ], 'error');
+
+                    continue;
+                }
+
+                // Resposta automática MUITO atrasada (IA fora do ar, número desconectado):
+                // responder o lead horas depois é pior que não responder — ele volta para
+                // a fila humana, com registro do que aconteceu.
+                $ultimaEntrada = $conv->lastInboundTs();
+                $limite = (int) config('services.auto_reply.stale_hours', 6) * 3600;
+                if ($ultimaEntrada && (time() - $ultimaEntrada) > $limite) {
+                    $conv->update(['auto_reply_due_at' => null]);
+                    Evolution::log('auto_reply.pendencia_vencida', [
+                        'conversation_id' => $conv->id,
+                        'horas' => round((time() - $ultimaEntrada) / 3600, 1),
+                    ], 'warning');
+                    $this->warn("auto-reply: pendência vencida na conversa {$conv->id} — atendimento humano");
+
+                    continue;
+                }
 
                 // API oficial fora da janela de 24h: a Meta recusa texto livre. Sem esta
                 // guarda o tick gerava resposta com a IA (caro) e reagendava a cada 2 min
@@ -137,6 +166,10 @@ class AutoReplyTick extends Command
 
                 if ($reply === null || trim($reply) === '') {
                     $conv->update(['auto_reply_due_at' => now()->addMinutes(2)]);
+                    Evolution::log('auto_reply.ia_nao_gerou', [
+                        'conversation_id' => $conv->id,
+                        'ia_fora' => Claude::indisponivel(),
+                    ], 'error');
                     $this->warn("auto-reply: falha ao gerar para conversa {$conv->id}");
 
                     continue;

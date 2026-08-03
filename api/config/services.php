@@ -67,6 +67,12 @@ return [
     ],
 
     // Lembrete automático de reunião: a IA avisa o cliente pelo WhatsApp antes de começar.
+    // Resposta automática: pendência mais velha que isto (desde a última mensagem DO
+    // CLIENTE) é descartada em vez de responder o lead horas depois.
+    'auto_reply' => [
+        'stale_hours' => (int) env('AUTO_REPLY_STALE_HOURS', 6),
+    ],
+
     'meeting_reminder' => [
         'enabled' => env('MEETING_REMINDER_ENABLED', true),
         'lead_minutes' => (int) env('MEETING_REMINDER_LEAD_MINUTES', 60), // quanto antes lembrar (padrão: 1h)

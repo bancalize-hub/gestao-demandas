@@ -78,7 +78,10 @@ Schedule::command('meetings:attendance-tick')
 // Batimento do agendador: o painel do super-admin usa isto para dizer se o scheduler
 // está vivo. Sem ele, "os ticks pararam" só é descoberto quando alguém repara que a IA
 // não responde mais — e não dá para perguntar ao pm2, que é do root.
-Schedule::call(fn () => Cache::put('super.heartbeat', now(), 3600))
+// Grava STRING, não objeto: valor de cache com objeto dentro volta como
+// __PHP_Incomplete_Class em alguns processos e quebraria justamente a tela que se olha
+// quando o resto já está quebrado.
+Schedule::call(fn () => Cache::put('super.heartbeat', now()->toIso8601String(), 3600))
     ->everyMinute()
     ->name('super-heartbeat')
     ->withoutOverlapping();

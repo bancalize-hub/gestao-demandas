@@ -234,11 +234,22 @@ class SuperController extends Controller
      */
     private function agendador(): array
     {
-        $ultimo = Cache::get('super.heartbeat');
-        $segundos = $ultimo ? now()->diffInSeconds($ultimo, true) : null;
+        // O batimento é uma STRING ISO (ver routes/console.php). Qualquer outra coisa no
+        // cache — valor antigo, objeto que não desserializou — vira "sem batimento" em vez
+        // de derrubar a página inteira: este painel é o que se olha quando algo já quebrou.
+        $bruto = Cache::get('super.heartbeat');
+        $ultimo = null;
+        if (is_string($bruto) && $bruto !== '') {
+            try {
+                $ultimo = \Illuminate\Support\Carbon::parse($bruto);
+            } catch (\Throwable) {
+                $ultimo = null;
+            }
+        }
+        $segundos = $ultimo ? (int) now()->diffInSeconds($ultimo, true) : null;
 
         return [
-            'ultimo_tick' => $ultimo,
+            'ultimo_tick' => $ultimo?->toIso8601String(),
             'ha_segundos' => $segundos,
             // 3 min de folga: o tick é de 1 min, mas a VPS sob carga atrasa sem estar quebrada.
             'ok' => $segundos !== null && $segundos < 180,

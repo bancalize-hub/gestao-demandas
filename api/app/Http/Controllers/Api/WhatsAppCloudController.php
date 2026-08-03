@@ -663,14 +663,22 @@ class WhatsAppCloudController extends Controller
         abort_unless($account->isCloud(), 404);
 
         $templates = collect((new CloudChannel($account))->templates())
-            ->map(fn ($t) => [
-                'name' => $t['name'] ?? '',
-                'status' => $t['status'] ?? '',
-                'category' => $t['category'] ?? '',
-                'language' => $t['language'] ?? '',
-                'body' => collect($t['components'] ?? [])->firstWhere('type', 'BODY')['text'] ?? '',
-                'header' => collect($t['components'] ?? [])->firstWhere('type', 'HEADER')['text'] ?? '',
-            ])
+            ->map(function ($t) {
+                $body = collect($t['components'] ?? [])->firstWhere('type', 'BODY')['text'] ?? '';
+                // Quantas variáveis o corpo pede — a tela precisa disso para pedir um
+                // valor por {{n}}. Sem o campo, a campanha nunca oferecia os campos.
+                preg_match_all('/\{\{\s*(\d+)\s*\}\}/', $body, $vars);
+
+                return [
+                    'name' => $t['name'] ?? '',
+                    'status' => $t['status'] ?? '',
+                    'category' => $t['category'] ?? '',
+                    'language' => $t['language'] ?? '',
+                    'body' => $body,
+                    'header' => collect($t['components'] ?? [])->firstWhere('type', 'HEADER')['text'] ?? '',
+                    'params' => $vars[1] ? max(array_map('intval', $vars[1])) : 0,
+                ];
+            })
             ->values();
 
         return response()->json(['templates' => $templates]);

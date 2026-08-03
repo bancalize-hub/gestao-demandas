@@ -11,7 +11,9 @@ const search = ref('')
 // planilha importada, leads do CRM) e é o que a campanha usa no disparo.
 interface Lista { id: number, name: string, kind: string, contacts_count: number }
 const listas = ref<Lista[]>([])
-const listaAtiva = ref<number | null>(null) // null = todos
+// null = tela de cards (as listas). 'todos' ou o id = dentro de uma lista, vendo contatos.
+const vendo = ref<number | 'todos' | null>(null)
+const listaAtiva = computed(() => typeof vendo.value === 'number' ? vendo.value : null)
 const totalGeral = ref(0)
 const carregando = ref(false)
 
@@ -23,13 +25,28 @@ async function carregarListas() {
   }
   catch { /* */ }
 }
-async function abrirLista(id: number | null) {
-  listaAtiva.value = id
+async function abrirLista(id: number | 'todos') {
+  vendo.value = id
+  search.value = ''
   carregando.value = true
-  try { await crm.loadContacts(id ?? undefined) }
+  try { await crm.loadContacts(typeof id === 'number' ? id : undefined) }
   finally { carregando.value = false }
 }
+function voltarParaListas() {
+  vendo.value = null
+  carregarListas()
+}
 const nomeDaLista = computed(() => listaAtiva.value ? (listas.value.find(l => l.id === listaAtiva.value)?.name || '') : 'Todos os contatos')
+const kindDaLista = computed(() => listas.value.find(l => l.id === listaAtiva.value)?.kind || '')
+
+function descricaoDaLista(kind: string) {
+  return ({
+    google: 'Sincronizada com a sua agenda do Google',
+    planilha: 'Importada de planilha',
+    crm: 'Gerada a partir das conversas do CRM',
+    anuncio: 'Se alimenta sozinha: todo lead que chega pelo anúncio entra aqui',
+  } as Record<string, string>)[kind] || 'Lista criada por você'
+}
 
 function iconeDaLista(kind: string) {
   return ({ google: '🔵', planilha: '📄', crm: '💬', anuncio: '📣' } as Record<string, string>)[kind] || '🏷️'
@@ -87,6 +104,7 @@ async function importar() {
     importOpen.value = false
     await carregarListas()
     await abrirLista(r.list.id)
+    
   }
   catch (e: any) {
     const errs = e?.response?._data?.errors
@@ -104,11 +122,11 @@ async function novaLista() {
 async function apagarLista(l: Lista) {
   if (!confirm(`Apagar a lista "${l.name}"? Os contatos continuam na agenda, só saem do grupo.`)) return
   await api(`/api/contact-lists/${l.id}`, { method: 'DELETE' }).catch(() => {})
-  if (listaAtiva.value === l.id) await abrirLista(null)
+  if (listaAtiva.value === l.id) vendo.value = null
   await carregarListas()
 }
 
-onMounted(async () => { await crm.loadContacts(); await carregarListas() })
+onMounted(carregarListas)
 
 const filtered = computed(() => {
   const q = search.value.trim().toLowerCase()
@@ -155,72 +173,106 @@ function remove() {
 </script>
 
 <template>
-  <div style="flex:1;display:flex;min-width:0;background:var(--c-bg-deep);">
-    <!-- listas -->
-    <aside style="width:230px;flex-shrink:0;border-right:1px solid var(--c-surface-1);display:flex;flex-direction:column;min-height:0;">
-      <div style="padding:20px 16px 12px;font-size:11px;font-weight:700;letter-spacing:.5px;color:var(--c-text-faint);">LISTAS</div>
-      <div style="flex:1;overflow-y:auto;padding:0 8px 8px;min-height:0;">
-        <div :style="{ display:'flex',alignItems:'center',gap:'8px',padding:'9px 10px',borderRadius:'9px',cursor:'pointer',marginBottom:'2px',background: listaAtiva===null ? 'var(--c-surface-2)' : 'transparent' }" @click="abrirLista(null)">
-          <span style="font-size:13px;">👥</span>
-          <span style="flex:1;font-size:13px;font-weight:600;">Todos</span>
-          <span style="font-size:11.5px;color:var(--c-text-faint);">{{ totalGeral }}</span>
+  <div style="flex:1;display:flex;flex-direction:column;min-width:0;background:var(--c-bg-deep);">
+    <!-- ================= CARDS DAS LISTAS ================= -->
+    <template v-if="vendo === null">
+      <div style="padding:22px 30px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--c-surface-1);flex-wrap:wrap;gap:10px;">
+        <div>
+          <div style="font-size:23px;font-weight:800;letter-spacing:-.3px;">Contatos</div>
+          <div style="font-size:13.5px;color:var(--c-text-muted);margin-top:3px;">{{ listas.length }} listas · {{ totalGeral }} contatos na agenda</div>
         </div>
-        <div v-for="l in listas" :key="l.id" class="lrow" :style="{ display:'flex',alignItems:'center',gap:'8px',padding:'9px 10px',borderRadius:'9px',cursor:'pointer',marginBottom:'2px',background: listaAtiva===l.id ? 'var(--c-surface-2)' : 'transparent' }" @click="abrirLista(l.id)">
-          <span style="font-size:13px;">{{ iconeDaLista(l.kind) }}</span>
-          <span style="flex:1;min-width:0;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ l.name }}</span>
-          <span style="font-size:11.5px;color:var(--c-text-faint);">{{ l.contacts_count }}</span>
-          <button v-if="l.kind !== 'google'" class="ldel" title="Apagar lista" style="background:none;border:none;color:var(--c-text-faint);cursor:pointer;font-size:14px;padding:0 2px;" @click.stop="apagarLista(l)">×</button>
+        <div style="display:flex;gap:8px;">
+          <button style="background:var(--c-surface-2);border:none;color:var(--c-text);font-family:inherit;font-size:13px;font-weight:700;padding:9px 15px;border-radius:10px;cursor:pointer;" @click="novaLista">+ Lista vazia</button>
+          <button class="wabtn" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:13px;font-weight:700;padding:9px 15px;border-radius:10px;cursor:pointer;" @click="abrirImport">📄 Importar lista</button>
         </div>
       </div>
-      <div style="padding:8px;border-top:1px solid var(--c-surface-1);display:flex;flex-direction:column;gap:6px;">
-        <button style="background:var(--c-surface-2);border:none;color:var(--c-text);font-family:inherit;font-size:12.5px;font-weight:600;padding:9px;border-radius:9px;cursor:pointer;" @click="abrirImport">📄 Importar lista</button>
-        <button style="background:none;border:1px dashed var(--c-surface-3);color:var(--c-text-muted);font-family:inherit;font-size:12.5px;padding:8px;border-radius:9px;cursor:pointer;" @click="novaLista">+ Lista vazia</button>
-      </div>
-    </aside>
 
-    <div style="flex:1;display:flex;flex-direction:column;min-width:0;">
-    <div style="padding:22px 30px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--c-surface-1);">
-      <div>
-        <div style="font-size:23px;font-weight:800;letter-spacing:-.3px;">{{ nomeDaLista }}</div>
-        <div style="font-size:13.5px;color:var(--c-text-muted);margin-top:3px;">{{ crm.contacts.length }} contatos<template v-if="listaAtiva === null"> · o grupo "Google" vem da sua agenda</template></div>
-      </div>
-      <button class="wabtn" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:13px;font-weight:700;padding:9px 15px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:6px;" @click="openNew">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>Novo contato
-      </button>
-    </div>
-
-    <div style="padding:16px 30px 0;">
-      <div style="display:flex;align-items:center;gap:9px;background:var(--c-surface-2);border-radius:11px;padding:9px 13px;max-width:420px;">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--c-text-muted)" stroke-width="2"><circle cx="11" cy="11" r="7" /><path d="m20 20-3-3" stroke-linecap="round" /></svg>
-        <input v-model="search" placeholder="Buscar por nome, telefone ou e-mail" style="flex:1;background:transparent;border:none;outline:none;color:var(--c-text);font-family:inherit;font-size:13.5px;">
-      </div>
-    </div>
-
-    <div style="flex:1;overflow-y:auto;padding:16px 30px 28px;">
-      <div v-if="carregando" style="text-align:center;color:var(--c-text-muted);font-size:13.5px;margin-top:40px;">Carregando…</div>
-      <div v-else-if="!filtered.length" style="text-align:center;color:var(--c-text-muted);font-size:13.5px;margin-top:40px;">
-        <template v-if="listaAtiva">Esta lista ainda está vazia.</template>
-        <template v-else>Nenhum contato. Importe uma planilha, puxe do CRM ou conecte o Google na Agenda.</template>
-      </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;">
-        <div v-for="c in filtered" :key="c.id" class="ccard" style="display:flex;align-items:center;gap:13px;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:13px;padding:13px 15px;cursor:pointer;" :title="c.phone ? 'Abrir conversa' : 'Sem telefone'" @click="crm.openContactChat(c)">
-          <div :style="{ width: '46px', height: '46px', borderRadius: '50%', flexShrink: 0, background: colorFor(c.name || String(c.id)), display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '15px', overflow: 'hidden' }">
-            <img v-if="c.avatar && !broken.has(c.id)" :src="c.avatar" referrerpolicy="no-referrer" style="width:100%;height:100%;object-fit:cover;" @error="broken.add(c.id)">
-            <template v-else>{{ initials(c.name) }}</template>
+      <div style="flex:1;overflow-y:auto;padding:22px 30px 30px;">
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px;">
+          <!-- todos -->
+          <div class="lcard" style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:16px;padding:18px;cursor:pointer;display:flex;flex-direction:column;gap:10px;" @click="abrirLista('todos')">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span style="font-size:24px;">👥</span>
+              <div style="flex:1;min-width:0;">
+                <div style="font-size:15px;font-weight:800;">Todos os contatos</div>
+                <div style="font-size:11.5px;color:var(--c-text-faint);margin-top:2px;">A agenda inteira</div>
+              </div>
+            </div>
+            <div style="font-size:26px;font-weight:800;letter-spacing:-1px;">{{ totalGeral }}</div>
           </div>
-          <div style="min-width:0;flex:1;">
-            <div style="font-weight:700;font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ c.name }}</div>
-            <div v-if="c.phone" style="font-size:12.5px;color:var(--c-text-muted);margin-top:2px;">{{ c.phone }}</div>
-            <div v-if="c.email" style="font-size:12px;color:var(--c-text-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ c.email }}</div>
+
+          <!-- listas -->
+          <div v-for="l in listas" :key="l.id" class="lcard" style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:16px;padding:18px;cursor:pointer;display:flex;flex-direction:column;gap:10px;position:relative;" @click="abrirLista(l.id)">
+            <button v-if="l.kind !== 'google'" class="ldel" title="Apagar lista" style="position:absolute;top:10px;right:12px;background:none;border:none;color:var(--c-text-faint);cursor:pointer;font-size:16px;line-height:1;" @click.stop="apagarLista(l)">×</button>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span style="font-size:24px;">{{ iconeDaLista(l.kind) }}</span>
+              <div style="flex:1;min-width:0;padding-right:14px;">
+                <div style="font-size:15px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ l.name }}</div>
+                <div style="font-size:11.5px;color:var(--c-text-faint);margin-top:2px;line-height:1.35;">{{ descricaoDaLista(l.kind) }}</div>
+              </div>
+            </div>
+            <div style="font-size:26px;font-weight:800;letter-spacing:-1px;">{{ l.contacts_count }}</div>
           </div>
-          <button class="cedit" title="Editar contato" style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);width:32px;height:32px;border-radius:9px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;" @click.stop="openEdit(c)">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" stroke-linecap="round" stroke-linejoin="round" /></svg>
-          </button>
+
+          <!-- criar -->
+          <div class="lcard" style="background:transparent;border:1px dashed var(--c-surface-3);border-radius:16px;padding:18px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;min-height:130px;color:var(--c-text-muted);" @click="abrirImport">
+            <span style="font-size:24px;">＋</span>
+            <div style="font-size:13px;font-weight:700;">Nova lista</div>
+            <div style="font-size:11.5px;color:var(--c-text-faint);text-align:center;line-height:1.4;">Planilha ou leads que já estão no CRM</div>
+          </div>
         </div>
       </div>
-    </div>
+    </template>
 
-    </div>
+    <!-- ================= CONTATOS DE UMA LISTA ================= -->
+    <template v-else>
+      <div style="padding:18px 30px;display:flex;align-items:center;gap:14px;border-bottom:1px solid var(--c-surface-1);flex-wrap:wrap;">
+        <button class="lback" title="Voltar às listas" style="background:var(--c-surface-2);border:none;color:var(--c-text);width:34px;height:34px;border-radius:10px;cursor:pointer;font-size:15px;flex-shrink:0;" @click="voltarParaListas">←</button>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:20px;font-weight:800;letter-spacing:-.3px;display:flex;align-items:center;gap:8px;">
+            <span v-if="listaAtiva">{{ iconeDaLista(kindDaLista) }}</span>{{ nomeDaLista }}
+          </div>
+          <div style="font-size:12.5px;color:var(--c-text-muted);margin-top:2px;">
+            {{ crm.contacts.length }} contatos<template v-if="listaAtiva"> · {{ descricaoDaLista(kindDaLista) }}</template>
+          </div>
+        </div>
+        <button class="wabtn" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:13px;font-weight:700;padding:9px 15px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:6px;flex-shrink:0;" @click="openNew">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>Novo contato
+        </button>
+      </div>
+
+      <div style="padding:16px 30px 0;">
+        <div style="display:flex;align-items:center;gap:9px;background:var(--c-surface-2);border-radius:11px;padding:9px 13px;max-width:420px;">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--c-text-muted)" stroke-width="2"><circle cx="11" cy="11" r="7" /><path d="m20 20-3-3" stroke-linecap="round" /></svg>
+          <input v-model="search" placeholder="Buscar por nome, telefone ou e-mail" style="flex:1;background:transparent;border:none;outline:none;color:var(--c-text);font-family:inherit;font-size:13.5px;">
+        </div>
+      </div>
+
+      <div style="flex:1;overflow-y:auto;padding:16px 30px 28px;">
+        <div v-if="carregando" style="text-align:center;color:var(--c-text-muted);font-size:13.5px;margin-top:40px;">Carregando…</div>
+        <div v-else-if="!filtered.length" style="text-align:center;color:var(--c-text-muted);font-size:13.5px;margin-top:40px;">
+          <template v-if="search">Nenhum contato para essa busca.</template>
+          <template v-else-if="listaAtiva">Esta lista ainda está vazia.</template>
+          <template v-else>Nenhum contato. Importe uma planilha, puxe do CRM ou conecte o Google na Agenda.</template>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;">
+          <div v-for="c in filtered" :key="c.id" class="ccard" style="display:flex;align-items:center;gap:13px;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:13px;padding:13px 15px;cursor:pointer;" :title="c.phone ? 'Abrir conversa' : 'Sem telefone'" @click="crm.openContactChat(c)">
+            <div :style="{ width: '46px', height: '46px', borderRadius: '50%', flexShrink: 0, background: colorFor(c.name || String(c.id)), display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '15px', overflow: 'hidden' }">
+              <img v-if="c.avatar && !broken.has(c.id)" :src="c.avatar" referrerpolicy="no-referrer" style="width:100%;height:100%;object-fit:cover;" @error="broken.add(c.id)">
+              <template v-else>{{ initials(c.name) }}</template>
+            </div>
+            <div style="min-width:0;flex:1;">
+              <div style="font-weight:700;font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ c.name }}</div>
+              <div v-if="c.phone" style="font-size:12.5px;color:var(--c-text-muted);margin-top:2px;">{{ c.phone }}</div>
+              <div v-if="c.email" style="font-size:12px;color:var(--c-text-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ c.email }}</div>
+            </div>
+            <button class="cedit" title="Editar contato" style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);width:32px;height:32px;border-radius:9px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;" @click.stop="openEdit(c)">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </template>
 
     <!-- Modal -->
     <div v-if="open" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:50;padding:24px;" @click.self="open = false">
@@ -306,7 +358,8 @@ function remove() {
 .wabtn:hover { background: var(--accent-hi) !important; }
 .ccard:hover { background: var(--c-surface-0) !important; border-color: var(--c-surface-3) !important; }
 .cedit:hover { background: var(--c-surface-3) !important; color: var(--c-text) !important; }
-.lrow:hover { background: var(--c-surface-0) !important; }
+.lcard:hover { background: var(--c-surface-0) !important; border-color: var(--c-surface-3) !important; }
+.lback:hover { background: var(--c-surface-3) !important; }
 .ldel:hover { color: var(--c-danger) !important; }
 .lbl { display:block; font-size:11.5px; color:var(--c-text-muted); font-weight:600; margin:11px 0 5px; }
 .inp { width:100%; box-sizing:border-box; background:var(--c-surface-2); border:1px solid var(--c-surface-3); color:var(--c-text); font-family:inherit; font-size:13.5px; padding:9px 11px; border-radius:9px; outline:none; }

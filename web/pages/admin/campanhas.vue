@@ -32,12 +32,15 @@ const saving = ref(false)
 // Números de prospecção dos DOIS canais. O que muda é COMO se dispara: na Evolution a
 // IA escreve por contato; no oficial só sai template aprovado (o contato nunca escreveu,
 // então a janela de 24h está fechada).
-const outreach = computed(() => accounts.value.filter(a => a.role === 'outreach'))
+// O principal da Evolution fica de fora (disparo no Baileys arrisca o número que
+// atende os anúncios). No canal oficial não há esse risco: template aprovado é o
+// caminho da própria Meta, e quem tem um número só precisa poder usá-lo.
+const outreach = computed(() => accounts.value.filter(a => a.provider === 'cloud' || a.role === 'outreach'))
 const contaEscolhida = computed(() => accounts.value.find(a => a.id === form.value.wa_account_id))
 const ehOficial = computed(() => contaEscolhida.value?.provider === 'cloud')
 
 // ---- Templates aprovados (só canal oficial) ----
-interface Template { name: string, language: string, category: string, body: string, params: number }
+interface Template { name: string, language: string, category: string, body: string, params: number, status: string }
 const templates = ref<Template[]>([])
 const templatesCarregando = ref(false)
 const templateErro = ref('')
@@ -50,7 +53,8 @@ async function carregarTemplates(accountId: number) {
   try {
     const r = await api<{ templates: Template[] }>(`/api/wpp/cloud/accounts/${accountId}/templates`)
     templates.value = r.templates || []
-    if (!templates.value.length) templateErro.value = 'Nenhum template aprovado nesta conta. Crie e aprove um no Gerenciador da Meta.'
+    if (!templates.value.length) templateErro.value = 'Nenhum template nesta conta. Crie um no Gerenciador da Meta.'
+    else if (!templates.value.some(t => t.status === 'APPROVED')) templateErro.value = 'Seus templates ainda estão em análise na Meta. Assim que um for aprovado, ele aparece aqui.'
   }
   catch { templateErro.value = 'Não consegui carregar os templates.' }
   finally { templatesCarregando.value = false }
@@ -115,10 +119,15 @@ async function create() {
   if (!form.value.name.trim() || !form.value.wa_account_id || saving.value) return
   saving.value = true
   try {
-    await api('/api/campaigns', {
+    const nova = await api<Campaign>('/api/campaigns', {
       method: 'POST',
       body: { ...form.value, template_language: templateEscolhido.value?.language, template_body: templateEscolhido.value?.body },
     })
+    // Listas marcadas no formulário já entram na campanha recém-criada.
+    if (listasEscolhidas.value.length) {
+      await api(`/api/campaigns/${nova.id}/contacts/from-lists`, { method: 'POST', body: { list_ids: listasEscolhidas.value } })
+      listasEscolhidas.value = []
+    }
     open.value = false
     form.value = { name: '', wa_account_id: 0, objective: '', daily_cap: 40, min_gap_s: 60, max_gap_s: 180, window_start: '09:00', window_end: '18:00', template_name: '', template_params: [] }
     await load()
@@ -218,10 +227,12 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 
             <div style="margin-top:12px;font-size:12.5px;font-weight:700;color:var(--c-text-secondary);margin-bottom:6px;">Template aprovado</div>
             <div v-if="templatesCarregando" style="font-size:12.5px;color:var(--c-text-muted);">Carregando templates…</div>
-            <div v-else-if="templateErro" style="font-size:12.5px;color:var(--c-danger-soft);">{{ templateErro }}</div>
-            <select v-else v-model="form.template_name" style="width:100%;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:11px 12px;color:var(--c-text);font-family:inherit;font-size:13.5px;outline:none;box-sizing:border-box;">
+            <div v-else-if="templateErro" style="font-size:12.5px;color:var(--c-warn-soft);margin-bottom:8px;">{{ templateErro }}</div>
+            <select v-if="!templatesCarregando && templates.length" v-model="form.template_name" style="width:100%;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:11px 12px;color:var(--c-text);font-family:inherit;font-size:13.5px;outline:none;box-sizing:border-box;">
               <option value="" disabled>Escolha o template…</option>
-              <option v-for="t in templates" :key="t.name" :value="t.name">{{ t.name }} ({{ t.language }}{{ t.params ? ` · ${t.params} variáveis` : '' }})</option>
+              <option v-for="t in templates" :key="t.name" :value="t.name" :disabled="t.status !== 'APPROVED'">
+                {{ t.status === 'APPROVED' ? '' : '⏳ ' }}{{ t.name }} ({{ t.language }}{{ t.params ? ` · ${t.params} variáveis` : '' }}){{ t.status === 'APPROVED' ? '' : ' — em análise na Meta' }}
+              </option>
             </select>
 
             <div v-if="templateEscolhido" style="margin-top:10px;background:var(--c-surface-2);border-radius:10px;padding:11px 12px;font-size:12.5px;color:var(--c-text-secondary);line-height:1.5;white-space:pre-wrap;">{{ templateEscolhido.body }}</div>
@@ -263,6 +274,22 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
                 <input v-model="form.window_end" type="time" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:8px;padding:7px 9px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;">
               </div>
             </div>
+          </div>
+
+          <!-- listas já no formulário: é aqui que se decide para quem a campanha vai -->
+          <div v-if="listas.length" style="margin-top:14px;">
+            <div style="font-size:12.5px;font-weight:700;color:var(--c-text-secondary);margin-bottom:8px;">Para quem disparar (listas de contatos)</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <button
+                v-for="l in listas" :key="l.id"
+                :style="{ fontSize:'11.5px',fontWeight:700,padding:'6px 11px',borderRadius:'20px',border:'1px solid',cursor:'pointer',fontFamily:'inherit',
+                          background: listasEscolhidas.includes(l.id) ? 'var(--c-ai)' : 'transparent',
+                          borderColor: listasEscolhidas.includes(l.id) ? 'var(--c-ai)' : 'var(--c-surface-3)',
+                          color: listasEscolhidas.includes(l.id) ? 'var(--c-on-accent)' : 'var(--c-text-muted)' }"
+                @click="alternarLista(l.id)"
+              >{{ l.name }} · {{ l.contacts_count }}</button>
+            </div>
+            <div style="font-size:11.5px;color:var(--c-text-faint);margin-top:7px;">Dá para deixar em branco e carregar depois, por lista ou por CSV.</div>
           </div>
 
           <button :disabled="saving || !form.name.trim() || !form.wa_account_id" :style="{ marginTop: '16px', width: '100%', background: 'var(--c-ai)', border: 'none', color: 'var(--c-on-accent)', fontFamily: 'inherit', fontSize: '14px', fontWeight: 700, padding: '12px', borderRadius: '11px', cursor: (saving || !form.name.trim() || !form.wa_account_id) ? 'default' : 'pointer', opacity: (saving || !form.name.trim() || !form.wa_account_id) ? 0.6 : 1 }" @click="create">{{ saving ? 'Criando…' : 'Criar campanha (rascunho)' }}</button>

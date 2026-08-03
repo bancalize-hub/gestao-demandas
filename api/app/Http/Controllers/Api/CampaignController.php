@@ -59,9 +59,17 @@ class CampaignController extends Controller
             'template_params.*' => 'nullable|string|max:300',
         ]);
 
-        // Só números de prospecção podem disparar (o principal é só atendimento de anúncios).
         $acct = WaAccount::findOrFail($data['wa_account_id']);
-        abort_if($acct->isPrimary(), 422, 'O número principal não pode ser usado para disparo. Conecte um número de prospecção.');
+
+        // O principal da EVOLUTION não dispara: é o número que atende os anúncios e uma
+        // rodada de prospecção no Baileys arrisca o bloqueio dele. No canal OFICIAL isso
+        // não se aplica — lá o disparo é template aprovado, que é o caminho que a própria
+        // Meta oferece, e muitas empresas têm um número só.
+        abort_if(
+            $acct->isPrimary() && ! $acct->isCloud(),
+            422,
+            'O número principal não pode ser usado para disparo. Conecte um número de prospecção.'
+        );
         // Canal oficial: o contato nunca escreveu, a janela de 24h está fechada e a Meta
         // só aceita TEMPLATE aprovado. Então aqui a campanha não usa a mensagem que a IA
         // escreveria por contato — ela dispara o template escolhido, com as variáveis

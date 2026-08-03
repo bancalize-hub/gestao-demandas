@@ -24,6 +24,11 @@ const campaigns = ref<Campaign[]>([])
 const accounts = ref<Account[]>([])
 const loading = ref(true)
 
+// ---- Nova campanha ----
+const open = ref(false)
+const form = ref({ name: '', wa_account_id: 0, objective: '', daily_cap: 40, min_gap_s: 60, max_gap_s: 180, window_start: '09:00', window_end: '18:00', template_name: '', template_params: [] as string[] })
+const saving = ref(false)
+
 // Números de prospecção dos DOIS canais. O que muda é COMO se dispara: na Evolution a
 // IA escreve por contato; no oficial só sai template aprovado (o contato nunca escreveu,
 // então a janela de 24h está fechada).
@@ -106,10 +111,6 @@ async function load() {
   finally { loading.value = false }
 }
 
-// ---- Nova campanha ----
-const open = ref(false)
-const form = ref({ name: '', wa_account_id: 0, objective: '', daily_cap: 40, min_gap_s: 60, max_gap_s: 180, window_start: '09:00', window_end: '18:00', template_name: '', template_params: [] as string[] })
-const saving = ref(false)
 async function create() {
   if (!form.value.name.trim() || !form.value.wa_account_id || saving.value) return
   saving.value = true

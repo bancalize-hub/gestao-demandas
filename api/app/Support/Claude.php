@@ -11,6 +11,80 @@ class Claude
     private const DOWN_KEY = 'claude:indisponivel';
 
     /**
+     * Token gravado pelo painel. Fica fora do `.env` de propósito: o PHP-FPM não escreve
+     * lá (arquivo do root) e trocar o .env ainda exigiria `config:cache` na mão — aqui
+     * o token novo passa a valer no próximo pedido, sem deploy.
+     */
+    private static function tokenPath(): string
+    {
+        return storage_path('app/claude-token');
+    }
+
+    /** Token em uso: o do painel tem prioridade sobre o do .env (é o mais recente). */
+    public static function token(): ?string
+    {
+        $path = self::tokenPath();
+        if (is_file($path)) {
+            $salvo = trim((string) @file_get_contents($path));
+            if ($salvo !== '') {
+                return $salvo;
+            }
+        }
+
+        return config('services.claude.oauth_token') ?: null;
+    }
+
+    /** Grava o token do painel e devolve a IA ao ar (limpa a trégua do circuit breaker). */
+    public static function salvarToken(string $token): void
+    {
+        $path = self::tokenPath();
+        file_put_contents($path, trim($token)."\n");
+        @chmod($path, 0600);
+        Cache::forget(self::DOWN_KEY);
+        Evolution::log('claude.token_atualizado', ['origem' => 'painel']);
+    }
+
+    /** De onde veio o token em uso (para a tela explicar). */
+    public static function origemDoToken(): string
+    {
+        if (is_file(self::tokenPath()) && trim((string) @file_get_contents(self::tokenPath())) !== '') {
+            return 'painel';
+        }
+
+        return config('services.claude.oauth_token') ? 'env' : 'nenhum';
+    }
+
+    /**
+     * Testa a credencial de verdade (uma chamada mínima) e devolve o que o CLI disse.
+     * É o que transforma "a IA não respondeu" em uma causa na tela.
+     */
+    public static function testar(): array
+    {
+        Cache::forget(self::DOWN_KEY); // um teste manual sempre tenta de novo
+        $token = self::token();
+        if (! $token) {
+            return ['ok' => false, 'mensagem' => 'Nenhum token configurado.'];
+        }
+
+        $res = Process::timeout(60)
+            ->env(['CLAUDE_CODE_OAUTH_TOKEN' => $token, 'HOME' => storage_path('app/claude-home')])
+            ->input('Responda apenas: ok')
+            ->run([config('services.claude.bin'), '-p']);
+
+        $saida = trim($res->output()."\n".$res->errorOutput());
+
+        if ($res->successful() && ! preg_match('/401|not logged in|revoked|authenticat/i', $saida)) {
+            return ['ok' => true, 'mensagem' => mb_substr($saida, 0, 200) ?: 'ok'];
+        }
+
+        // Exit 0 com "Not logged in" no texto também é falha — o CLI não usa código de saída
+        // para credencial ruim, e sem isto o teste diria "funcionando" com a IA fora.
+        self::marcarFora(mb_substr($saida, 0, 200));
+
+        return ['ok' => false, 'mensagem' => mb_substr($saida, 0, 300) ?: "CLI saiu com código {$res->exitCode()}"];
+    }
+
+    /**
      * Por que a IA está fora agora (null = está de pé).
      *
      * O caso real: o token OAuth foi revogado e TUDO que depende de IA parou —
@@ -25,9 +99,9 @@ class Claude
     /** Roda o CLI claude (assinatura) como subprocesso e retorna o texto, ou null. */
     public static function run(string $prompt, int $timeout = 120): ?string
     {
-        $token = config('services.claude.oauth_token');
+        $token = self::token();
         if (! $token) {
-            self::marcarFora('CLAUDE_CODE_OAUTH_TOKEN não configurado no .env');
+            self::marcarFora('Nenhum token da IA configurado (painel ou .env)');
 
             return null;
         }
@@ -50,14 +124,15 @@ class Claude
             ->input($prompt)
             ->run([config('services.claude.bin'), '-p']);
 
-        if ($res->successful()) {
+        // O CLI escreve o erro de autenticação no STDOUT — e com exit 0 em alguns casos
+        // ("Not logged in · Please run /login"). Olhar só o código de saída fazia a falha
+        // de credencial passar por resposta válida.
+        $saida = trim($res->output()."\n".$res->errorOutput());
+        $auth = (bool) preg_match('/401|authenticat|revoked|expired|unauthorized|not logged in/i', $saida);
+
+        if ($res->successful() && ! $auth) {
             return trim($res->output());
         }
-
-        // O CLI escreve o erro de autenticação no STDOUT com exit 1 — juntar os dois
-        // é o que faz a causa aparecer no log em vez de "a IA não respondeu".
-        $saida = trim($res->output()."\n".$res->errorOutput());
-        $auth = (bool) preg_match('/401|authenticat|revoked|expired|unauthorized|login/i', $saida);
 
         Evolution::log('claude.falha', [
             'exit' => $res->exitCode(),

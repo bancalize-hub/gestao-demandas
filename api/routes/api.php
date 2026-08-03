@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\AgentController;
+use App\Http\Controllers\Api\AiCredentialController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BrandingController;
 use App\Http\Controllers\Api\CampaignController;
@@ -92,6 +93,11 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
     // Agente operacional (chat que dirige o Claude Code na VPS). Opera o próprio
     // servidor — EXCLUSIVO do dono da plataforma (super-admin). Nunca exposto às empresas.
     Route::middleware('super.admin')->group(function () {
+        // Credencial da IA: é do SERVIDOR (todas as empresas usam a mesma assinatura).
+        Route::get('/ai/status', [AiCredentialController::class, 'status']);
+        Route::post('/ai/token', [AiCredentialController::class, 'salvar']);
+        Route::post('/ai/test', [AiCredentialController::class, 'testar']);
+
         Route::get('/agent/sessions', [AgentController::class, 'index']);
         Route::post('/agent/sessions', [AgentController::class, 'store']);
         Route::get('/agent/sessions/{session}', [AgentController::class, 'show']);

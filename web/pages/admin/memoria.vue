@@ -4,6 +4,48 @@ interface Chunk { id: number, kind: string, gatilho: string, conteudo: string, k
 interface Team { id: number, name: string, stages: string[], objetivo: string | null }
 
 const api = useApi()
+const { user } = useAuth()
+
+// ---- Credencial da IA (super-admin) ----
+// O token da assinatura Claude vivia só no .env: quando foi revogado, tudo que usa IA
+// parou por dias sem sinal nenhum na tela. Aqui dá para ver o estado e trocar na hora.
+interface AiStatus { origem: string, tem_token: boolean, no_ar: boolean, motivo: string | null }
+const ai = ref<AiStatus | null>(null)
+const aiToken = ref('')
+const aiBusy = ref(false)
+const aiMsg = ref('')
+const aiOk = ref(false)
+
+async function loadAi() {
+  if (!user.value?.is_super_admin) return
+  try { ai.value = await api<AiStatus>('/api/ai/status') }
+  catch { ai.value = null }
+}
+async function testAi() {
+  aiBusy.value = true
+  aiMsg.value = ''
+  try {
+    const r = await api<{ ok: boolean, mensagem: string }>('/api/ai/test', { method: 'POST' })
+    aiOk.value = r.ok
+    aiMsg.value = r.mensagem
+  }
+  catch (e: any) { aiOk.value = false; aiMsg.value = e?.response?._data?.message || 'Falha ao testar.' }
+  finally { aiBusy.value = false; loadAi() }
+}
+async function saveAiToken() {
+  const t = aiToken.value.trim()
+  if (!t || aiBusy.value) return
+  aiBusy.value = true
+  aiMsg.value = ''
+  try {
+    const r = await api<{ ok: boolean, mensagem: string }>('/api/ai/token', { method: 'POST', body: { token: t } })
+    aiOk.value = r.ok
+    aiMsg.value = r.ok ? 'Token salvo e funcionando.' : `Token salvo, mas o teste falhou: ${r.mensagem}`
+    if (r.ok) aiToken.value = ''
+  }
+  catch (e: any) { aiOk.value = false; aiMsg.value = e?.response?._data?.message || 'Falha ao salvar.' }
+  finally { aiBusy.value = false; loadAi() }
+}
 
 const chunks = ref<Chunk[]>([])
 const teams = ref<Team[]>([])
@@ -135,7 +177,7 @@ function kindColor(k: string) {
   return ({ preco: '#25D366', faq: '#53bdeb', objecao: '#ff6b6b', procedimento: '#ffb443', fato: '#a89bf9' } as Record<string, string>)[k] || '#8696a0'
 }
 
-onMounted(load)
+onMounted(() => { load(); loadAi() })
 </script>
 
 <template>
@@ -153,6 +195,37 @@ onMounted(load)
         <div v-if="loading" style="color:var(--c-text-muted);font-size:14px;text-align:center;padding:40px;">Carregando…</div>
 
         <template v-else>
+          <!-- credencial da IA (só o dono da plataforma vê) -->
+          <div v-if="ai" :style="{ background: 'var(--c-bg)', border: `1px solid ${ai.no_ar ? 'var(--c-surface-1)' : 'rgba(255,77,77,.35)'}`, borderRadius: '16px', padding: '24px' }">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px;">
+              <span style="font-size:16px;font-weight:800;">Conexão da IA</span>
+              <span :style="{ fontSize: '11px', fontWeight: 700, padding: '3px 10px', borderRadius: '20px', background: ai.no_ar ? 'rgba(37,211,102,.16)' : 'rgba(255,77,77,.14)', color: ai.no_ar ? 'var(--accent)' : 'var(--c-danger-soft)' }">
+                {{ ai.no_ar ? 'no ar' : 'fora do ar' }}
+              </span>
+              <span style="font-size:11px;color:var(--c-text-faint);">token: {{ ai.origem === 'painel' ? 'salvo aqui' : (ai.origem === 'env' ? 'do .env' : 'nenhum') }}</span>
+              <div style="flex:1;" />
+              <button :disabled="aiBusy" :style="{ background: 'var(--c-surface-2)', border: 'none', color: 'var(--c-text)', fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 700, padding: '8px 14px', borderRadius: '9px', cursor: 'pointer', opacity: aiBusy ? 0.6 : 1 }" @click="testAi">{{ aiBusy ? 'Testando…' : 'Testar agora' }}</button>
+            </div>
+            <div style="font-size:12.5px;color:var(--c-text-muted);line-height:1.5;">
+              É esta credencial que faz a IA responder os leads, sugerir mensagens, aprender a memória e escrever as campanhas. Quando ela cai, tudo isso para em silêncio — por isso o estado fica aqui.
+            </div>
+
+            <div v-if="!ai.no_ar && ai.motivo" style="margin-top:12px;background:rgba(255,77,77,.08);border:1px solid rgba(255,77,77,.25);border-radius:10px;padding:10px 12px;font-size:12px;color:var(--c-danger-soft);font-family:ui-monospace,monospace;white-space:pre-wrap;word-break:break-word;">{{ ai.motivo }}</div>
+
+            <div style="margin-top:16px;border-top:1px solid var(--c-surface-1);padding-top:14px;">
+              <div style="font-size:12.5px;color:var(--c-text-secondary);line-height:1.6;margin-bottom:10px;">
+                <b>Como pegar um token novo:</b> num terminal onde você está logado no Claude (seu computador serve), rode
+                <code style="background:var(--c-surface-2);padding:2px 6px;border-radius:5px;font-size:12px;">claude setup-token</code>,
+                faça o login no navegador e copie o token que aparece. Cole abaixo — vale na hora, sem deploy.
+              </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <input v-model="aiToken" type="password" placeholder="sk-ant-oat…" autocomplete="off" style="flex:1;min-width:220px;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:9px;padding:10px 12px;color:var(--c-text);font-family:ui-monospace,monospace;font-size:13px;outline:none;" @keydown.enter="saveAiToken">
+                <button :disabled="aiBusy || !aiToken.trim()" :style="{ background: 'var(--c-ai)', border: 'none', color: 'var(--c-on-accent)', fontFamily: 'inherit', fontSize: '13px', fontWeight: 700, padding: '10px 18px', borderRadius: '10px', cursor: (aiBusy || !aiToken.trim()) ? 'default' : 'pointer', opacity: (aiBusy || !aiToken.trim()) ? 0.6 : 1 }" @click="saveAiToken">Salvar e conectar</button>
+              </div>
+              <div v-if="aiMsg" :style="{ marginTop: '10px', fontSize: '12.5px', lineHeight: 1.5, color: aiOk ? 'var(--accent)' : 'var(--c-danger-soft)', fontFamily: 'ui-monospace,monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }">{{ aiMsg }}</div>
+            </div>
+          </div>
+
           <!-- perfil de voz -->
           <div style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:16px;padding:24px;">
             <div style="display:flex;align-items:center;justify-content:space-between;">

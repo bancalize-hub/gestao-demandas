@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\AgentJob;
+use App\Support\Claude;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
@@ -20,6 +21,9 @@ class AgentWork extends Command
     private const RUN_AS = 'gestao-agent';
 
     private const CLAUDE = '/usr/local/bin/claude';
+
+    /** Espelho do token do painel, legível só pelo gestao-agent (ver sincronizaCredencial). */
+    private const TOKEN_FILE = '/home/'.self::RUN_AS.'/.claude-token';
 
     public function handle(): int
     {
@@ -41,6 +45,32 @@ class AgentWork extends Command
         }
     }
 
+    /**
+     * O sudo limpa o ambiente, então o CLI do agente enxergaria só a credencial do próprio
+     * gestao-agent — que foi revogada em 30/07 e deixou a tela devolvendo um 401 mudo.
+     * Aqui o token do painel (o mesmo do resto da IA, trocável em Admin → Memória, sem SSH)
+     * é espelhado num arquivo que só o gestao-agent lê, e o comando o exporta na hora.
+     */
+    private function sincronizaCredencial(): bool
+    {
+        $token = Claude::token();
+        if (! $token) {
+            return false;
+        }
+
+        if (! is_file(self::TOKEN_FILE) || trim((string) @file_get_contents(self::TOKEN_FILE)) !== $token) {
+            // Fecha as permissões ANTES de escrever: um arquivo 0644 com o token, mesmo
+            // por um instante, é o tipo de janela que não precisa existir.
+            touch(self::TOKEN_FILE);
+            @chmod(self::TOKEN_FILE, 0600);
+            file_put_contents(self::TOKEN_FILE, $token."\n");
+            @chown(self::TOKEN_FILE, self::RUN_AS);
+            @chgrp(self::TOKEN_FILE, self::RUN_AS);
+        }
+
+        return true;
+    }
+
     private function runJob(AgentJob $job): void
     {
         $session = $job->session;
@@ -49,12 +79,24 @@ class AgentWork extends Command
         $cwd = $session->cwd ?: '/var/www/gestao';
         $sid = $session->claude_session_id;
 
+        if (! $this->sincronizaCredencial()) {
+            $job->update([
+                'status' => 'error',
+                'error' => 'Nenhum token da IA configurado. Vá em Admin → Memória → Conexão da IA e conecte.',
+                'finished_at' => now(),
+            ]);
+
+            return;
+        }
+
         // Comando: roda como gestao-agent; prompt vai por STDIN (sem injeção). cwd/sid são escapados.
         $claudeArgs = self::CLAUDE.' -p --output-format stream-json --verbose --dangerously-skip-permissions';
         if ($sid && preg_match('/^[A-Za-z0-9\-]{8,}$/', $sid)) {
             $claudeArgs .= ' --resume '.escapeshellarg($sid);
         }
-        $inner = 'cd '.escapeshellarg($cwd).' && exec '.$claudeArgs;
+        // O token vai por ARQUIVO, não por argumento: em `ps` a linha de comando é pública.
+        $inner = 'export CLAUDE_CODE_OAUTH_TOKEN="$(cat '.escapeshellarg(self::TOKEN_FILE).')"; '
+            .'cd '.escapeshellarg($cwd).' && exec '.$claudeArgs;
         $cmd = ['sudo', '-u', self::RUN_AS, '-H', 'bash', '-lc', $inner];
 
         $descriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];

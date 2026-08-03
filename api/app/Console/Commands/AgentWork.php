@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Models\AgentJob;
 use App\Models\AgentSession;
+use App\Models\WaAccount;
 use App\Support\Claude;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
@@ -88,6 +89,22 @@ class AgentWork extends Command
     {
         $empresa = (int) $session->company_id;
 
+        // O número de destino NUNCA pode ser digitado pelo modelo: em 03/08/2026 ele
+        // inverteu dois dígitos e os 9 anúncios da conta apontaram para um WhatsApp que
+        // não era do usuário. Vem do banco, pronto para copiar.
+        // company_id explícito: este comando roda no worker, sem empresa vinculada, e aí
+        // o escopo global é inerte — sem o filtro, sairia o número de OUTRA empresa.
+        $numero = WaAccount::where('company_id', $empresa)
+            ->orderByRaw("role = 'primary' desc")
+            ->value('phone');
+        $destino = $numero
+            ? "O WhatsApp que recebe os leads é o {$numero}. NUNCA digite outro número: o link do
+        anúncio é exatamente `https://api.whatsapp.com/send?phone={$numero}&text=Criativo+N`, com N
+        igual ao número do criativo usado. Esse texto pré-preenchido é o que faz o CRM saber de qual
+        anúncio veio cada lead — se mudar o formato, a origem do lead se perde."
+            : 'ATENÇÃO: a empresa não tem número de WhatsApp cadastrado — pergunte ao usuário qual é
+        o link de destino antes de criar qualquer anúncio.';
+
         return <<<TXT
         Nesta sessão você é o agente de MARKETING: cuida da conta de Facebook Ads do usuário.
         Fale português do Brasil, direto e sem enrolação.
@@ -106,6 +123,8 @@ class AgentWork extends Command
         Antes de criar anúncio, rode `fbads criativos`: as imagens são as que o usuário subiu
         pela tela, chamadas "Criativo 1", "Criativo 2"…, e as observações dele dizem para que
         serve cada uma. Referencie pelo nome, ex.: --criativo="Criativo 3".
+
+        {$destino}
 
         O orçamento fica na campanha OU no conjunto, nunca nos dois. Se faltar informação
         essencial (objetivo, público, orçamento, link), pergunte em vez de inventar — errar

@@ -213,13 +213,22 @@ class FacebookAds
             'name' => $titulo,
             'description' => $descricao,
             'link' => $link ?: 'https://facebook.com/'.$pageId,
-            'call_to_action' => $cta ? ['type' => $cta] : null,
+            // Clique-para-WhatsApp: o destino é declarado no botão; o telefone e o texto
+            // pré-preenchido vão no próprio `link` (api.whatsapp.com/send?phone=…&text=…).
+            'call_to_action' => $cta
+                ? array_filter(['type' => $cta, 'value' => $cta === 'WHATSAPP_MESSAGE' ? ['app_destination' => 'WHATSAPP'] : null])
+                : null,
         ], fn ($v) => $v !== null && $v !== '');
 
         $creative = $this->call('POST', '/'.$this->conta().'/adcreatives', [
             'name' => $nome.' — '.$criativo->name,
             'object_story_spec' => json_encode(['page_id' => $pageId, 'link_data' => $linkData]),
-            'degrees_of_freedom_spec' => json_encode(['creative_features_spec' => ['standard_enhancements' => ['enroll_status' => 'OPT_OUT']]]),
+            // Nada de melhoria automática: o texto e a imagem que saem são os que o usuário
+            // aprovou. `standard_enhancements` era o atalho para isso e o Facebook passou a
+            // RECUSAR a criação inteira (code 100, subcode 3858504, "defina recursos
+            // individuais"). `advantage_plus_creative` é o guarda-chuva que substituiu o
+            // atalho: mandando só ele, a Graph API grava os 82 recursos como OPT_OUT.
+            'degrees_of_freedom_spec' => json_encode(['creative_features_spec' => ['advantage_plus_creative' => ['enroll_status' => 'OPT_OUT']]]),
         ]);
 
         return $this->call('POST', '/'.$this->conta().'/ads', [

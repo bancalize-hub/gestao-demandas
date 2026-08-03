@@ -3,7 +3,6 @@
 namespace App\Models;
 
 use App\Models\Concerns\BelongsToCompany;
-
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -25,7 +24,17 @@ class Campaign extends Model
         // Um valor por variável do template ({{1}}, {{2}}…). Sem o cast, o insert
         // estourava "Array to string conversion" e a campanha não era criada.
         'template_params' => 'array',
+        'starts_at' => 'datetime',
     ];
+
+    /**
+     * Teto diário, intervalo entre envios e janela de horário são anti-ban do Baileys.
+     * No canal oficial a Meta cuida do ritmo — lá só vale a hora de começar.
+     */
+    public function usaAntiBan(): bool
+    {
+        return ! (bool) $this->account?->isCloud();
+    }
 
     public function account(): BelongsTo
     {

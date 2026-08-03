@@ -71,9 +71,8 @@ class CampaignTick extends Command
             return;
         }
 
-        // Janela de horário (Brasília): só dispara dentro do expediente configurado.
-        $hm = now()->format('H:i');
-        if ($hm < $campaign->window_start || $hm > $campaign->window_end) {
+        // Agendamento: não começa antes da hora marcada (vale nos dois canais).
+        if ($campaign->starts_at && now()->lt($campaign->starts_at)) {
             return;
         }
 
@@ -86,22 +85,35 @@ class CampaignTick extends Command
             $acct->save();
         }
 
-        // Teto diário do NÚMERO (com aquecimento) e da CAMPANHA.
-        if ($acct->remainingToday() <= 0) {
-            return;
-        }
-        $sentTodayCampaign = $campaign->contacts()
-            ->whereIn('status', ['sent', 'replied'])
-            ->whereDate('sent_at', $today)
-            ->count();
-        if ($campaign->daily_cap > 0 && $sentTodayCampaign >= $campaign->daily_cap) {
-            return;
-        }
+        // Teto, intervalo e janela são ANTI-BAN do Baileys: existem porque o WhatsApp
+        // derruba número não-oficial que dispara demais. No canal oficial a Meta cuida
+        // do ritmo (e o próprio tick já limita a 1 envio por minuto por campanha), então
+        // segurar a fila aqui só atrasaria a entrega sem proteger nada.
+        //
+        // Atenção: `remainingToday()` fica 0 quando o número não tem teto configurado —
+        // aplicá-lo ao canal oficial travava a campanha para sempre, sem enviar nada.
+        if ($campaign->usaAntiBan()) {
+            $hm = now()->format('H:i');
+            if ($hm < $campaign->window_start || $hm > $campaign->window_end) {
+                return;
+            }
 
-        // Intervalo aleatório desde o último envio DESTE número (vale entre campanhas que compartilham o número).
-        $gap = random_int($campaign->min_gap_s, max($campaign->min_gap_s, $campaign->max_gap_s));
-        if ($acct->last_sent_at && $acct->last_sent_at->diffInSeconds(now()) < $gap) {
-            return;
+            if ($acct->remainingToday() <= 0) {
+                return;
+            }
+            $sentTodayCampaign = $campaign->contacts()
+                ->whereIn('status', ['sent', 'replied'])
+                ->whereDate('sent_at', $today)
+                ->count();
+            if ($campaign->daily_cap > 0 && $sentTodayCampaign >= $campaign->daily_cap) {
+                return;
+            }
+
+            // Intervalo aleatório desde o último envio DESTE número (vale entre campanhas que compartilham o número).
+            $gap = random_int($campaign->min_gap_s, max($campaign->min_gap_s, $campaign->max_gap_s));
+            if ($acct->last_sent_at && $acct->last_sent_at->diffInSeconds(now()) < $gap) {
+                return;
+            }
         }
 
         // Próximo contato pendente (mais antigo primeiro).

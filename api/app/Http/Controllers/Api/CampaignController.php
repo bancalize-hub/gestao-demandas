@@ -55,15 +55,21 @@ class CampaignController extends Controller
         if ($acct->state !== 'open') {
             return 'número desconectado';
         }
-        $hm = now()->format('H:i');
-        if ($hm < $c->window_start || $hm > $c->window_end) {
-            return "fora da janela ({$c->window_start}–{$c->window_end})";
+        if ($c->starts_at && now()->lt($c->starts_at)) {
+            return 'agendada para '.$c->starts_at->format('d/m/Y \à\s H:i');
         }
-        if ($acct->remainingToday() <= 0) {
-            return 'teto diário do número atingido';
-        }
-        if ($c->daily_cap > 0 && $c->sent_today >= $c->daily_cap) {
-            return 'teto diário da campanha atingido';
+        // Limites de ritmo só existem no canal não-oficial (anti-ban).
+        if ($c->usaAntiBan()) {
+            $hm = now()->format('H:i');
+            if ($hm < $c->window_start || $hm > $c->window_end) {
+                return "fora da janela ({$c->window_start}–{$c->window_end})";
+            }
+            if ($acct->remainingToday() <= 0) {
+                return 'teto diário do número atingido';
+            }
+            if ($c->daily_cap > 0 && $c->sent_today >= $c->daily_cap) {
+                return 'teto diário da campanha atingido';
+            }
         }
         if ($c->pending === 0) {
             return 'sem contatos pendentes';
@@ -95,6 +101,7 @@ class CampaignController extends Controller
             'daily_cap' => 'nullable|integer|min:1|max:1000',
             'window_start' => 'nullable|date_format:H:i',
             'window_end' => 'nullable|date_format:H:i',
+            'starts_at' => 'nullable|date',
             // Canal oficial (Cloud API): template aprovado + o que vai em cada {{n}}.
             'template_name' => 'nullable|string|max:191',
             'template_language' => 'nullable|string|max:16',
@@ -127,6 +134,7 @@ class CampaignController extends Controller
             'daily_cap' => $data['daily_cap'] ?? 40,
             'window_start' => $data['window_start'] ?? '09:00',
             'window_end' => $data['window_end'] ?? '18:00',
+            'starts_at' => $data['starts_at'] ?? null,
             'template_name' => $data['template_name'] ?? null,
             'template_language' => $data['template_language'] ?? null,
             'template_body' => $data['template_body'] ?? null,
@@ -150,6 +158,7 @@ class CampaignController extends Controller
             'window_start' => 'sometimes|date_format:H:i',
             'window_end' => 'sometimes|date_format:H:i',
             'status' => 'sometimes|in:draft,running,paused,done',
+            'starts_at' => 'sometimes|nullable|date',
             'template_name' => 'sometimes|nullable|string|max:191',
             'template_language' => 'sometimes|nullable|string|max:16',
             'template_body' => 'sometimes|nullable|string|max:2000',

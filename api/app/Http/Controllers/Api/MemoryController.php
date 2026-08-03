@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\ChatTab;
 use App\Models\Conversation;
 use App\Models\MemoryChunk;
 use App\Models\StyleProfile;
@@ -10,11 +11,11 @@ use App\Models\StyleRule;
 use App\Models\StyleSample;
 use App\Support\Claude;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Cache;
+use Illuminate\Validation\Rule;
 
 class MemoryController extends Controller
 {
-    /** Conteúdo da memória (base de conhecimento + perfil de voz). */
+    /** Conteúdo da memória (base de conhecimento + perfil de voz + times). */
     public function index()
     {
         return response()->json([
@@ -22,6 +23,9 @@ class MemoryController extends Controller
             'style' => StyleProfile::first()?->summary ?? '',
             'samples' => StyleSample::latest('id')->take(20)->get(),
             'rules' => StyleRule::orderBy('id')->get(),
+            // Times (tabs do chat): cada um com seu objetivo. É por eles que o
+            // conhecimento e o objetivo são separados entre SDR, Closer e CS.
+            'teams' => ChatTab::orderBy('position')->orderBy('id')->get(['id', 'name', 'stages', 'objetivo']),
         ]);
     }
 
@@ -183,6 +187,10 @@ class MemoryController extends Controller
             'gatilho' => 'required|string|max:255',
             'conteudo' => 'required|string|max:2000',
             'keywords' => 'nullable|string|max:255',
+            // Time dono deste conhecimento (null = vale para todos). Rule::in sobre as
+            // tabs da empresa (query escopada) em vez de exists: — assim o id de outro
+            // tenant não passa na validação.
+            'chat_tab_id' => ['nullable', 'integer', Rule::in(ChatTab::pluck('id')->all())],
         ]);
     }
 

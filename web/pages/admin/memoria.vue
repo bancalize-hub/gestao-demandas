@@ -1,9 +1,15 @@
 <script setup lang="ts">
-interface Chunk { id: number, kind: string, gatilho: string, conteudo: string, keywords: string }
+interface Chunk { id: number, kind: string, gatilho: string, conteudo: string, keywords: string, chat_tab_id: number | null }
+// Time = tab do chat (SDR, Closer, CS): agrupa etapas do funil e tem objetivo próprio.
+interface Team { id: number, name: string, stages: string[], objetivo: string | null }
 
 const api = useApi()
 
 const chunks = ref<Chunk[]>([])
+const teams = ref<Team[]>([])
+const savingTeam = ref<number | null>(null)
+const savedTeam = ref<number | null>(null)
+const teamFilter = ref<number | null | 'all'>('all')
 const style = ref('')
 const samples = ref<{ id: number, text: string }[]>([])
 const rules = ref<{ id: number, rule: string }[]>([])
@@ -13,19 +19,20 @@ const styleSaved = ref(false)
 
 const kinds = ['faq', 'preco', 'objecao', 'procedimento', 'fato']
 const editingId = ref<number | null>(null) // null = nenhum, 0 = novo, >0 = editando
-const form = reactive({ kind: 'faq', gatilho: '', conteudo: '', keywords: '' })
+const form = reactive({ kind: 'faq', gatilho: '', conteudo: '', keywords: '', chat_tab_id: null as number | null })
 const savingChunk = ref(false)
 const chunkError = ref('')
 
 function startAdd() {
   editingId.value = 0
-  Object.assign(form, { kind: 'faq', gatilho: '', conteudo: '', keywords: '' })
+  // Adicionando com um time filtrado? Já nasce daquele time.
+  Object.assign(form, { kind: 'faq', gatilho: '', conteudo: '', keywords: '', chat_tab_id: teamFilter.value === 'all' ? null : teamFilter.value })
   chunkError.value = ''
 }
 
 function startEdit(c: Chunk) {
   editingId.value = c.id
-  Object.assign(form, { kind: c.kind, gatilho: c.gatilho, conteudo: c.conteudo, keywords: c.keywords || '' })
+  Object.assign(form, { kind: c.kind, gatilho: c.gatilho, conteudo: c.conteudo, keywords: c.keywords || '', chat_tab_id: c.chat_tab_id ?? null })
   chunkError.value = ''
 }
 
@@ -65,11 +72,12 @@ async function saveChunk() {
 async function load() {
   loading.value = true
   try {
-    const r = await api<{ chunks: Chunk[], style: string, samples: { id: number, text: string }[], rules: { id: number, rule: string }[] }>('/api/memory')
+    const r = await api<{ chunks: Chunk[], style: string, samples: { id: number, text: string }[], rules: { id: number, rule: string }[], teams: Team[] }>('/api/memory')
     chunks.value = r.chunks
     style.value = r.style
     samples.value = r.samples
     rules.value = r.rules
+    teams.value = (r.teams || []).map(t => ({ ...t, objetivo: t.objetivo ?? '' }))
   }
   catch { /* */ }
   finally { loading.value = false }
@@ -99,6 +107,29 @@ async function delRule(id: number) {
   try { await api(`/api/memory/rules/${id}`, { method: 'DELETE' }) }
   catch { /* */ }
 }
+
+// Salva o objetivo de um time (o que a IA persegue com os leads das etapas dele).
+async function saveTeam(t: Team) {
+  savingTeam.value = t.id
+  savedTeam.value = null
+  try {
+    await api(`/api/chat-tabs/${t.id}`, { method: 'PATCH', body: { objetivo: t.objetivo } })
+    savedTeam.value = t.id
+    setTimeout(() => { if (savedTeam.value === t.id) savedTeam.value = null }, 2500)
+  }
+  catch { alert('Não consegui salvar o objetivo deste time.') }
+  finally { savingTeam.value = null }
+}
+
+function teamName(id: number | null) {
+  return id ? (teams.value.find(t => t.id === id)?.name || 'time removido') : 'Todos os times'
+}
+
+// Conhecimento visível: todos, ou só o do time filtrado (+ os que valem para todos).
+const visibleChunks = computed(() => {
+  if (teamFilter.value === 'all') return chunks.value
+  return chunks.value.filter(c => c.chat_tab_id === teamFilter.value || c.chat_tab_id === null)
+})
 
 function kindColor(k: string) {
   return ({ preco: '#25D366', faq: '#53bdeb', objecao: '#ff6b6b', procedimento: '#ffb443', fato: '#a89bf9' } as Record<string, string>)[k] || '#8696a0'
@@ -154,12 +185,37 @@ onMounted(load)
             </div>
           </div>
 
+          <!-- objetivo por time (SDR / Closer / CS) -->
+          <div style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:16px;padding:24px;">
+            <div style="font-size:16px;font-weight:800;margin-bottom:4px;">Objetivo por time ({{ teams.length }})</div>
+            <div style="font-size:12.5px;color:var(--c-text-muted);margin-bottom:16px;">
+              Cada time é uma tab do chat e cobre etapas do funil. A IA lê o objetivo do time em que o lead está — e só o conhecimento daquele time (mais o que vale para todos).
+            </div>
+            <div v-if="!teams.length" style="font-size:13px;color:var(--c-text-faint);">Nenhum time ainda. Crie as tabs no chat (⋮ → Tabs por etiqueta).</div>
+            <div v-else style="display:flex;flex-direction:column;gap:14px;">
+              <div v-for="t in teams" :key="t.id" style="background:var(--c-surface-2);border-radius:12px;padding:14px;">
+                <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:9px;">
+                  <span style="font-size:13.5px;font-weight:800;">{{ t.name }}</span>
+                  <span style="font-size:11px;color:var(--c-text-faint);flex:1;min-width:120px;">etapas: {{ (t.stages || []).join(', ') || '— nenhuma' }}</span>
+                  <button :disabled="savingTeam === t.id" :style="{ background: 'var(--c-ai)', border: 'none', color: 'var(--c-on-accent)', fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 700, padding: '7px 14px', borderRadius: '9px', cursor: 'pointer', opacity: savingTeam === t.id ? 0.7 : 1 }" @click="saveTeam(t)">
+                    {{ savingTeam === t.id ? 'Salvando…' : (savedTeam === t.id ? 'Salvo ✓' : 'Salvar') }}
+                  </button>
+                </div>
+                <textarea v-model="t.objetivo" rows="5" placeholder="O que a IA deve fazer com os leads deste time (missão, tom, o que buscar, o que NÃO fazer)." style="width:100%;background:var(--c-bg-deep);border:1px solid var(--c-surface-3);border-radius:10px;padding:11px 12px;color:var(--c-text);font-family:inherit;font-size:13px;line-height:1.55;outline:none;resize:vertical;box-sizing:border-box;" />
+              </div>
+            </div>
+          </div>
+
           <!-- base de conhecimento -->
           <div style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:16px;padding:24px;">
             <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px;">
               <div>
-                <div style="font-size:16px;font-weight:800;margin-bottom:4px;">Base de conhecimento ({{ chunks.length }})</div>
+                <div style="font-size:16px;font-weight:800;margin-bottom:4px;">Base de conhecimento ({{ visibleChunks.length }})</div>
                 <div style="font-size:12.5px;color:var(--c-text-muted);">O que a IA "sabe" para responder os clientes. Adicione, edite ou exclua.</div>
+                <div v-if="teams.length" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:11px;">
+                  <button :style="{ fontSize: '11.5px', fontWeight: 700, padding: '5px 11px', borderRadius: '20px', border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: teamFilter === 'all' ? 'var(--c-ai)' : 'var(--c-surface-2)', color: teamFilter === 'all' ? 'var(--c-on-accent)' : 'var(--c-text-muted)' }" @click="teamFilter = 'all'">Tudo</button>
+                  <button v-for="t in teams" :key="t.id" :style="{ fontSize: '11.5px', fontWeight: 700, padding: '5px 11px', borderRadius: '20px', border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: teamFilter === t.id ? 'var(--c-ai)' : 'var(--c-surface-2)', color: teamFilter === t.id ? 'var(--c-on-accent)' : 'var(--c-text-muted)' }" @click="teamFilter = t.id">{{ t.name }}</button>
+                </div>
               </div>
               <button v-if="editingId !== 0" style="background:var(--c-ai);border:none;color:var(--c-on-accent);font-family:inherit;font-size:13px;font-weight:700;padding:9px 14px;border-radius:10px;cursor:pointer;flex-shrink:0;white-space:nowrap;" @click="startAdd">+ Adicionar</button>
             </div>
@@ -170,6 +226,10 @@ onMounted(load)
                 <div style="display:flex;gap:10px;flex-wrap:wrap;">
                   <select v-model="form.kind" style="background:var(--c-bg-deep);border:1px solid var(--c-surface-3);border-radius:9px;padding:9px 11px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;cursor:pointer;">
                     <option v-for="k in kinds" :key="k" :value="k">{{ k }}</option>
+                  </select>
+                  <select v-model="form.chat_tab_id" title="Time que usa este conhecimento" style="background:var(--c-bg-deep);border:1px solid var(--c-surface-3);border-radius:9px;padding:9px 11px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;cursor:pointer;">
+                    <option :value="null">Todos os times</option>
+                    <option v-for="t in teams" :key="t.id" :value="t.id">{{ t.name }}</option>
                   </select>
                   <input v-model="form.gatilho" placeholder="Gatilho — tema ou pergunta curta" style="flex:1;min-width:200px;background:var(--c-bg-deep);border:1px solid var(--c-surface-3);border-radius:9px;padding:9px 11px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;">
                 </div>
@@ -183,16 +243,20 @@ onMounted(load)
               </div>
             </div>
 
-            <div v-if="!chunks.length && editingId !== 0" style="font-size:13px;color:var(--c-text-faint);padding:14px 0;">Nada ainda. Clique em "+ Adicionar" ou vá no chat → menu ⋮ da conversa → "Adicionar à memória".</div>
-            <div v-else-if="chunks.length" style="display:flex;flex-direction:column;gap:10px;">
-              <template v-for="c in chunks" :key="c.id">
+            <div v-if="!visibleChunks.length && editingId !== 0" style="font-size:13px;color:var(--c-text-faint);padding:14px 0;">Nada ainda. Clique em "+ Adicionar" ou vá no chat → menu ⋮ da conversa → "Adicionar à memória".</div>
+            <div v-else-if="visibleChunks.length" style="display:flex;flex-direction:column;gap:10px;">
+              <template v-for="c in visibleChunks" :key="c.id">
                 <!-- formulário de edição -->
                 <div v-if="editingId === c.id" style="background:var(--c-surface-2);border:1px solid var(--c-ai);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px;">
                   <div style="display:flex;gap:10px;flex-wrap:wrap;">
                     <select v-model="form.kind" style="background:var(--c-bg-deep);border:1px solid var(--c-surface-3);border-radius:9px;padding:9px 11px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;cursor:pointer;">
                       <option v-for="k in kinds" :key="k" :value="k">{{ k }}</option>
                     </select>
-                    <input v-model="form.gatilho" placeholder="Gatilho — tema ou pergunta curta" style="flex:1;min-width:200px;background:var(--c-bg-deep);border:1px solid var(--c-surface-3);border-radius:9px;padding:9px 11px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;">
+                    <select v-model="form.chat_tab_id" title="Time que usa este conhecimento" style="background:var(--c-bg-deep);border:1px solid var(--c-surface-3);border-radius:9px;padding:9px 11px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;cursor:pointer;">
+                    <option :value="null">Todos os times</option>
+                    <option v-for="t in teams" :key="t.id" :value="t.id">{{ t.name }}</option>
+                  </select>
+                  <input v-model="form.gatilho" placeholder="Gatilho — tema ou pergunta curta" style="flex:1;min-width:200px;background:var(--c-bg-deep);border:1px solid var(--c-surface-3);border-radius:9px;padding:9px 11px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;">
                   </div>
                   <textarea v-model="form.conteudo" rows="3" placeholder="Conteúdo — a resposta em 1 a 3 frases" style="width:100%;background:var(--c-bg-deep);border:1px solid var(--c-surface-3);border-radius:9px;padding:10px 11px;color:var(--c-text);font-family:inherit;font-size:13px;line-height:1.5;outline:none;resize:vertical;" />
                   <input v-model="form.keywords" placeholder="Palavras-chave separadas por vírgula (opcional)" style="background:var(--c-bg-deep);border:1px solid var(--c-surface-3);border-radius:9px;padding:9px 11px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;">
@@ -206,7 +270,10 @@ onMounted(load)
                 <div v-else style="background:var(--c-surface-2);border-radius:12px;padding:13px 15px;display:flex;gap:12px;align-items:flex-start;">
                   <span :style="{ fontSize: '10px', fontWeight: 700, color: kindColor(c.kind), background: `${kindColor(c.kind)}22`, padding: '3px 8px', borderRadius: '6px', flexShrink: 0, marginTop: '2px' }">{{ c.kind }}</span>
                   <div style="flex:1;min-width:0;">
-                    <div style="font-size:13.5px;font-weight:700;">{{ c.gatilho }}</div>
+                    <div style="font-size:13.5px;font-weight:700;display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
+                      {{ c.gatilho }}
+                      <span :style="{ fontSize: '10px', fontWeight: 700, padding: '2px 7px', borderRadius: '20px', background: c.chat_tab_id ? 'rgba(124,108,245,.18)' : 'var(--c-bg-deep)', color: c.chat_tab_id ? 'var(--c-ai-soft)' : 'var(--c-text-faint)' }">{{ teamName(c.chat_tab_id) }}</span>
+                    </div>
                     <div style="font-size:13px;color:var(--c-text-secondary);margin-top:3px;line-height:1.45;">{{ c.conteudo }}</div>
                     <div v-if="c.keywords" style="font-size:11px;color:var(--c-text-faint);margin-top:5px;">{{ c.keywords }}</div>
                   </div>

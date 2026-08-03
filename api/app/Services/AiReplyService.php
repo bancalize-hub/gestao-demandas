@@ -2,12 +2,14 @@
 
 namespace App\Services;
 
+use App\Models\ChatTab;
 use App\Models\Conversation;
 use App\Models\MemoryChunk;
 use App\Models\Stage;
 use App\Models\StyleProfile;
 use App\Models\StyleRule;
 use App\Models\StyleSample;
+use App\Models\User;
 use App\Support\Claude;
 use Illuminate\Support\Collection;
 
@@ -56,13 +58,21 @@ class AiReplyService
 
         $context = $this->memoryContext($conversation);
 
-        // Objetivo definido para a etapa atual do funil (guia sutil da conversa).
+        // Objetivo: o do TIME dono da etapa (SDR/Closer/CS) e, se houver, o da etapa
+        // específica. Um lead em "Negociação" não pode ser tratado como um lead novo.
         $stage = Stage::where('key', $conversation->stage)->first();
         $stageName = $stage->name ?? $conversation->stage;
+        $team = ChatTab::forStage($conversation->stage);
+
         $objetivo = '';
+        if ($team && trim((string) $team->objetivo) !== '') {
+            $objetivo .= "SEU PAPEL AGORA ({$team->name}):\n{$team->objetivo}\n\n";
+        }
         if ($stage && trim((string) $stage->goal) !== '') {
-            $objetivo = "OBJETIVO NESTA ETAPA DO FUNIL (\"{$stageName}\"):\n{$stage->goal}\n"
-                ."Conduza a conversa de forma sutil e natural rumo a esse objetivo — sem ser insistente, "
+            $objetivo .= "OBJETIVO NESTA ETAPA DO FUNIL (\"{$stageName}\"):\n{$stage->goal}\n\n";
+        }
+        if ($objetivo !== '') {
+            $objetivo .= 'Conduza a conversa de forma sutil e natural rumo a esse objetivo — sem ser insistente, '
                 ."sem forçar e sem soar robótico. Só avance quando fizer sentido no contexto.\n\n";
         }
 
@@ -85,7 +95,7 @@ class AiReplyService
         $agendaBlock = '';
         $agendaRule = '- Para marcar reunião, pergunte ao lead qual dia/horário ele prefere. NUNCA invente datas ou horários específicos.';
         try {
-            $gUser = \App\Models\User::whereNotNull('google_access_token')->first();
+            $gUser = User::whereNotNull('google_access_token')->first();
             if ($gUser && $gUser->hasGoogle()) {
                 $slots = app(GoogleCalendarService::class)->freeSlots($gUser, 60);
                 if ($slots) {
@@ -94,8 +104,7 @@ class AiReplyService
                     $agendaRule = '- Ao propor reunião, ofereça 2 ou 3 dos HORÁRIOS REAIS LIVRES listados acima, copiando exatamente (dia e hora). NUNCA invente nem ofereça datas/horários fora dessa lista. Cada reunião dura 1 hora.';
                 }
             }
-        }
-        catch (\Throwable $e) {
+        } catch (\Throwable $e) {
             // sem agenda disponível → mantém a regra de perguntar a preferência
         }
 
@@ -115,7 +124,7 @@ class AiReplyService
         Regras de saída:
         - Use EXATAMENTE o estilo/voz e as regras descritas acima (se houver).
         - Use o conhecimento acima quando fizer sentido; nunca invente preços/políticas.
-        - Persiga o OBJETIVO DA ETAPA (se houver) de forma sutil, no ritmo da conversa.
+        - Respeite SEU PAPEL e persiga o OBJETIVO (se houver) de forma sutil, no ritmo da conversa.
         {$agendaRule}
         - NUNCA diga que enviou o convite, que marcou/agendou a reunião nem que "está confirmado/agendado":
           a confirmação real (com o link do Meet) é enviada automaticamente pelo sistema, não por você.
@@ -171,7 +180,10 @@ class AiReplyService
         return $ctx;
     }
 
-    /** Recupera os chunks mais relevantes por palavra-chave nas últimas mensagens do lead. */
+    /**
+     * Recupera os chunks mais relevantes por palavra-chave nas últimas mensagens do lead,
+     * dentro do que o TIME dono da etapa pode usar (conhecimento sem time = de todos).
+     */
     private function relevantChunks(Conversation $conversation): Collection
     {
         $recent = $conversation->messages()
@@ -185,7 +197,11 @@ class AiReplyService
         $words = collect(preg_split('/\W+/u', mb_strtolower($recent)))
             ->filter(fn ($w) => mb_strlen($w) >= 4)->unique();
 
-        $all = MemoryChunk::get();
+        // Conhecimento do time do lead + o que vale para todos. Assim o SDR não sai
+        // falando de pós-venda e o CS não repete pitch de prospecção.
+        $teamId = ChatTab::forStage($conversation->stage)?->id;
+        $all = MemoryChunk::where(fn ($q) => $q->whereNull('chat_tab_id')->when($teamId, fn ($w) => $w->orWhere('chat_tab_id', $teamId)))->get();
+
         if ($words->isEmpty() || $all->isEmpty()) {
             return $all->take(5);
         }

@@ -19,6 +19,7 @@ class ChatTabController extends Controller
             'name' => 'required|string|max:40',
             'stages' => 'array',
             'stages.*' => 'string|max:64',
+            'objetivo' => 'nullable|string|max:2000',
         ]);
         $data['stages'] = $data['stages'] ?? [];
         $data['position'] = (ChatTab::max('position') ?? -1) + 1;
@@ -33,6 +34,8 @@ class ChatTabController extends Controller
             'stages' => 'sometimes|array',
             'stages.*' => 'string|max:64',
             'position' => 'sometimes|integer',
+            // Objetivo da IA com os leads deste time (SDR/Closer/CS).
+            'objetivo' => 'sometimes|nullable|string|max:2000',
         ]);
         $chatTab->update($data);
 

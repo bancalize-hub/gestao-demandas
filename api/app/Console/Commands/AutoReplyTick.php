@@ -54,18 +54,6 @@ class AutoReplyTick extends Command
                 $googleUser = User::where('company_id', $conv->company_id)
                     ->whereNotNull('google_refresh_token')->first();
 
-                // IA fora do ar (ex.: token revogado): não adianta rodar as 30 conversas
-                // pendentes a cada 2 min. Espera a trégua do circuit breaker.
-                if ($motivo = Claude::indisponivel()) {
-                    $conv->update(['auto_reply_due_at' => now()->addMinutes(10)]);
-                    Evolution::log('auto_reply.ia_fora_do_ar', [
-                        'conversation_id' => $conv->id,
-                        'motivo' => $motivo,
-                    ], 'error');
-
-                    continue;
-                }
-
                 // Resposta automática MUITO atrasada (IA fora do ar, número desconectado):
                 // responder o lead horas depois é pior que não responder — ele volta para
                 // a fila humana, com registro do que aconteceu.
@@ -78,6 +66,18 @@ class AutoReplyTick extends Command
                         'horas' => round((time() - $ultimaEntrada) / 3600, 1),
                     ], 'warning');
                     $this->warn("auto-reply: pendência vencida na conversa {$conv->id} — atendimento humano");
+
+                    continue;
+                }
+
+                // IA fora do ar (ex.: token revogado): não adianta rodar as 30 conversas
+                // pendentes a cada 2 min. Espera a trégua do circuit breaker.
+                if ($motivo = Claude::indisponivel()) {
+                    $conv->update(['auto_reply_due_at' => now()->addMinutes(10)]);
+                    Evolution::log('auto_reply.ia_fora_do_ar', [
+                        'conversation_id' => $conv->id,
+                        'motivo' => $motivo,
+                    ], 'error');
 
                     continue;
                 }

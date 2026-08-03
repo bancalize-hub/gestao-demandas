@@ -29,6 +29,7 @@ class AgentWork extends Command
             $job = AgentJob::where('status', 'pending')->orderBy('id')->first();
             if (! $job) {
                 usleep(700000); // 0.7s
+
                 continue;
             }
             try {
@@ -212,7 +213,9 @@ class AgentWork extends Command
                     }
                     $c = (string) $c;
                     if (trim($c) !== '') {
-                        return [mb_substr($c, 0, 4000)."\n", null];
+                        // Sentinelas: sem elas a tela não tem como distinguir a saída de um
+                        // comando do texto que o agente escreveu — virava tudo um parágrafo só.
+                        return ["⟦saída⟧\n".mb_substr($c, 0, 4000)."\n⟦fim⟧\n", null];
                     }
                 }
             }

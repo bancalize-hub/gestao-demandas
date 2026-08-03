@@ -39,6 +39,51 @@ const initials = computed(() => {
   const parts = n.split(/\s+/).filter(Boolean)
   return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || 'U'
 })
+
+// Mini menu do avatar (sair, tema, usuários, WhatsApp). Fica fora da Rail (Teleport)
+// porque a barra do celular tem overflow-x: auto e cortaria o popover.
+const MENU_W = 236
+const menuOpen = ref(false)
+const avatarEl = ref<HTMLElement | null>(null)
+const menuStyle = ref<Record<string, string>>({})
+
+function placeMenu() {
+  const r = avatarEl.value?.getBoundingClientRect()
+  if (!r) return
+  const base = { position: 'fixed', width: `${MENU_W}px`, zIndex: '3000' }
+  if (isMobile.value) {
+    const left = Math.min(Math.max(12, r.left + r.width / 2 - MENU_W / 2), window.innerWidth - MENU_W - 12)
+    menuStyle.value = { ...base, left: `${left}px`, bottom: `${window.innerHeight - r.top + 10}px` }
+  }
+  else {
+    menuStyle.value = { ...base, left: `${r.right + 10}px`, bottom: `${Math.max(12, window.innerHeight - r.bottom)}px` }
+  }
+}
+
+function toggleMenu() {
+  menuOpen.value = !menuOpen.value
+  if (menuOpen.value) nextTick(placeMenu)
+}
+
+function goFromMenu(path: string) {
+  menuOpen.value = false
+  navigateTo(path)
+}
+
+// Fecha ao trocar de tela; o toggle de tema mantém o menu aberto de propósito.
+watch(() => route.path, () => { menuOpen.value = false })
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') menuOpen.value = false
+}
+onMounted(() => {
+  window.addEventListener('keydown', onKeydown)
+  window.addEventListener('resize', placeMenu)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('resize', placeMenu)
+})
 </script>
 
 <template>
@@ -63,12 +108,6 @@ const initials = computed(() => {
     <button class="navbtn" :style="nav(isActive('contacts'))" title="Contatos" @click="crm.go('contacts')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.4" /><path d="M5.5 20a6.5 6.5 0 0 1 13 0" stroke-linecap="round" /></svg>
     </button>
-    <button v-if="user?.is_admin" class="navbtn" :style="nav(route.path === '/admin/usuarios')" title="Usuários" @click="navigateTo('/admin/usuarios')">
-      <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.2" /><path d="M3.5 20a5.5 5.5 0 0 1 11 0M17 5.5a3 3 0 0 1 0 5.4M21 20a5.5 5.5 0 0 0-3.5-5.1" stroke-linecap="round" /></svg>
-    </button>
-    <button v-if="user?.is_admin" class="navbtn" :style="nav(route.path === '/admin/whatsapp')" title="WhatsApp" @click="navigateTo('/admin/whatsapp')">
-      <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3c-4.97 0-9 3.58-9 8 0 2.5 1.3 4.7 3.3 6.1L5.5 21l3.6-1.5c.9.25 1.9.4 2.9.4 4.97 0 9-3.58 9-8s-4.03-8.9-9-8.9Z" stroke-linecap="round" stroke-linejoin="round" /></svg>
-    </button>
     <button v-if="user?.is_admin" class="navbtn" :style="nav(route.path === '/admin/campanhas')" title="Campanhas (prospecção)" @click="navigateTo('/admin/campanhas')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11v2a1 1 0 0 0 1 1h2l3.5 3.5V7.5L6 11H4a1 1 0 0 0-1 0Z" stroke-linecap="round" stroke-linejoin="round" /><path d="m9.5 7.5 9-4v17l-9-4M18.5 9.5a3 3 0 0 1 0 5" stroke-linecap="round" stroke-linejoin="round" /></svg>
     </button>
@@ -85,22 +124,110 @@ const initials = computed(() => {
 
     <div v-if="!isMobile" style="flex:1;" />
 
-    <button class="navbtn" :title="isDark ? 'Tema claro' : 'Tema escuro'" :style="nav(false)" @click="toggle()">
-      <svg v-if="isDark" width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="4.2" /><path d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6" stroke-linecap="round" /></svg>
-      <svg v-else width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 14.5A8 8 0 0 1 9.5 4a7 7 0 1 0 10.5 10.5Z" stroke-linecap="round" stroke-linejoin="round" /></svg>
+    <button
+      ref="avatarEl" class="avatar" :title="user?.name || ''" aria-haspopup="menu" :aria-expanded="menuOpen"
+      :style="{ width: '40px', height: '40px', borderRadius: '50%', border: 'none', cursor: 'pointer', background: 'linear-gradient(135deg,var(--accent),var(--accent-deep))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '14px', color: 'var(--accent-ink)', marginTop: isMobile ? '0' : '4px', flexShrink: 0, outline: menuOpen ? '2px solid var(--accent)' : 'none', outlineOffset: '2px' }"
+      @click="toggleMenu()"
+    >
+      {{ initials }}
     </button>
 
-    <button class="navbtn" title="Sair" :style="nav(false)" @click="logout()">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 12H4m0 0 3.5-3.5M4 12l3.5 3.5M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4" stroke-linecap="round" stroke-linejoin="round" /></svg>
-    </button>
-    <div v-if="!isMobile" :title="user?.name || ''" style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-deep));display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:var(--accent-ink);margin-top:4px;">
-      {{ initials }}
-    </div>
+    <Teleport to="body">
+      <div v-if="menuOpen" style="position:fixed;inset:0;z-index:2999;" @click="menuOpen = false" />
+      <div v-if="menuOpen" class="usermenu" role="menu" :style="menuStyle">
+        <div class="usermenu-head">
+          <div class="usermenu-name">{{ user?.name }}</div>
+          <div class="usermenu-mail">{{ user?.email }}</div>
+        </div>
+
+        <button v-if="user?.is_admin" class="usermenu-item" role="menuitem" @click="goFromMenu('/admin/usuarios')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.2" /><path d="M3.5 20a5.5 5.5 0 0 1 11 0M17 5.5a3 3 0 0 1 0 5.4M21 20a5.5 5.5 0 0 0-3.5-5.1" stroke-linecap="round" /></svg>
+          Usuários
+        </button>
+        <button v-if="user?.is_admin" class="usermenu-item" role="menuitem" @click="goFromMenu('/admin/whatsapp')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3c-4.97 0-9 3.58-9 8 0 2.5 1.3 4.7 3.3 6.1L5.5 21l3.6-1.5c.9.25 1.9.4 2.9.4 4.97 0 9-3.58 9-8s-4.03-8.9-9-8.9Z" stroke-linecap="round" stroke-linejoin="round" /></svg>
+          Conexão WhatsApp
+        </button>
+
+        <button class="usermenu-item" role="menuitem" @click="toggle()">
+          <svg v-if="isDark" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="4.2" /><path d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6" stroke-linecap="round" /></svg>
+          <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 14.5A8 8 0 0 1 9.5 4a7 7 0 1 0 10.5 10.5Z" stroke-linecap="round" stroke-linejoin="round" /></svg>
+          {{ isDark ? 'Tema claro' : 'Tema escuro' }}
+        </button>
+
+        <div class="usermenu-sep" />
+
+        <button class="usermenu-item danger" role="menuitem" @click="logout()">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 12H4m0 0 3.5-3.5M4 12l3.5 3.5M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4" stroke-linecap="round" stroke-linejoin="round" /></svg>
+          Sair
+        </button>
+      </div>
+    </Teleport>
   </nav>
 </template>
 
 <style scoped>
 .navbtn:hover {
   background: rgba(var(--accent-rgb),0.1) !important;
+}
+.avatar:hover {
+  filter: brightness(1.08);
+}
+
+.usermenu {
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-border);
+  border-radius: 14px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, .28);
+  padding: 6px;
+  font-family: Manrope, sans-serif;
+  color: var(--c-text);
+}
+.usermenu-head {
+  padding: 8px 10px 10px;
+  border-bottom: 1px solid var(--c-border);
+  margin-bottom: 6px;
+}
+.usermenu-name {
+  font-weight: 700;
+  font-size: 13.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.usermenu-mail {
+  font-size: 11.5px;
+  color: var(--c-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.usermenu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--c-text);
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.usermenu-item:hover {
+  background: rgba(var(--accent-rgb), .12);
+  color: var(--accent);
+}
+.usermenu-item.danger:hover {
+  background: rgba(239, 68, 68, .14);
+  color: #ef4444;
+}
+.usermenu-sep {
+  height: 1px;
+  background: var(--c-border);
+  margin: 6px 4px;
 }
 </style>

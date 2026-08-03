@@ -63,8 +63,16 @@ class AgentController extends Controller
             return response()->json(['message' => 'O agente ainda está executando o pedido anterior.'], 409);
         }
 
+        $primeira = ! $session->messages()->where('role', 'user')->exists();
         $session->messages()->create(['role' => 'user', 'content' => $data['prompt']]);
+
+        // Lista com cinco "Nova sessão" não diz nada: o primeiro pedido vira o título.
+        if ($primeira && in_array($session->title, ['Nova sessão', '', null], true)) {
+            $titulo = trim(preg_replace('/\s+/', ' ', $data['prompt']) ?? '');
+            $session->title = mb_strimwidth($titulo, 0, 60, '…');
+        }
         $session->touch();
+        $session->save();
 
         $job = $session->jobs()->create([
             'prompt' => $data['prompt'],
@@ -74,14 +82,33 @@ class AgentController extends Controller
         return response()->json(['job_id' => $job->id], 201);
     }
 
-    /** Polling do andamento/saída de um job (streaming simples). */
-    public function job(AgentJob $job)
+    /**
+     * Polling do andamento/saída de um job.
+     *
+     * `from` = quantos BYTES a tela já tem. Sem isso, cada volta de 1s re-baixava a saída
+     * inteira: uma execução longa vira dezenas de MB de tráfego (e de JSON encode) à toa.
+     */
+    public function job(Request $request, AgentJob $job)
     {
+        $output = (string) ($job->output ?? '');
+        $from = (int) $request->query('from', 0);
+        $from = max(0, min($from, strlen($output)));
+        $chunk = substr($output, $from);
+
+        // O worker grava blocos de 8KB e pode partir um caractere UTF-8 no meio; entregar
+        // esse pedaço quebrado deixaria lixo permanente no acumulado da tela.
+        for ($i = 0; $i < 4 && $chunk !== '' && ! mb_check_encoding($chunk, 'UTF-8'); $i++) {
+            $chunk = substr($chunk, 0, -1);
+        }
+
         return response()->json([
             'id' => $job->id,
             'status' => $job->status,
-            'output' => $job->output ?? '',
+            'chunk' => $chunk,
+            'len' => $from + strlen($chunk),
             'error' => $job->error,
+            'started_at' => $job->started_at,
+            'finished_at' => $job->finished_at,
         ]);
     }
 

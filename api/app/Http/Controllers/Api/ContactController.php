@@ -23,9 +23,14 @@ class ContactController extends Controller
         return User::whereNotNull('google_refresh_token')->first();
     }
 
-    public function index()
+    /** `?list=<id>` filtra por lista; sem ele, a agenda inteira. */
+    public function index(Request $request)
     {
-        return Contact::orderBy('name')->get();
+        $lista = (int) $request->query('list', 0);
+
+        return Contact::with('lists:id,name')
+            ->when($lista > 0, fn ($q) => $q->whereHas('lists', fn ($l) => $l->where('contact_lists.id', $lista)))
+            ->orderBy('name')->get();
     }
 
     public function store(Request $request)

@@ -5,7 +5,9 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Campaign;
 use App\Models\CampaignContact;
+use App\Models\ContactList;
 use App\Models\WaAccount;
+use App\Support\Csv;
 use Illuminate\Http\Request;
 
 class CampaignController extends Controller
@@ -49,16 +51,26 @@ class CampaignController extends Controller
             'daily_cap' => 'nullable|integer|min:1|max:1000',
             'window_start' => 'nullable|date_format:H:i',
             'window_end' => 'nullable|date_format:H:i',
+            // Canal oficial (Cloud API): template aprovado + o que vai em cada {{n}}.
+            'template_name' => 'nullable|string|max:191',
+            'template_language' => 'nullable|string|max:16',
+            'template_body' => 'nullable|string|max:2000',
+            'template_params' => 'nullable|array|max:10',
+            'template_params.*' => 'nullable|string|max:300',
         ]);
 
         // Só números de prospecção podem disparar (o principal é só atendimento de anúncios).
         $acct = WaAccount::findOrFail($data['wa_account_id']);
         abort_if($acct->isPrimary(), 422, 'O número principal não pode ser usado para disparo. Conecte um número de prospecção.');
-        // Prospecção fria não existe na API oficial: o contato nunca escreveu, então a
-        // janela de 24h está fechada e a Meta só aceita template aprovado (com texto fixo,
-        // não a mensagem que a IA escreve por contato). Recusar aqui evita a campanha
-        // marcar todos os contatos como "falha no envio" um a um.
-        abort_if($acct->isCloud(), 422, 'Número na API oficial não faz disparo: fora da janela de 24h a Meta só aceita template aprovado. Use um número da Evolution para campanhas.');
+        // Canal oficial: o contato nunca escreveu, a janela de 24h está fechada e a Meta
+        // só aceita TEMPLATE aprovado. Então aqui a campanha não usa a mensagem que a IA
+        // escreveria por contato — ela dispara o template escolhido, com as variáveis
+        // preenchidas por contato.
+        abort_if(
+            $acct->isCloud() && empty($data['template_name']),
+            422,
+            'Número na API oficial dispara por template aprovado: escolha o template da campanha.'
+        );
 
         $campaign = Campaign::create([
             'name' => $data['name'],
@@ -69,6 +81,10 @@ class CampaignController extends Controller
             'daily_cap' => $data['daily_cap'] ?? 40,
             'window_start' => $data['window_start'] ?? '09:00',
             'window_end' => $data['window_end'] ?? '18:00',
+            'template_name' => $data['template_name'] ?? null,
+            'template_language' => $data['template_language'] ?? null,
+            'template_body' => $data['template_body'] ?? null,
+            'template_params' => $data['template_params'] ?? null,
             'status' => 'draft',
         ]);
 
@@ -108,6 +124,55 @@ class CampaignController extends Controller
         $campaign->delete();
 
         return response()->json(['message' => 'ok']);
+    }
+
+    /**
+     * Carrega a campanha com os contatos das listas escolhidas.
+     * Dedupe por telefone: a mesma pessoa em duas listas entra uma vez só.
+     */
+    public function importFromLists(Request $request, Campaign $campaign)
+    {
+        $this->ensureAdmin($request);
+
+        $data = $request->validate([
+            'list_ids' => 'required|array|min:1',
+            'list_ids.*' => 'integer',
+        ]);
+
+        $listas = ContactList::whereIn('id', $data['list_ids'])->get();
+        abort_if($listas->isEmpty(), 422, 'Nenhuma lista válida.');
+
+        $jaNaCampanha = $campaign->contacts()->pluck('phone')->all();
+        $vistos = array_flip($jaNaCampanha);
+        $adicionados = 0;
+        $ignorados = 0;
+
+        foreach ($listas as $lista) {
+            foreach ($lista->contacts()->get(['contacts.id', 'name', 'phone']) as $c) {
+                $tel = Csv::telefone((string) $c->phone);
+                if ($tel === '' || isset($vistos[$tel])) {
+                    $ignorados++;
+
+                    continue;
+                }
+                $vistos[$tel] = true;
+                CampaignContact::create([
+                    'campaign_id' => $campaign->id,
+                    'name' => $c->name ?: null,
+                    'phone' => $tel,
+                    'status' => 'pending',
+                ]);
+                $adicionados++;
+            }
+        }
+
+        $campaign->refreshCounts();
+
+        return response()->json([
+            'added' => $adicionados,
+            'skipped' => $ignorados,
+            'total' => $campaign->contacts()->count(),
+        ]);
     }
 
     /**

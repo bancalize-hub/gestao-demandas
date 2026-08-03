@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\Campaign;
+use App\Models\CampaignContact;
 use App\Models\Conversation;
 use App\Models\WaAccount;
 use App\Services\CampaignMessageService;
@@ -50,12 +51,12 @@ class CampaignTick extends Command
             return;
         }
 
-        // Número migrado para a API oficial depois da campanha criada: parar é melhor que
-        // queimar a lista marcando todo mundo como falha (lá fora da janela de 24h só sai
-        // template aprovado). A tela mostra o motivo na campanha pausada.
-        if ($acct->isCloud()) {
+        // Canal oficial dispara por TEMPLATE aprovado. Sem template configurado não há o
+        // que enviar (texto livre a quem nunca escreveu é recusado pela Meta) — pausa com
+        // o motivo em vez de marcar a lista inteira como falha, um contato por vez.
+        if ($acct->isCloud() && ! $campaign->template_name) {
             $campaign->update(['status' => 'paused']);
-            $this->warn("campanha {$campaign->id}: pausada — o número está na API oficial, que não faz disparo fora da janela de 24h");
+            $this->warn("campanha {$campaign->id}: pausada — número oficial exige template aprovado");
 
             return;
         }
@@ -120,6 +121,7 @@ class CampaignTick extends Command
         }
 
         // Confirma que o número está no WhatsApp antes de gastar uma mensagem.
+        // (Na Cloud API essa checagem não existe: lá a falha vira recibo de erro.)
         if (! Wa::for($acct)->isOnWhatsApp($phone)) {
             $contact->update(['status' => 'skipped', 'error' => 'não está no WhatsApp']);
             $campaign->refreshCounts();
@@ -127,15 +129,29 @@ class CampaignTick extends Command
             return;
         }
 
-        $text = $ai->generate($campaign, $contact);
-        if ($text === null) {
-            // Não marca falha definitiva: tenta de novo no próximo tick (IA pode estar indisponível).
-            $this->warn("campanha {$campaign->id}: IA não gerou mensagem para contato {$contact->id}");
+        if ($acct->isCloud()) {
+            // Template: o texto é fixo e aprovado; o que muda por contato são as variáveis.
+            $params = $this->paramsDoTemplate($campaign, $contact);
+            $text = $this->renderTemplate((string) $campaign->template_body, $params, $campaign->template_name);
 
-            return;
+            $waId = Wa::for($acct)->sendTemplate(
+                $phone,
+                (string) $campaign->template_name,
+                (string) ($campaign->template_language ?: 'pt_BR'),
+                $params,
+            );
+        } else {
+            $text = $ai->generate($campaign, $contact);
+            if ($text === null) {
+                // Não marca falha definitiva: tenta de novo no próximo tick (IA pode estar indisponível).
+                $this->warn("campanha {$campaign->id}: IA não gerou mensagem para contato {$contact->id}");
+
+                return;
+            }
+
+            $waId = Wa::for($acct)->sendText($phone, $text);
         }
 
-        $waId = Wa::for($acct)->sendText($phone, $text);
         if ($waId === null) {
             $contact->update(['status' => 'failed', 'error' => 'falha no envio']);
             $campaign->refreshCounts();
@@ -162,6 +178,40 @@ class CampaignTick extends Command
 
         $campaign->refreshCounts();
         $this->info("campanha {$campaign->id}: enviado para {$phone} (contato {$contact->id})");
+    }
+
+    /**
+     * Valores de cada {{n}} do template para ESTE contato. O admin escreve algo como
+     * "{nome}" ou "sua operação" em cada variável; aqui as chaves viram o dado real.
+     */
+    private function paramsDoTemplate(Campaign $campaign, CampaignContact $contact): array
+    {
+        $primeiro = trim((string) strtok((string) $contact->name, ' '));
+        $vars = (array) ($contact->vars ?? []);
+
+        $base = [
+            '{nome}' => $primeiro !== '' ? $primeiro : 'tudo bem',
+            '{nome_completo}' => (string) ($contact->name ?: ''),
+            '{telefone}' => (string) $contact->phone,
+        ];
+        foreach ($vars as $k => $v) {
+            $base['{'.$k.'}'] = (string) $v;
+        }
+
+        return collect((array) ($campaign->template_params ?? []))
+            // Variável de template NUNCA pode ir vazia — a Meta recusa a mensagem inteira.
+            ->map(fn ($p) => trim(strtr((string) $p, $base)) ?: '-')
+            ->values()->all();
+    }
+
+    /** Texto que fica no histórico: o corpo do template com as variáveis já trocadas. */
+    private function renderTemplate(string $body, array $params, ?string $nome): string
+    {
+        foreach ($params as $i => $v) {
+            $body = str_replace(['{{'.($i + 1).'}}', '{{ '.($i + 1).' }}'], $v, $body);
+        }
+
+        return trim($body) !== '' ? $body : '[template] '.$nome;
     }
 
     /** Cria (ou reusa) a conversa do contato no número de prospecção e registra a mensagem enviada. */

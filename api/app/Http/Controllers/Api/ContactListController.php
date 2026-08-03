@@ -1,0 +1,166 @@
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Http\Controllers\Controller;
+use App\Models\Contact;
+use App\Models\ContactList;
+use App\Models\Conversation;
+use App\Support\Csv;
+use Illuminate\Http\Request;
+
+/**
+ * Listas de contatos: a agenda deixa de ser só "o que veio do Google".
+ * Cada lista agrupa contatos (planilha importada, leads do CRM, seleção manual) e é
+ * o que a campanha escolhe na hora do disparo.
+ */
+class ContactListController extends Controller
+{
+    public function index()
+    {
+        $listas = ContactList::withCount('contacts')->orderBy('name')->get();
+
+        return response()->json([
+            'lists' => $listas,
+            'total' => Contact::count(),
+            // Contato que não está em lista nenhuma continua visível em "Todos"; este número
+            // é o que explica a diferença entre o total e a soma das listas.
+            'sem_lista' => Contact::whereDoesntHave('lists')->count(),
+        ]);
+    }
+
+    public function store(Request $request)
+    {
+        $data = $request->validate(['name' => 'required|string|max:120']);
+
+        return response()->json(ContactList::create(['name' => trim($data['name']), 'kind' => 'manual']), 201);
+    }
+
+    public function update(Request $request, ContactList $contactList)
+    {
+        $data = $request->validate(['name' => 'required|string|max:120']);
+        $contactList->update(['name' => trim($data['name'])]);
+
+        return response()->json($contactList);
+    }
+
+    /** Apaga a lista — os contatos continuam na agenda, só saem do grupo. */
+    public function destroy(ContactList $contactList)
+    {
+        $contactList->contacts()->detach();
+        $contactList->delete();
+
+        return response()->json(['message' => 'ok']);
+    }
+
+    /** Entra/sai da lista (usado na ficha do contato). */
+    public function sync(Request $request, ContactList $contactList)
+    {
+        $data = $request->validate([
+            'contact_ids' => 'required|array',
+            'contact_ids.*' => 'integer',
+            'acao' => 'required|in:add,remove',
+        ]);
+
+        // Query escopada pela empresa: id de outro tenant simplesmente não existe aqui.
+        $ids = Contact::whereIn('id', $data['contact_ids'])->pluck('id');
+
+        $data['acao'] === 'add'
+            ? $contactList->contacts()->syncWithoutDetaching($ids)
+            : $contactList->contacts()->detach($ids);
+
+        return response()->json(['message' => 'ok', 'total' => $contactList->contacts()->count()]);
+    }
+
+    /**
+     * Importa uma planilha (CSV) criando a lista e os contatos que ainda não existem.
+     * Dedupe por telefone: reimportar a mesma planilha não duplica a agenda.
+     */
+    public function importar(Request $request)
+    {
+        $request->validate([
+            'name' => 'required|string|max:120',
+            'file' => 'nullable|file|max:5120',
+            'csv' => 'nullable|string',
+        ]);
+
+        $raw = $request->hasFile('file')
+            ? (string) file_get_contents($request->file('file')->getRealPath())
+            : (string) $request->input('csv', '');
+
+        $linhas = Csv::contatos(trim($raw));
+        if (! $linhas) {
+            return response()->json(['message' => 'Não encontrei nenhum telefone na planilha. A coluna pode se chamar telefone, celular ou whatsapp.'], 422);
+        }
+
+        $lista = ContactList::create(['name' => trim($request->input('name')), 'kind' => 'planilha']);
+
+        $novos = 0;
+        $reaproveitados = 0;
+        foreach ($linhas as $l) {
+            $contato = Contact::where('phone', $l['telefone'])->first();
+            if ($contato) {
+                $reaproveitados++;
+                if (! trim((string) $contato->name) && $l['nome']) {
+                    $contato->update(['name' => $l['nome']]);
+                }
+            } else {
+                $contato = Contact::create([
+                    'name' => $l['nome'] ?: '+'.$l['telefone'],
+                    'phone' => $l['telefone'],
+                ]);
+                $novos++;
+            }
+            $lista->contacts()->syncWithoutDetaching([$contato->id]);
+        }
+
+        return response()->json([
+            'list' => $lista->loadCount('contacts'),
+            'novos' => $novos,
+            'ja_existiam' => $reaproveitados,
+        ], 201);
+    }
+
+    /**
+     * Cria uma lista com quem já conversou com a gente no WhatsApp — é assim que
+     * "leads de anúncio" vira lista, já que eles entram no CRM como conversa.
+     * `stage` limita a uma etapa do funil (ex.: só os que ainda são lead novo).
+     */
+    public function doCrm(Request $request)
+    {
+        $data = $request->validate([
+            'name' => 'required|string|max:120',
+            'stage' => 'nullable|string|max:64',
+            'somente_anuncio' => 'boolean',
+        ]);
+
+        $conversas = Conversation::query()
+            ->where('origin', 'WhatsApp')
+            ->whereNotNull('phone')
+            ->when(! empty($data['stage']), fn ($q) => $q->where('stage', $data['stage']))
+            ->when($request->boolean('somente_anuncio'), fn ($q) => $q->whereNotNull('custom_fields->anuncio'))
+            ->get(['id', 'name', 'phone']);
+
+        if ($conversas->isEmpty()) {
+            return response()->json(['message' => 'Nenhuma conversa encontrada com esse filtro.'], 422);
+        }
+
+        $lista = ContactList::create(['name' => trim($data['name']), 'kind' => 'crm']);
+
+        $novos = 0;
+        foreach ($conversas as $c) {
+            $tel = Csv::telefone((string) $c->phone);
+            if ($tel === '') {
+                continue;
+            }
+            $contato = Contact::where('phone', $tel)->first();
+            if (! $contato) {
+                $contato = Contact::create(['name' => $c->name ?: '+'.$tel, 'phone' => $tel]);
+                $novos++;
+            }
+            $lista->contacts()->syncWithoutDetaching([$contato->id]);
+        }
+
+        return response()->json(['list' => $lista->loadCount('contacts'), 'novos' => $novos], 201);
+    }
+}

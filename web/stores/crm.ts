@@ -1042,9 +1042,10 @@ export const useCrmStore = defineStore('crm', {
     },
 
     // ----- Contatos (sincronizados com o Google) -----
-    async loadContacts() {
+    async loadContacts(listId?: number) {
       try {
-        this.contacts = await api()<Contact[]>('/api/contacts')
+        // ?list= filtra por lista de contatos (a tela de Contatos é organizada por listas).
+        this.contacts = await api()<Contact[]>(`/api/contacts${listId ? `?list=${listId}` : ''}`)
         this.linkContactNames()
       }
       catch { /* silencioso */ }

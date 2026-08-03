@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\Contact;
+use App\Models\ContactList;
 use App\Models\User;
 use App\Services\GoogleCalendarService;
 use App\Support\Tenancy;
@@ -40,6 +41,10 @@ class ContactsSync extends Command
                     return;
                 }
 
+                // Tudo que vem do Google entra na lista "Google": na tela de contatos os
+                // grupos são a unidade (planilha, leads do CRM…), e a agenda do Google é um deles.
+                $listaGoogle = ContactList::firstOrCreate(['kind' => 'google'], ['name' => 'Google']);
+
                 $seen = [];
                 foreach ($list as $c) {
                     if (empty($c['resource_name'])) {
@@ -48,7 +53,7 @@ class ContactsSync extends Command
                     $seen[] = $c['resource_name'];
                     // updateOrCreate roda dentro do escopo da empresa: o match por resource_name
                     // já é filtrado por company_id e o novo registro nasce carimbado.
-                    Contact::updateOrCreate(
+                    $contato = Contact::updateOrCreate(
                         ['resource_name' => $c['resource_name']],
                         [
                             'name' => $c['name'] !== '' ? $c['name'] : ($c['phone'] ?? 'Sem nome'),
@@ -59,6 +64,7 @@ class ContactsSync extends Command
                             'google_user_id' => $gu->id,
                         ]
                     );
+                    $listaGoogle->contacts()->syncWithoutDetaching([$contato->id]);
                 }
                 // Remove os que sumiram do Google (apenas os desta empresa — delete é escopado).
                 $removed = Contact::whereNotNull('resource_name')

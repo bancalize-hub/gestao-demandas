@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\BrandingController;
 use App\Http\Controllers\Api\CampaignController;
 use App\Http\Controllers\Api\ChatTabController;
 use App\Http\Controllers\Api\ContactController;
+use App\Http\Controllers\Api\ContactListController;
 use App\Http\Controllers\Api\ConversationController;
 use App\Http\Controllers\Api\DealController;
 use App\Http\Controllers\Api\EventController;
@@ -154,6 +155,15 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
     Route::patch('/contacts/{contact}', [ContactController::class, 'update']);
     Route::delete('/contacts/{contact}', [ContactController::class, 'destroy']);
 
+    // Listas de contatos (Google, planilha, leads do CRM) — é o que a campanha seleciona.
+    Route::get('/contact-lists', [ContactListController::class, 'index']);
+    Route::post('/contact-lists', [ContactListController::class, 'store']);
+    Route::patch('/contact-lists/{contactList}', [ContactListController::class, 'update']);
+    Route::delete('/contact-lists/{contactList}', [ContactListController::class, 'destroy']);
+    Route::post('/contact-lists/{contactList}/sync', [ContactListController::class, 'sync']);
+    Route::post('/contact-lists/import', [ContactListController::class, 'importar']);
+    Route::post('/contact-lists/from-crm', [ContactListController::class, 'doCrm']);
+
     // Tabs personalizadas da lista de conversas (filtram por etiqueta/etapa).
     Route::get('/chat-tabs', [ChatTabController::class, 'index']);
     Route::post('/chat-tabs', [ChatTabController::class, 'store']);
@@ -215,4 +225,5 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
     Route::patch('/campaigns/{campaign}', [CampaignController::class, 'update']);
     Route::delete('/campaigns/{campaign}', [CampaignController::class, 'destroy']);
     Route::post('/campaigns/{campaign}/contacts', [CampaignController::class, 'importContacts']);
+    Route::post('/campaigns/{campaign}/contacts/from-lists', [CampaignController::class, 'importFromLists']);
 });

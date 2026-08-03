@@ -54,6 +54,11 @@ class CampaignController extends Controller
         // Só números de prospecção podem disparar (o principal é só atendimento de anúncios).
         $acct = WaAccount::findOrFail($data['wa_account_id']);
         abort_if($acct->isPrimary(), 422, 'O número principal não pode ser usado para disparo. Conecte um número de prospecção.');
+        // Prospecção fria não existe na API oficial: o contato nunca escreveu, então a
+        // janela de 24h está fechada e a Meta só aceita template aprovado (com texto fixo,
+        // não a mensagem que a IA escreve por contato). Recusar aqui evita a campanha
+        // marcar todos os contatos como "falha no envio" um a um.
+        abort_if($acct->isCloud(), 422, 'Número na API oficial não faz disparo: fora da janela de 24h a Meta só aceita template aprovado. Use um número da Evolution para campanhas.');
 
         $campaign = Campaign::create([
             'name' => $data['name'],
@@ -146,10 +151,12 @@ class CampaignController extends Controller
             $phone = $this->normalizePhone((string) $phoneRaw);
             if ($phone === '') {
                 $skipped++;
+
                 continue;
             }
             if (isset($seen[$phone]) || $campaign->contacts()->where('phone', $phone)->exists()) {
                 $skipped++;
+
                 continue; // dedupe dentro do arquivo e contra o que já existe
             }
             $seen[$phone] = true;

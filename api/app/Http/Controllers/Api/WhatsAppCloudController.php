@@ -9,6 +9,7 @@ use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\WaAccount;
 use App\Support\Channels\CloudChannel;
+use App\Support\Evolution;
 use App\Support\Realtime;
 use App\Support\Tenancy;
 use App\Support\Wa;
@@ -65,6 +66,14 @@ class WhatsAppCloudController extends Controller
     {
         $payload = $request->json()->all();
 
+        // Trilha de entrada: sem ela, "a mensagem não chegou" vira adivinhação.
+        Evolution::log('cloud.webhook.entrada', [
+            'entries' => count((array) ($payload['entry'] ?? [])),
+            'campos' => collect((array) ($payload['entry'] ?? []))
+                ->flatMap(fn ($e) => array_column((array) ($e['changes'] ?? []), 'field'))->unique()->values()->all(),
+            'assinado' => $request->hasHeader('X-Hub-Signature-256'),
+        ]);
+
         foreach ((array) ($payload['entry'] ?? []) as $entry) {
             foreach ((array) ($entry['changes'] ?? []) as $change) {
                 $field = (string) ($change['field'] ?? '');
@@ -77,6 +86,10 @@ class WhatsAppCloudController extends Controller
                 // Número desconhecido: não dá para atribuir a nenhuma empresa. Ignorar é o
                 // seguro — cair na conta de outra empresa vazaria mensagens entre tenants.
                 if (! $account || ! $account->company_id) {
+                    Evolution::log('cloud.webhook.numero_desconhecido', [
+                        'field' => $field,
+                        'phone_number_id' => $value['metadata']['phone_number_id'] ?? null,
+                    ], 'warning');
                     Log::warning('wa-cloud: webhook de número desconhecido', [
                         'field' => $field,
                         'phone_number_id' => $value['metadata']['phone_number_id'] ?? null,
@@ -87,6 +100,7 @@ class WhatsAppCloudController extends Controller
 
                 // Autenticidade: HMAC do corpo CRU com o app secret da empresa dona do número.
                 if (! $this->signatureOk($request, $account)) {
+                    Evolution::log('cloud.webhook.assinatura_invalida', ['account' => $account->id], 'error');
                     Log::warning('wa-cloud: assinatura inválida', ['account' => $account->id]);
                     abort(403);
                 }
@@ -96,6 +110,12 @@ class WhatsAppCloudController extends Controller
                         $this->handleChange($field, $value, $account);
                     });
                 } catch (\Throwable $e) {
+                    Evolution::log('cloud.webhook.excecao', [
+                        'field' => $field,
+                        'account' => $account->id,
+                        'error' => $e->getMessage(),
+                        'file' => $e->getFile().':'.$e->getLine(),
+                    ], 'error');
                     report($e);
                 }
             }
@@ -343,7 +363,20 @@ class WhatsAppCloudController extends Controller
         $conv->origin = 'WhatsApp';
         $conv->phone = $conv->phone ?: '+'.$phone;
         $conv->wa_jid = $conv->wa_jid ?: $phone.'@s.whatsapp.net';
-        $conv->wa_account_id = $conv->wa_account_id ?: $account->id;
+
+        // O número que RECEBEU passa a ser o dono da conversa. Sem isto, conversa
+        // antiga da Evolution que volta a falar no número oficial continuava carimbada
+        // no número velho — e a resposta saía (ou nem saía) pelo canal errado: foi
+        // exatamente o "respondi e não chegou" depois da migração.
+        if ($conv->wa_account_id !== $account->id) {
+            Evolution::log('cloud.conversa_recarimbada', [
+                'conversation_id' => $conv->id,
+                'slug' => $slug,
+                'de' => $conv->wa_account_id,
+                'para' => $account->id,
+            ]);
+            $conv->wa_account_id = $account->id;
+        }
 
         // Lead de anúncio clicável (Click-to-WhatsApp): guarda de onde veio.
         if (! $isOut && isset($raw['referral']) && is_array($raw['referral'])) {

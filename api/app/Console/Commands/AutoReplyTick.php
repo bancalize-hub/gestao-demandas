@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Services\AiReplyService;
 use App\Services\MeetingScheduler;
 use App\Services\TranscriptionService;
+use App\Support\Evolution;
 use App\Support\Realtime;
 use App\Support\Tenancy;
 use App\Support\Wa;
@@ -51,6 +52,20 @@ class AutoReplyTick extends Command
                 // Dono da agenda Google DESTA empresa (conta usada para marcar as reuniões).
                 $googleUser = User::where('company_id', $conv->company_id)
                     ->whereNotNull('google_refresh_token')->first();
+
+                // API oficial fora da janela de 24h: a Meta recusa texto livre. Sem esta
+                // guarda o tick gerava resposta com a IA (caro) e reagendava a cada 2 min
+                // para sempre, sem nada nunca sair. Cancela a pendência e registra.
+                if (! Wa::forConversation($conv)->canSendFreeform($conv->lastInboundTs())) {
+                    $conv->update(['auto_reply_due_at' => null]);
+                    Evolution::log('auto_reply.janela_fechada', [
+                        'conversation_id' => $conv->id,
+                        'wa_account_id' => $conv->wa_account_id,
+                    ], 'warning');
+                    $this->warn("auto-reply: janela de 24h fechada na conversa {$conv->id} — só template aprovado");
+
+                    continue;
+                }
 
                 // Última mensagem é nossa? Então já foi respondida (humano assumiu) → limpa e segue.
                 $last = $conv->messages()->reorder()->orderByDesc('ts')->orderByDesc('id')->first();
@@ -130,6 +145,11 @@ class AutoReplyTick extends Command
                 $waId = $conv->phone ? Wa::forConversation($conv)->sendText($conv->phone, $reply) : null;
                 if ($waId === null) {
                     $conv->update(['auto_reply_due_at' => now()->addMinutes(2)]);
+                    Evolution::log('auto_reply.envio_falhou', [
+                        'conversation_id' => $conv->id,
+                        'wa_account_id' => $conv->wa_account_id,
+                        'provider' => $conv->account?->provider,
+                    ], 'error');
                     $this->warn("auto-reply: falha ao enviar para conversa {$conv->id}");
 
                     continue;

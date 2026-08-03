@@ -50,6 +50,16 @@ class CampaignTick extends Command
             return;
         }
 
+        // Número migrado para a API oficial depois da campanha criada: parar é melhor que
+        // queimar a lista marcando todo mundo como falha (lá fora da janela de 24h só sai
+        // template aprovado). A tela mostra o motivo na campanha pausada.
+        if ($acct->isCloud()) {
+            $campaign->update(['status' => 'paused']);
+            $this->warn("campanha {$campaign->id}: pausada — o número está na API oficial, que não faz disparo fora da janela de 24h");
+
+            return;
+        }
+
         // Número precisa estar conectado.
         $state = Wa::for($acct)->connectionState();
         if ($state !== 'open') {

@@ -68,6 +68,16 @@ class AutomationTick extends Command
 
         $phone = (string) $conv->phone;
         $channel = Wa::forConversation($conv);
+
+        // API oficial: automação disparada dias depois da última mensagem do cliente cai
+        // fora da janela de 24h e a Meta recusa. Marcar como pulada (com o motivo) é melhor
+        // que "falha no envio" — o time vê que precisa retomar por template.
+        if (! $channel->canSendFreeform($conv->lastInboundTs())) {
+            $run->update(['status' => 'skipped', 'error' => 'janela de 24h do WhatsApp fechada — só template aprovado']);
+
+            return;
+        }
+
         $text = $this->renderVars((string) ($step->text ?? ''), $conv);
 
         if ($step->type === 'media') {

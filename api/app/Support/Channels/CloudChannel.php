@@ -3,6 +3,7 @@
 namespace App\Support\Channels;
 
 use App\Models\WaAccount;
+use App\Support\Evolution;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -43,6 +44,26 @@ class CloudChannel implements WaChannel
             ->timeout($timeout);
     }
 
+    /**
+     * Tradução dos erros da Meta que mais aparecem no dia a dia — é o que transforma
+     * "não chegou" em uma causa acionável direto no log.
+     */
+    private static function dicaDoErro(int $code, int $subcode): string
+    {
+        return match (true) {
+            $code === 131047 => 'janela de 24h fechada — só template aprovado',
+            $code === 131026 => 'número não recebe mensagens (não tem WhatsApp ou bloqueou)',
+            $code === 131051 => 'tipo de mensagem não suportado',
+            $code === 190 => 'token do system user inválido ou revogado — gere outro na Meta',
+            $code === 100 && $subcode === 33 => 'phone_number_id não pertence a este token/app',
+            $code === 132000, $code === 132001, $code === 132005, $code === 132007, $code === 132012, $code === 132015 => 'problema no template (nome, idioma, variáveis ou aprovação)',
+            $code === 133010 => 'número não registrado na Cloud API',
+            $code === 80007, $code === 130429 => 'limite de envio da Meta atingido (rate limit)',
+            $code === 131056 => 'muitas mensagens para este destinatário em pouco tempo',
+            default => '',
+        };
+    }
+
     /** Número no formato que a Meta espera: só dígitos, com DDI. */
     private function to(string $number): string
     {
@@ -58,10 +79,20 @@ class CloudChannel implements WaChannel
     {
         $id = $this->account->phone_number_id;
         if (! $id || ! $this->account->access_token) {
+            Evolution::log('cloud.envio.sem_credencial', ['account' => $this->account->id], 'error');
             Log::warning('wa-cloud: conta sem phone_number_id/token', ['account' => $this->account->id]);
 
             return null;
         }
+
+        // Trilha do envio: quem, para quem, o quê. O corpo da mensagem não entra no log.
+        $trilha = [
+            'account' => $this->account->id,
+            'phone_number_id' => $id,
+            'para' => $payload['to'] ?? null,
+            'tipo' => $payload['type'] ?? 'text',
+        ];
+        $t0 = microtime(true);
 
         try {
             $res = $this->http($timeout)->post("/{$id}/messages", [
@@ -69,21 +100,35 @@ class CloudChannel implements WaChannel
                 'recipient_type' => 'individual',
             ] + $payload);
 
+            $ms = (int) ((microtime(true) - $t0) * 1000);
+
             if (! $res->successful()) {
-                Log::warning('wa-cloud: envio recusado', [
-                    'account' => $this->account->id,
+                $erro = $trilha + [
+                    'ms' => $ms,
                     'status' => $res->status(),
                     'code' => $res->json('error.code'),
                     'subcode' => $res->json('error.error_subcode'),
                     'title' => $res->json('error.error_user_title'),
                     'detail' => mb_substr((string) $res->json('error.message'), 0, 300),
-                ]);
+                    // 131047 = fora da janela de 24h; 131026 = número não recebe;
+                    // 190 = token inválido/expirado; 132xxx = problema no template.
+                    'dica' => self::dicaDoErro((int) $res->json('error.code'), (int) $res->json('error.error_subcode')),
+                ];
+                Evolution::log('cloud.envio.recusado', $erro, 'error');
+                Log::warning('wa-cloud: envio recusado', $erro);
 
                 return null;
             }
 
-            return (string) ($res->json('messages.0.id') ?? '');
+            $waId = (string) ($res->json('messages.0.id') ?? '');
+            Evolution::log('cloud.envio.ok', $trilha + ['ms' => $ms, 'wa_id' => $waId]);
+
+            return $waId;
         } catch (\Throwable $e) {
+            Evolution::log('cloud.envio.excecao', $trilha + [
+                'error' => $e->getMessage(),
+                'class' => get_class($e),
+            ], 'error');
             Log::warning('wa-cloud: exceção no envio', ['account' => $this->account->id, 'e' => $e->getMessage()]);
 
             return null;

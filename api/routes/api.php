@@ -97,6 +97,8 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
         Route::get('/ai/status', [AiCredentialController::class, 'status']);
         Route::post('/ai/token', [AiCredentialController::class, 'salvar']);
         Route::post('/ai/test', [AiCredentialController::class, 'testar']);
+        Route::post('/ai/login/start', [AiCredentialController::class, 'loginIniciar']);
+        Route::post('/ai/login/finish', [AiCredentialController::class, 'loginConcluir']);
 
         Route::get('/agent/sessions', [AgentController::class, 'index']);
         Route::post('/agent/sessions', [AgentController::class, 'store']);

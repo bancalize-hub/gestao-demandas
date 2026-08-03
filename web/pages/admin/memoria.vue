@@ -32,6 +32,37 @@ async function testAi() {
   catch (e: any) { aiOk.value = false; aiMsg.value = e?.response?._data?.message || 'Falha ao testar.' }
   finally { aiBusy.value = false; loadAi() }
 }
+// Login pela tela: o servidor sobe o `claude setup-token` num terminal virtual, devolve
+// a URL de autorização, e o código que a Anthropic mostra volta por aqui.
+const aiLogin = ref<{ sessao: string, url: string } | null>(null)
+const aiCode = ref('')
+async function startAiLogin() {
+  aiBusy.value = true
+  aiMsg.value = ''
+  aiLogin.value = null
+  try {
+    const r = await api<{ ok: boolean, sessao?: string, url?: string, mensagem?: string }>('/api/ai/login/start', { method: 'POST' })
+    if (r.ok && r.url && r.sessao) { aiLogin.value = { sessao: r.sessao, url: r.url }; aiCode.value = '' }
+    else { aiOk.value = false; aiMsg.value = r.mensagem || 'Não consegui iniciar o login.' }
+  }
+  catch (e: any) { aiOk.value = false; aiMsg.value = e?.response?._data?.message || 'Falha ao iniciar o login.' }
+  finally { aiBusy.value = false }
+}
+async function finishAiLogin() {
+  const codigo = aiCode.value.trim()
+  if (!aiLogin.value || !codigo || aiBusy.value) return
+  aiBusy.value = true
+  aiMsg.value = ''
+  try {
+    const r = await api<{ ok: boolean, mensagem?: string }>('/api/ai/login/finish', { method: 'POST', body: { sessao: aiLogin.value.sessao, codigo } })
+    aiOk.value = r.ok
+    aiMsg.value = r.ok ? 'Conectado! A IA voltou a responder.' : (r.mensagem || 'Não consegui concluir o login.')
+    if (r.ok) { aiLogin.value = null; aiCode.value = '' }
+  }
+  catch (e: any) { aiOk.value = false; aiMsg.value = e?.response?._data?.message || 'Falha ao concluir o login.' }
+  finally { aiBusy.value = false; loadAi() }
+}
+
 async function saveAiToken() {
   const t = aiToken.value.trim()
   if (!t || aiBusy.value) return
@@ -212,11 +243,29 @@ onMounted(() => { load(); loadAi() })
 
             <div v-if="!ai.no_ar && ai.motivo" style="margin-top:12px;background:rgba(255,77,77,.08);border:1px solid rgba(255,77,77,.25);border-radius:10px;padding:10px 12px;font-size:12px;color:var(--c-danger-soft);font-family:ui-monospace,monospace;white-space:pre-wrap;word-break:break-word;">{{ ai.motivo }}</div>
 
+            <!-- login pela tela: dois passos, sem SSH -->
             <div style="margin-top:16px;border-top:1px solid var(--c-surface-1);padding-top:14px;">
-              <div style="font-size:12.5px;color:var(--c-text-secondary);line-height:1.6;margin-bottom:10px;">
-                <b>Como pegar um token novo:</b> num terminal onde você está logado no Claude (seu computador serve), rode
-                <code style="background:var(--c-surface-2);padding:2px 6px;border-radius:5px;font-size:12px;">claude setup-token</code>,
-                faça o login no navegador e copie o token que aparece. Cole abaixo — vale na hora, sem deploy.
+              <template v-if="!aiLogin">
+                <button :disabled="aiBusy" :style="{ width: '100%', background: 'var(--c-ai)', border: 'none', color: 'var(--c-on-accent)', fontFamily: 'inherit', fontSize: '13.5px', fontWeight: 700, padding: '12px', borderRadius: '11px', cursor: aiBusy ? 'default' : 'pointer', opacity: aiBusy ? 0.7 : 1 }" @click="startAiLogin">
+                  {{ aiBusy ? 'Abrindo…' : 'Conectar com o Claude' }}
+                </button>
+                <div style="font-size:11.5px;color:var(--c-text-faint);margin-top:8px;text-align:center;">Abre o login da Anthropic e guarda o token aqui. Leva menos de um minuto.</div>
+              </template>
+
+              <template v-else>
+                <div style="font-size:12.5px;color:var(--c-text-secondary);line-height:1.6;margin-bottom:10px;">
+                  <b>1.</b> Abra este endereço, entre na sua conta e autorize. <b>2.</b> Copie o código que aparecer e cole abaixo.
+                </div>
+                <a :href="aiLogin.url" target="_blank" rel="noopener" style="display:block;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:9px;padding:10px 12px;font-size:12px;color:var(--accent);word-break:break-all;text-decoration:none;line-height:1.4;">{{ aiLogin.url }}</a>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+                  <input v-model="aiCode" placeholder="Cole aqui o código da Anthropic" autocomplete="off" style="flex:1;min-width:220px;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:9px;padding:10px 12px;color:var(--c-text);font-family:ui-monospace,monospace;font-size:13px;outline:none;" @keydown.enter="finishAiLogin">
+                  <button :disabled="aiBusy || !aiCode.trim()" :style="{ background: 'var(--accent)', border: 'none', color: 'var(--accent-ink)', fontFamily: 'inherit', fontSize: '13px', fontWeight: 700, padding: '10px 18px', borderRadius: '10px', cursor: (aiBusy || !aiCode.trim()) ? 'default' : 'pointer', opacity: (aiBusy || !aiCode.trim()) ? 0.6 : 1 }" @click="finishAiLogin">{{ aiBusy ? 'Conectando…' : 'Concluir' }}</button>
+                  <button style="background:none;border:1px solid var(--c-surface-3);color:var(--c-text-muted);font-family:inherit;font-size:13px;padding:10px 14px;border-radius:10px;cursor:pointer;" @click="aiLogin = null">Cancelar</button>
+                </div>
+              </template>
+
+              <div style="font-size:12px;color:var(--c-text-faint);line-height:1.6;margin-top:14px;padding-top:12px;border-top:1px solid var(--c-surface-1);">
+                Prefere pelo terminal? Rode <code style="background:var(--c-surface-2);padding:2px 6px;border-radius:5px;">claude setup-token</code> onde já estiver logado e cole o token aqui:
               </div>
               <div style="display:flex;gap:8px;flex-wrap:wrap;">
                 <input v-model="aiToken" type="password" placeholder="sk-ant-oat…" autocomplete="off" style="flex:1;min-width:220px;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:9px;padding:10px 12px;color:var(--c-text);font-family:ui-monospace,monospace;font-size:13px;outline:none;" @keydown.enter="saveAiToken">

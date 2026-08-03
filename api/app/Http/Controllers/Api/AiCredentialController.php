@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Support\Claude;
+use App\Support\ClaudeLogin;
 use Illuminate\Http\Request;
 
 /**
@@ -46,5 +47,22 @@ class AiCredentialController extends Controller
     public function testar(): array
     {
         return Claude::testar();
+    }
+
+    /** Passo 1 do login pela tela: devolve a URL de autorização da Anthropic. */
+    public function loginIniciar()
+    {
+        return response()->json(ClaudeLogin::iniciar());
+    }
+
+    /** Passo 2: recebe o código que a Anthropic mostrou e guarda o token gerado. */
+    public function loginConcluir(Request $request)
+    {
+        $data = $request->validate([
+            'sessao' => 'required|string|max:32',
+            'codigo' => 'required|string|max:500',
+        ]);
+
+        return response()->json(ClaudeLogin::concluir($data['sessao'], trim($data['codigo'])));
     }
 }

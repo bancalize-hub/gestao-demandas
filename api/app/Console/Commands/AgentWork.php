@@ -24,6 +24,11 @@ class AgentWork extends Command
     /** O agente de marketing roda como www-data: seu servidor MCP é um artisan. */
     private const RUN_AS_MARKETING = 'www-data';
 
+    /** HOME e cwd do agente de marketing (área vazia, fora do código-fonte). */
+    private const HOME_WWW = '/var/www/gestao/api/storage/app/claude-home';
+
+    private const WORKSPACE = '/var/www/gestao/api/storage/app/marketing-agent';
+
     private const CLAUDE = '/usr/local/bin/claude';
 
     /** Espelho do token do painel, legível só pelo gestao-agent (ver sincronizaCredencial). */
@@ -104,12 +109,54 @@ class AgentWork extends Command
      * Roda como www-data (não gestao-agent) porque o servidor MCP é um `artisan` e
      * precisa do .env e do storage do Laravel — que são de www-data.
      */
-    private function comandoMarketing(AgentSession $session, string $tokenFile): array
+    /**
+     * Registra o servidor MCP no config do www-data.
+     *
+     * NÃO dá para usar `--mcp-config` aqui: testado em 03/08/2026, no modo -p o CLI
+     * lê a config inline mas NUNCA sobe o processo do servidor stdio (fica em
+     * `status: pending` para sempre e o agente roda com zero ferramentas, alucinando
+     * chamadas em texto). Só o servidor registrado no `.claude.json` é iniciado.
+     * Por isso a entrada é escrita direto no arquivo — idempotente, sem subprocesso.
+     */
+    private function registraMcp(AgentSession $session): void
     {
-        $mcp = json_encode(['mcpServers' => ['fbads' => [
+        $entrada = [
+            'type' => 'stdio',
             'command' => PHP_BINARY,
             'args' => [base_path('artisan'), 'fbads:mcp', '--company='.(int) $session->company_id],
-        ]]], JSON_UNESCAPED_SLASHES);
+            'env' => new \stdClass,
+        ];
+
+        $arquivo = self::HOME_WWW.'/.claude.json';
+        $cfg = is_file($arquivo) ? json_decode((string) @file_get_contents($arquivo), true) : [];
+        if (! is_array($cfg)) {
+            $cfg = [];
+        }
+
+        $atual = $cfg['mcpServers']['fbads'] ?? null;
+        $igual = is_array($atual)
+            && ($atual['command'] ?? null) === $entrada['command']
+            && ($atual['args'] ?? null) === $entrada['args'];
+        if ($igual) {
+            return;
+        }
+
+        $cfg['mcpServers']['fbads'] = $entrada;
+        // O CLI também exige o diretório marcado como confiável, senão nem tenta subir.
+        $cfg['projects'][self::WORKSPACE]['hasTrustDialogAccepted'] = true;
+
+        if (! is_dir(self::WORKSPACE)) {
+            @mkdir(self::WORKSPACE, 0755, true);
+            @chown(self::WORKSPACE, self::RUN_AS_MARKETING);
+        }
+        file_put_contents($arquivo, json_encode($cfg, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        @chown($arquivo, self::RUN_AS_MARKETING);
+        @chmod($arquivo, 0600);
+    }
+
+    private function comandoMarketing(AgentSession $session, string $tokenFile): array
+    {
+        $this->registraMcp($session);
 
         $permitidas = implode(',', array_map(
             fn ($t) => 'mcp__fbads__'.$t,
@@ -127,8 +174,6 @@ class AgentWork extends Command
         $args = self::CLAUDE.' -p --output-format stream-json --verbose'
             .' --tools ""'
             .' --disallowedTools '.escapeshellarg(implode(',', self::NATIVAS_BLOQUEADAS))
-            .' --mcp-config '.escapeshellarg($mcp)
-            .' --strict-mcp-config'
             .' --allowedTools '.escapeshellarg($permitidas)
             .' --append-system-prompt '.escapeshellarg($sistema);
 
@@ -137,9 +182,11 @@ class AgentWork extends Command
             $args .= ' --resume '.escapeshellarg($sid);
         }
 
+        // cwd = área de trabalho vazia, NÃO o código-fonte: o agente não tem ferramenta
+        // de arquivo, mas se um dia vazar uma, que não seja em cima do repositório.
         $inner = 'export CLAUDE_CODE_OAUTH_TOKEN="$(cat '.escapeshellarg($tokenFile).')"; '
-            .'export HOME='.escapeshellarg(storage_path('app/claude-home')).'; '
-            .'cd '.escapeshellarg(base_path()).' && exec '.$args;
+            .'export HOME='.escapeshellarg(self::HOME_WWW).'; '
+            .'cd '.escapeshellarg(self::WORKSPACE).' && exec '.$args;
 
         return ['sudo', '-u', self::RUN_AS_MARKETING, 'bash', '-lc', $inner];
     }

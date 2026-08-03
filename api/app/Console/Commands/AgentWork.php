@@ -21,36 +21,10 @@ class AgentWork extends Command
 
     private const RUN_AS = 'gestao-agent';
 
-    /** O agente de marketing roda como www-data: seu servidor MCP é um artisan. */
-    private const RUN_AS_MARKETING = 'www-data';
-
-    /** HOME e cwd do agente de marketing (área vazia, fora do código-fonte). */
-    private const HOME_WWW = '/var/www/gestao/api/storage/app/claude-home';
-
-    private const WORKSPACE = '/var/www/gestao/api/storage/app/marketing-agent';
-
     private const CLAUDE = '/usr/local/bin/claude';
 
     /** Espelho do token do painel, legível só pelo gestao-agent (ver sincronizaCredencial). */
     private const TOKEN_FILE = '/home/'.self::RUN_AS.'/.claude-token';
-
-    /**
-     * Ferramentas nativas bloqueadas no agente de marketing.
-     *
-     * NÃO simplifique isto para só `--tools ""`: testado em 03/08/2026, `--tools ""`
-     * sozinho ainda deixou Monitor, PushNotification e RemoteTrigger de pé — e o
-     * Monitor executa comando de shell (o agente rodou `grep` no servidor no teste).
-     * A lista explícita é o que zera de fato (`tools: []` no evento de init).
-     * Ao atualizar o CLI, conferir se surgiu ferramenta nova: rode um `claude -p`
-     * sem restrição e compare o array `tools` do evento system/init com esta lista.
-     */
-    private const NATIVAS_BLOQUEADAS = [
-        'Task', 'AskUserQuestion', 'Bash', 'CronCreate', 'CronDelete', 'CronList', 'DesignSync',
-        'Edit', 'EnterPlanMode', 'EnterWorktree', 'ExitPlanMode', 'ExitWorktree', 'Monitor',
-        'NotebookEdit', 'PushNotification', 'Read', 'RemoteTrigger', 'ScheduleWakeup', 'Skill',
-        'TaskCreate', 'TaskGet', 'TaskList', 'TaskOutput', 'TaskStop', 'TaskUpdate', 'ToolSearch',
-        'WebFetch', 'WebSearch', 'Workflow', 'Write',
-    ];
 
     public function handle(): int
     {
@@ -109,86 +83,36 @@ class AgentWork extends Command
      * Roda como www-data (não gestao-agent) porque o servidor MCP é um `artisan` e
      * precisa do .env e do storage do Laravel — que são de www-data.
      */
-    /**
-     * Registra o servidor MCP no config do www-data.
-     *
-     * NÃO dá para usar `--mcp-config` aqui: testado em 03/08/2026, no modo -p o CLI
-     * lê a config inline mas NUNCA sobe o processo do servidor stdio (fica em
-     * `status: pending` para sempre e o agente roda com zero ferramentas, alucinando
-     * chamadas em texto). Só o servidor registrado no `.claude.json` é iniciado.
-     * Por isso a entrada é escrita direto no arquivo — idempotente, sem subprocesso.
-     */
-    private function registraMcp(AgentSession $session): void
+    /** O que transforma o agente da VPS num agente de marketing: só o texto abaixo. */
+    private function instrucoesMarketing(AgentSession $session): string
     {
-        $entrada = [
-            'type' => 'stdio',
-            'command' => PHP_BINARY,
-            'args' => [base_path('artisan'), 'fbads:mcp', '--company='.(int) $session->company_id],
-            'env' => new \stdClass,
-        ];
+        $empresa = (int) $session->company_id;
 
-        $arquivo = self::HOME_WWW.'/.claude.json';
-        $cfg = is_file($arquivo) ? json_decode((string) @file_get_contents($arquivo), true) : [];
-        if (! is_array($cfg)) {
-            $cfg = [];
-        }
+        return <<<TXT
+        Nesta sessão você é o agente de MARKETING: cuida da conta de Facebook Ads do usuário.
+        Fale português do Brasil, direto e sem enrolação.
 
-        $atual = $cfg['mcpServers']['fbads'] ?? null;
-        $igual = is_array($atual)
-            && ($atual['command'] ?? null) === $entrada['command']
-            && ($atual['args'] ?? null) === $entrada['args'];
-        if ($igual) {
-            return;
-        }
+        Para agir no Facebook use SEMPRE o CLI do próprio sistema, nunca chamadas HTTP na mão:
 
-        $cfg['mcpServers']['fbads'] = $entrada;
-        // O CLI também exige o diretório marcado como confiável, senão nem tenta subir.
-        $cfg['projects'][self::WORKSPACE]['hasTrustDialogAccepted'] = true;
+          cd /var/www/gestao/api && php artisan fbads <acao> --empresa={$empresa} [opções]
 
-        if (! is_dir(self::WORKSPACE)) {
-            @mkdir(self::WORKSPACE, 0755, true);
-            @chown(self::WORKSPACE, self::RUN_AS_MARKETING);
-        }
-        file_put_contents($arquivo, json_encode($cfg, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
-        @chown($arquivo, self::RUN_AS_MARKETING);
-        @chmod($arquivo, 0600);
-    }
+        Ações: conta | criativos | campanhas | criar-campanha | criar-conjunto | criar-anuncio | metricas
+        Veja `php artisan fbads --help` para todas as opções. A saída é JSON.
 
-    private function comandoMarketing(AgentSession $session, string $tokenFile): array
-    {
-        $this->registraMcp($session);
+        REGRA QUE NÃO SE NEGOCIA: tudo que o CLI cria nasce PAUSADO, e é assim de propósito.
+        Nunca diga que um anúncio está no ar. Ao terminar, diga em uma linha o que foi criado
+        e que o usuário precisa revisar e publicar no Gerenciador de Anúncios.
 
-        $permitidas = implode(',', array_map(
-            fn ($t) => 'mcp__fbads__'.$t,
-            ['conta_status', 'listar_criativos', 'listar_campanhas', 'criar_campanha', 'criar_conjunto', 'criar_anuncio', 'metricas'],
-        ));
+        Antes de criar anúncio, rode `fbads criativos`: as imagens são as que o usuário subiu
+        pela tela, chamadas "Criativo 1", "Criativo 2"…, e as observações dele dizem para que
+        serve cada uma. Referencie pelo nome, ex.: --criativo="Criativo 3".
 
-        $sistema = 'Você é o agente de marketing deste CRM e cuida da conta de Facebook Ads do usuário. '
-            .'Fale português do Brasil, direto e sem enrolação. Você NÃO tem acesso a shell, arquivos ou internet: '
-            .'suas únicas ações são as ferramentas mcp__fbads__*. Tudo que você criar nasce PAUSADO por decisão do '
-            .'usuário — nunca prometa que algo está no ar, e ao terminar diga que ele precisa revisar e publicar. '
-            .'Antes de criar um anúncio, use listar_criativos: as imagens são as que ele subiu pela tela, chamadas '
-            .'"Criativo 1", "Criativo 2" e assim por diante. Orçamento vai na campanha OU no conjunto, nunca nos dois. '
-            .'Se faltar informação essencial (objetivo, público, orçamento, link), pergunte em vez de inventar.';
+        O orçamento fica na campanha OU no conjunto, nunca nos dois. Se faltar informação
+        essencial (objetivo, público, orçamento, link), pergunte em vez de inventar — errar
+        aqui gasta dinheiro do usuário.
 
-        $args = self::CLAUDE.' -p --output-format stream-json --verbose'
-            .' --tools ""'
-            .' --disallowedTools '.escapeshellarg(implode(',', self::NATIVAS_BLOQUEADAS))
-            .' --allowedTools '.escapeshellarg($permitidas)
-            .' --append-system-prompt '.escapeshellarg($sistema);
-
-        $sid = $session->claude_session_id;
-        if ($sid && preg_match('/^[A-Za-z0-9\-]{8,}$/', $sid)) {
-            $args .= ' --resume '.escapeshellarg($sid);
-        }
-
-        // cwd = área de trabalho vazia, NÃO o código-fonte: o agente não tem ferramenta
-        // de arquivo, mas se um dia vazar uma, que não seja em cima do repositório.
-        $inner = 'export CLAUDE_CODE_OAUTH_TOKEN="$(cat '.escapeshellarg($tokenFile).')"; '
-            .'export HOME='.escapeshellarg(self::HOME_WWW).'; '
-            .'cd '.escapeshellarg(self::WORKSPACE).' && exec '.$args;
-
-        return ['sudo', '-u', self::RUN_AS_MARKETING, 'bash', '-lc', $inner];
+        Não edite o código do sistema nesta sessão: seu trabalho é operar a conta de anúncios.
+        TXT;
     }
 
     private function runJob(AgentJob $job): void
@@ -197,10 +121,8 @@ class AgentWork extends Command
         $job->update(['status' => 'running', 'started_at' => now(), 'output' => '']);
 
         $marketing = $session->kind === 'marketing';
-        $usuario = $marketing ? self::RUN_AS_MARKETING : self::RUN_AS;
-        $tokenFile = $marketing ? storage_path('app/claude-token-www') : self::TOKEN_FILE;
 
-        if (! $this->sincronizaCredencial($usuario, $tokenFile)) {
+        if (! $this->sincronizaCredencial(self::RUN_AS, self::TOKEN_FILE)) {
             $job->update([
                 'status' => 'error',
                 'error' => 'Nenhum token da IA configurado. Vá em Admin → Memória → Conexão da IA e conecte.',
@@ -210,22 +132,23 @@ class AgentWork extends Command
             return;
         }
 
-        if ($marketing) {
-            $cmd = $this->comandoMarketing($session, $tokenFile);
-        } else {
-            $cwd = $session->cwd ?: '/var/www/gestao';
-            $sid = $session->claude_session_id;
+        $cwd = $session->cwd ?: '/var/www/gestao';
+        $sid = $session->claude_session_id;
 
-            // Comando: roda como gestao-agent; prompt vai por STDIN (sem injeção). cwd/sid são escapados.
-            $claudeArgs = self::CLAUDE.' -p --output-format stream-json --verbose --dangerously-skip-permissions';
-            if ($sid && preg_match('/^[A-Za-z0-9\-]{8,}$/', $sid)) {
-                $claudeArgs .= ' --resume '.escapeshellarg($sid);
-            }
-            // O token vai por ARQUIVO, não por argumento: em `ps` a linha de comando é pública.
-            $inner = 'export CLAUDE_CODE_OAUTH_TOKEN="$(cat '.escapeshellarg($tokenFile).')"; '
-                .'cd '.escapeshellarg($cwd).' && exec '.$claudeArgs;
-            $cmd = ['sudo', '-u', $usuario, '-H', 'bash', '-lc', $inner];
+        // Comando: roda como gestao-agent; prompt vai por STDIN (sem injeção). cwd/sid são escapados.
+        $claudeArgs = self::CLAUDE.' -p --output-format stream-json --verbose --dangerously-skip-permissions';
+        if ($sid && preg_match('/^[A-Za-z0-9\-]{8,}$/', $sid)) {
+            $claudeArgs .= ' --resume '.escapeshellarg($sid);
         }
+        // Marketing é o MESMO motor do /agente (assinatura, shell) — só muda a instrução:
+        // em vez de operar a VPS, ele age no Facebook pelo CLI `php artisan fbads`.
+        if ($marketing) {
+            $claudeArgs .= ' --append-system-prompt '.escapeshellarg($this->instrucoesMarketing($session));
+        }
+        // O token vai por ARQUIVO, não por argumento: em `ps` a linha de comando é pública.
+        $inner = 'export CLAUDE_CODE_OAUTH_TOKEN="$(cat '.escapeshellarg(self::TOKEN_FILE).')"; '
+            .'cd '.escapeshellarg($cwd).' && exec '.$claudeArgs;
+        $cmd = ['sudo', '-u', self::RUN_AS, '-H', 'bash', '-lc', $inner];
 
         $descriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
         $proc = proc_open($cmd, $descriptors, $pipes);

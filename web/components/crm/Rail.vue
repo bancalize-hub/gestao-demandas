@@ -109,7 +109,7 @@ onBeforeUnmount(() => {
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.4" /><path d="M5.5 20a6.5 6.5 0 0 1 13 0" stroke-linecap="round" /></svg>
     </button>
     <button v-if="user?.is_admin" class="navbtn" :style="nav(route.path === '/admin/campanhas')" title="Campanhas (prospecção)" @click="navigateTo('/admin/campanhas')">
-      <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11v2a1 1 0 0 0 1 1h2l3.5 3.5V7.5L6 11H4a1 1 0 0 0-1 0Z" stroke-linecap="round" stroke-linejoin="round" /><path d="m9.5 7.5 9-4v17l-9-4M18.5 9.5a3 3 0 0 1 0 5" stroke-linecap="round" stroke-linejoin="round" /></svg>
+      <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21.5 3.2 2.8 10.4a.6.6 0 0 0 .05 1.13l4.9 1.6 1.6 4.9a.6.6 0 0 0 1.13.05Z" stroke-linejoin="round" /><path d="m21.5 3.2-13.75 9.93" stroke-linecap="round" /></svg>
     </button>
     <button v-if="user?.is_super_admin" class="navbtn" :style="nav(route.path === '/marketing')" title="Marketing (anúncios no Facebook)" @click="navigateTo('/marketing')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11v2a1 1 0 0 0 1 1h2v4h2v-4l10 4.5v-15L8 8H4a1 1 0 0 0-1 1Z" stroke-linecap="round" stroke-linejoin="round" /></svg>

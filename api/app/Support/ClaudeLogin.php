@@ -54,15 +54,17 @@ class ClaudeLogin
         // Process::run fica esperando eles fecharem (ou seja, os 10 minutos inteiros)
         // em vez de voltar assim que a shell termina.
         Process::timeout(20)->run(sprintf(
-            'mkfifo %s && (setsid sleep %d > %s 2>/dev/null < /dev/null &) '
-            .'&& (HOME=%s SHELL=/bin/bash setsid script -qec %s /dev/null < %s > %s 2>&1 &)',
+            'mkfifo %s && (setsid sleep %d > %s 2>/dev/null < /dev/null & echo $! > %s) '
+            .'&& (HOME=%s SHELL=/bin/bash setsid script -qec %s /dev/null < %s > %s 2>&1 & echo $! > %s)',
             escapeshellarg($fifo),
             $ttl,
             escapeshellarg($fifo),
+            escapeshellarg($dir.'/pid-sleep'),
             escapeshellarg($dir.'/home'),
             escapeshellarg('stty cols 400 2>/dev/null; exec '.$bin.' setup-token'),
             escapeshellarg($fifo),
             escapeshellarg($out),
+            escapeshellarg($dir.'/pid'),
         ));
 
         // A URL costuma sair em 2-4s; 20s cobre uma VPS ocupada.
@@ -118,7 +120,18 @@ class ClaudeLogin
         if (! self::valido($id)) {
             return;
         }
-        Process::run('rm -rf '.escapeshellarg(self::dir($id)));
+
+        // Apagar o diretório não derruba o CLI: sem isto ficava um `claude setup-token`
+        // pendurado esperando um código que nunca vem, até o TTL do `sleep`.
+        $dir = self::dir($id);
+        foreach (['pid', 'pid-sleep'] as $arquivo) {
+            $pid = (int) trim((string) @file_get_contents($dir.'/'.$arquivo));
+            if ($pid > 1) {
+                Process::run('kill -TERM '.$pid.' 2>/dev/null || true');
+            }
+        }
+
+        Process::run('rm -rf '.escapeshellarg($dir));
     }
 
     /** Sessões abandonadas não podem virar lixo (nem CLI pendurado) no servidor. */

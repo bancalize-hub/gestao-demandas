@@ -114,10 +114,6 @@ onBeforeUnmount(() => {
     <button v-if="user?.is_admin" class="navbtn" :style="nav(route.path === '/admin/memoria')" title="Memória da IA" @click="navigateTo('/admin/memoria')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 3a3 3 0 0 0-3 3 3 3 0 0 0-1 5.8V15a3 3 0 0 0 3 3 2.5 2.5 0 0 0 5 0V5.5A2.5 2.5 0 0 0 9.5 3Z" /><path d="M15 3a3 3 0 0 1 3 3 3 3 0 0 1 1 5.8V15a3 3 0 0 1-3 3" /></svg>
     </button>
-    <button v-if="user?.is_admin" class="navbtn" :style="nav(route.path === '/admin/marca')" title="Marca (cores e logo)" @click="navigateTo('/admin/marca')">
-      <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3a9 9 0 1 0 0 18c1.4 0 2.2-.9 2.2-2 0-1-.8-1.6-.8-2.4 0-.7.6-1.3 1.4-1.3H17a4 4 0 0 0 4-4c0-4.4-4-8.3-9-8.3Z" stroke-linejoin="round" /><circle cx="7.5" cy="12" r="1.1" fill="currentColor" stroke="none" /><circle cx="10" cy="7.8" r="1.1" fill="currentColor" stroke="none" /><circle cx="14.5" cy="7.8" r="1.1" fill="currentColor" stroke="none" /></svg>
-    </button>
-
     <button v-if="user?.is_super_admin" class="navbtn" :style="nav(route.path === '/agente')" title="Agente (opera a VPS)" @click="navigateTo('/agente')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="6" width="16" height="13" rx="2.5" /><path d="M9 2.5v3.5M15 2.5v3.5M9.5 12h.01M14.5 12h.01M9 16h6" stroke-linecap="round" /></svg>
     </button>
@@ -140,14 +136,21 @@ onBeforeUnmount(() => {
           <div class="usermenu-mail">{{ user?.email }}</div>
         </div>
 
-        <button v-if="user?.is_admin" class="usermenu-item" role="menuitem" @click="goFromMenu('/admin/usuarios')">
+        <button v-if="user?.is_admin" class="usermenu-item" :class="{ active: route.path === '/admin/usuarios' }" role="menuitem" @click="goFromMenu('/admin/usuarios')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.2" /><path d="M3.5 20a5.5 5.5 0 0 1 11 0M17 5.5a3 3 0 0 1 0 5.4M21 20a5.5 5.5 0 0 0-3.5-5.1" stroke-linecap="round" /></svg>
           Usuários
         </button>
-        <button v-if="user?.is_admin" class="usermenu-item" role="menuitem" @click="goFromMenu('/admin/whatsapp')">
+        <button v-if="user?.is_admin" class="usermenu-item" :class="{ active: route.path === '/admin/whatsapp' }" role="menuitem" @click="goFromMenu('/admin/whatsapp')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3c-4.97 0-9 3.58-9 8 0 2.5 1.3 4.7 3.3 6.1L5.5 21l3.6-1.5c.9.25 1.9.4 2.9.4 4.97 0 9-3.58 9-8s-4.03-8.9-9-8.9Z" stroke-linecap="round" stroke-linejoin="round" /></svg>
           Conexão WhatsApp
         </button>
+
+        <button v-if="user?.is_admin" class="usermenu-item" :class="{ active: route.path === '/admin/marca' }" role="menuitem" @click="goFromMenu('/admin/marca')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3a9 9 0 1 0 0 18c1.4 0 2.2-.9 2.2-2 0-1-.8-1.6-.8-2.4 0-.7.6-1.3 1.4-1.3H17a4 4 0 0 0 4-4c0-4.4-4-8.3-9-8.3Z" stroke-linejoin="round" /><circle cx="7.5" cy="12" r="1.1" fill="currentColor" stroke="none" /><circle cx="10" cy="7.8" r="1.1" fill="currentColor" stroke="none" /><circle cx="14.5" cy="7.8" r="1.1" fill="currentColor" stroke="none" /></svg>
+          Marca (cores e logo)
+        </button>
+
+        <div v-if="user?.is_admin" class="usermenu-sep" />
 
         <button class="usermenu-item" role="menuitem" @click="toggle()">
           <svg v-if="isDark" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="4.2" /><path d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6" stroke-linecap="round" /></svg>
@@ -216,6 +219,10 @@ onBeforeUnmount(() => {
   font-size: 13.5px;
   text-align: left;
   cursor: pointer;
+}
+.usermenu-item.active {
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), .1);
 }
 .usermenu-item:hover {
   background: rgba(var(--accent-rgb), .12);

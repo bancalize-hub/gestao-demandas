@@ -466,8 +466,12 @@ class GoogleCalendarService
         return $person;
     }
 
-    /** Verifica se um intervalo específico está livre na agenda do usuário. */
-    public function isFree(User $user, Carbon $start, Carbon $end): bool
+    /**
+     * Verifica se um intervalo específico está livre na agenda do usuário.
+     * $ignoreEventId permite ignorar um evento (usado ao REMARCAR: a própria reunião
+     * que está sendo movida não pode contar como conflito consigo mesma).
+     */
+    public function isFree(User $user, Carbon $start, Carbon $end, ?string $ignoreEventId = null): bool
     {
         $events = $this->calendar($user)->events->listEvents($this->calendarId($user), [
             'timeMin' => $start->copy()->subMinute()->toRfc3339String(),
@@ -478,6 +482,9 @@ class GoogleCalendarService
         ]);
 
         foreach ($events->getItems() as $e) {
+            if ($ignoreEventId && $e->getId() === $ignoreEventId) {
+                continue;
+            }
             $s = $e->getStart()?->getDateTime();
             $en = $e->getEnd()?->getDateTime();
             if ($s && $en && $start->lt(Carbon::parse($en)) && $end->gt(Carbon::parse($s))) {

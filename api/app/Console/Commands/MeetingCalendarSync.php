@@ -114,7 +114,24 @@ class MeetingCalendarSync extends Command
             $imported++;
         }
 
-        $this->info("empresa {$user->company_id} calendar-sync: {$imported} reuniões importadas, {$matched} casadas com um lead.");
+        // Reunião apagada direto no Google Calendar continuaria "ativa" aqui e travaria novos
+        // agendamentos do contato (regra de ouro: um ativo por vez). Some do calendário → cancela.
+        $vivos = collect($events)->pluck('id')->filter()->all();
+        $sumidas = 0;
+        // Só reconcilia com a lista COMPLETA da janela: se a agenda bateu o teto do listEvents,
+        // a lista pode estar truncada e cancelaríamos reunião que existe. E só mexe nas reuniões
+        // desta conta Google (outro atendente tem a agenda dele).
+        if (count($events) < 250) {
+            $sumidas = Meeting::query()
+                ->where('user_id', $user->id)
+                ->whereNull('cancelled_at')
+                ->whereNotNull('google_event_id')
+                ->whereBetween('starts_at', [$from, $to])
+                ->whereNotIn('google_event_id', $vivos ?: [''])
+                ->update(['cancelled_at' => now(), 'cancel_reason' => 'apagada no Google Calendar']);
+        }
+
+        $this->info("empresa {$user->company_id} calendar-sync: {$imported} reuniões importadas, {$matched} casadas com um lead, {$sumidas} canceladas (sumiram da agenda).");
     }
 
     /**

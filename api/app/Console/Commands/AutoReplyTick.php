@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\Conversation;
+use App\Models\Meeting;
 use App\Models\User;
 use App\Services\AiReplyService;
 use App\Services\ChatSender;
@@ -143,15 +144,23 @@ class AutoReplyTick extends Command
 
                 $reply = null;
 
-                // Se a conversa tem pinta de agendamento, tenta marcar sozinho (cria evento + Meet).
-                // Não tenta de novo se já enviamos um link de reunião (evita marcar duas vezes).
-                if ($googleUser && $conv->phone && $this->looksLikeScheduling($conv) && ! $this->alreadyBooked($conv)) {
+                // Se a conversa tem pinta de agendamento, entrega ao agendador (marcar, remarcar ou
+                // cancelar). Ele é quem faz valer a regra de ouro — um agendamento ativo por contato —
+                // então não bloqueamos mais quando já existe reunião: é justamente aí que mora a
+                // remarcação. Com reunião ativa, só chamamos quando o cliente fala em mudar/desmarcar.
+                $active = Meeting::activeFor($conv->id);
+                $vaiAgendar = $googleUser && $conv->phone && $this->looksLikeScheduling($conv)
+                    && (! $active || $this->looksLikeChange($conv));
+
+                if ($vaiAgendar) {
                     try {
                         $res = $scheduler->decideAndBook($googleUser, $conv, $ai->memoryContext($conv));
-                        // Usa a mensagem do agendador SEMPRE que ele rodou: se marcou, é a confirmação com
-                        // link do Meet; se não marcou (horário ocupado/dia inválido), é a proposta de horários.
-                        // Assim a IA nunca diz "confirmado" sem o evento ter sido realmente criado.
-                        if (! empty($res['message'])) {
+                        // Usa a mensagem do agendador SEMPRE que ele agiu (marcou/remarcou/cancelou/perguntou)
+                        // e também quando ainda não há reunião (aí a mensagem é a proposta de horários).
+                        // Assim a IA nunca diz "confirmado" sem o evento ter sido realmente criado — e, com
+                        // reunião já marcada, um "action: nada" cai na resposta normal da IA.
+                        $agiu = ($res['action'] ?? 'nada') !== 'nada';
+                        if (! empty($res['message']) && ($agiu || ! $active)) {
                             $reply = $res['message'];
                         }
                     } catch (\Throwable $e) {
@@ -228,11 +237,27 @@ class AutoReplyTick extends Command
         return (bool) preg_match('/\d{1,2}\s*h\b|\d{1,2}:\d{2}|amanh[ãa]|hoje|segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|reuni|marcar|agend|hor[áa]rio|pode ser|confirm|fechado|call|meet/iu', $recent);
     }
 
-    /** Já existe uma reunião marcada nesta conversa? (enviamos um link do Meet recentemente.) */
-    private function alreadyBooked(Conversation $conv): bool
+    /**
+     * O cliente falou em mudar/desmarcar a reunião que já existe? Filtro barato antes de gastar
+     * uma chamada de IA: pega tanto os pedidos explícitos ("preciso adiar", "cancelar") quanto o
+     * sinal decisivo da remarcação — ele citar um dia/horário nas últimas mensagens.
+     */
+    private function looksLikeChange(Conversation $conv): bool
     {
-        return $conv->messages()
-            ->where('is_out', true)->where('text', 'like', '%meet.google.com%')
-            ->exists();
+        $recent = $conv->messages()
+            ->where('is_out', false)
+            ->where(fn ($q) => $q->where('type', 'text')->whereNotNull('text')
+                ->orWhere(fn ($v) => $v->where('type', 'voice')->whereNotNull('transcript')))
+            ->reorder()->orderByDesc('ts')->orderByDesc('id')->take(3)
+            ->get(['type', 'text', 'transcript'])
+            ->map(fn ($m) => $m->type === 'voice' ? (string) $m->transcript : (string) $m->text)
+            ->implode(' ');
+
+        return (bool) preg_match(
+            '/remarc|desmarc|cancel|adiar|transferir|imprevisto|n[ãa]o vou conseguir|n[ãa]o consigo|'
+            .'outro (dia|hor[áa]rio)|mudar|trocar|passar para|semana que vem|melhor n[ao]\b|'
+            .'\d{1,2}\s*h\b|\d{1,2}:\d{2}|amanh[ãa]|segunda|ter[çc]a|quarta|quinta|sexta/iu',
+            $recent,
+        );
     }
 }

@@ -146,11 +146,15 @@ class ConversationController extends Controller
 
         return response()->json(array_filter([
             'scheduled' => $result['scheduled'],
+            'action' => $result['action'] ?? null,                 // marcar|remarcar|cancelar|perguntar|nada
+            'rescheduled' => $result['rescheduled'] ?? null,
+            'cancelled' => $result['cancelled'] ?? null,
             'message' => $result['message'] ?? null,
             'note' => $result['note'] ?? null,
             'event' => $result['event'] ?? null,
             'meet_link' => $result['meet_link'] ?? null,
             'slot_label' => $result['slot_label'] ?? null,
+            'previous_slot_label' => $result['previous_slot_label'] ?? null,
         ], fn ($v) => $v !== null));
     }
 }

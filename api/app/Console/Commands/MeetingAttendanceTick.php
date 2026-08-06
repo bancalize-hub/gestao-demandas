@@ -35,6 +35,7 @@ class MeetingAttendanceTick extends Command
         // antigo (attended=true) travava o resumo pra sempre. A chegada do relatório do
         // read.ai por e-mail já é a prova de que a reunião aconteceu.
         $meetings = Meeting::query()
+            ->whereNull('cancelled_at')   // cancelada: não houve reunião para apurar
             ->where('ends_at', '<', now())
             ->where('ends_at', '>', now()->subDays(14))
             ->where(function ($q) {

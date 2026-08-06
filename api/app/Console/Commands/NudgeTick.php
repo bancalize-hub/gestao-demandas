@@ -130,7 +130,7 @@ class NudgeTick extends Command
 
         // Reunião marcada no futuro: o lead não sumiu, ele já tem hora com a gente.
         // Quem fala com ele é o lembrete de reunião.
-        if (Meeting::where('conversation_id', $conv->id)->where('starts_at', '>', now())->exists()) {
+        if (Meeting::where('conversation_id', $conv->id)->active()->exists()) {
             return;
         }
 

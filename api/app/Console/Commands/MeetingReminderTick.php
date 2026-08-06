@@ -29,6 +29,7 @@ class MeetingReminderTick extends Command
         // Reuniões ainda por vir, já dentro da janela de lembrete (starts_at <= agora + lead) e
         // que ainda não foram lembradas. O lead é por-reunião (DATE_ADD com a coluna).
         $due = Meeting::query()
+            ->whereNull('cancelled_at')   // reunião cancelada/remarcada não gera lembrete
             ->whereNull('reminder_sent_at')
             ->whereNotNull('phone')
             ->where('starts_at', '>', now())

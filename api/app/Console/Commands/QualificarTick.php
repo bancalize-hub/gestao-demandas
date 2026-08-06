@@ -152,6 +152,11 @@ class QualificarTick extends Command
 
         Use true quando o lead se encaixa no critério de qualificado.
         Use false quando ele se encaixa no critério de desqualificado.
+
+        Um desqualificador que o próprio lead declarou JÁ BASTA para false — não espere
+        que ele descreva o negócio dele. Quem escreve "quero um empréstimo" já disse o
+        que veio buscar; cobrar mais contexto antes de decidir deixaria de fora
+        justamente o lead ruim mais fácil de identificar.
         Use null quando o lead não disse nada que permita julgar — é o caso de quem só
         mandou a mensagem automática do anúncio, respondeu "oi"/"sim" ou sumiu. Não
         adivinhe: null é a resposta certa quando falta informação, e é melhor que um

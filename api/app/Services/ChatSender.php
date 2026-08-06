@@ -32,6 +32,33 @@ class ChatSender
             return null;
         }
 
+        return $this->espelhar($conv, $waId, $text);
+    }
+
+    /**
+     * Envia um TEMPLATE aprovado — o único caminho da Cloud API fora da janela de 24h.
+     *
+     * `$espelho` é a mesma frase do template já com as variáveis trocadas: a Meta recebe
+     * nome + parâmetros, e o chat mostra a bolha que o cliente realmente leu (senão o
+     * atendente veria um vazio na conversa e responderia sem saber o que foi enviado).
+     */
+    public function template(Conversation $conv, string $name, string $language, array $bodyParams, string $espelho): ?Message
+    {
+        if (! $conv->phone || $name === '') {
+            return null;
+        }
+
+        $waId = Wa::forConversation($conv)->sendTemplate($conv->phone, $name, $language, $bodyParams);
+        if ($waId === null) {
+            return null;
+        }
+
+        return $this->espelhar($conv, $waId, $espelho);
+    }
+
+    /** Grava a bolha de saída no chat e avisa o painel. */
+    private function espelhar(Conversation $conv, string $waId, string $text): Message
+    {
         $ts = time();
         $data = [
             'type' => 'text',

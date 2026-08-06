@@ -65,6 +65,28 @@ class LeadsDeAnuncio
         self::registrar($conv);
     }
 
+    /**
+     * Detecta o criativo de origem pelo texto pré-preenchido do wa.me (ex.: "Criativo 9").
+     * Só age em conversas novas — numa conversa antiga seria coincidência.
+     * Salva em custom_fields.criativo para relatórios reais por criativo.
+     */
+    public static function detectarCriativo(Conversation $conv, ?string $texto, bool $conversaNova): void
+    {
+        if (! $conversaNova) {
+            return;
+        }
+        $texto = trim((string) $texto);
+        if (! preg_match('/^Criativo\s+\d+$/iu', $texto)) {
+            return;
+        }
+        $fields = $conv->custom_fields ?? [];
+        if (! empty($fields['criativo'])) {
+            return;
+        }
+        $fields['criativo'] = $texto;
+        $conv->forceFill(['custom_fields' => $fields])->save();
+    }
+
     /** Garante o contato do lead dentro da lista de anúncio. Sem telefone não há contato. */
     public static function registrar(Conversation $conv): ?Contact
     {

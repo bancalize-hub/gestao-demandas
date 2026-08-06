@@ -9,8 +9,10 @@ use App\Models\Stage;
 use App\Services\AiReplyService;
 use App\Services\MeetingScheduler;
 use App\Services\StageMover;
+use App\Support\Avatars;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 
 class ConversationController extends Controller
 {
@@ -138,6 +140,8 @@ class ConversationController extends Controller
             return response()->json(['message' => 'IA indisponível no momento.'], 502);
         }
 
+        // O agendador consulta sozinho o agendamento ativo do contato (regra de ouro: um por vez)
+        // e decide entre marcar, REMARCAR o que existe, cancelar ou perguntar.
         $result = $this->scheduler->decideAndBook($user, $conversation, $this->ai->memoryContext($conversation));
 
         if (($result['error'] ?? null) === 'parse') {
@@ -156,5 +160,35 @@ class ConversationController extends Controller
             'slot_label' => $result['slot_label'] ?? null,
             'previous_slot_label' => $result['previous_slot_label'] ?? null,
         ], fn ($v) => $v !== null));
+    }
+
+    /**
+     * Foto de perfil do contato, servida do NOSSO disco.
+     *
+     * A coluna `avatar` guarda a URL que o WhatsApp devolveu, e essa URL MORRE: o link do
+     * `pps.whatsapp.net` carrega um `oe=` de validade e depois de alguns dias responde 403.
+     * Era por isso que as fotos sumiam de todo mundo com o tempo — o `<img>` apontava
+     * direto para um link vencido. Aqui o binário é baixado uma vez e fica no disco; a URL
+     * do banco passa a ser só a origem, não o que a tela consome.
+     */
+    public function avatar(Conversation $conversation)
+    {
+        $path = Avatars::pathFor($conversation);
+
+        if (! is_file($path)) {
+            // Cache negativo: sem ele, uma conversa cuja foto morreu tentaria baixar de
+            // novo a cada renderização da lista — centenas de requisições por tela.
+            abort_if((bool) Cache::get("wa-avatar-miss:{$conversation->id}"), 404);
+
+            if (! Avatars::baixar($conversation)) {
+                Cache::put("wa-avatar-miss:{$conversation->id}", true, now()->addHours(6));
+                abort(404);
+            }
+        }
+
+        return response()->file($path, [
+            'Content-Type' => Avatars::mimeDe($path),
+            'Cache-Control' => 'private, max-age=86400',
+        ]);
     }
 }

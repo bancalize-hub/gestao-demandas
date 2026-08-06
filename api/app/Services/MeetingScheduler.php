@@ -7,6 +7,7 @@ use App\Models\LeadActivity;
 use App\Models\Meeting;
 use App\Models\User;
 use App\Support\Claude;
+use App\Support\MetaConversions;
 use Carbon\Carbon;
 
 /**
@@ -337,6 +338,10 @@ class MeetingScheduler
             "Reunião agendada para {$slotLabel}",
         );
 
+        // Conta para o Facebook que este clique virou reunião — é o sinal que faz a
+        // campanha de conversão otimizar por agendamento, não por clique.
+        MetaConversions::enviarUmaVez($conversation, MetaConversions::REUNIAO_MARCADA);
+
         return [
             'action' => 'marcar',
             'scheduled' => true,
@@ -402,6 +407,10 @@ class MeetingScheduler
             null,
             $user->id,
         );
+
+        // Reunião marcada continua valendo como conversão para a Meta (enviarUmaVez não repete):
+        // cobre o lead cuja 1ª marcação é anterior à CAPI e que só agora remarcou.
+        MetaConversions::enviarUmaVez($conversation, MetaConversions::REUNIAO_MARCADA);
 
         // Confirma explicitamente o cancelamento do horário antigo.
         $message = "Pronto! Cancelei {$previousLabel} e sua reunião ficou para {$slotLabel}.";

@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Exceptions\GoogleDesconectado;
 use App\Models\User;
 use Carbon\Carbon;
 use Google\Client as GoogleClient;
@@ -108,6 +109,20 @@ class GoogleCalendarService
         if ($client->isAccessTokenExpired()) {
             $new = $client->fetchAccessTokenWithRefreshToken($user->google_refresh_token);
             if (isset($new['error'])) {
+                // `invalid_grant` = o refresh token morreu (usuário revogou o acesso, ou o
+                // app está no modo "Testing" do Google Cloud, onde ele caduca em 7 dias).
+                // Tentar de novo nunca vai funcionar: apaga a credencial para o sistema
+                // inteiro voltar a mostrar "Conectar Google" em vez de estourar toda vez.
+                if ($new['error'] === 'invalid_grant') {
+                    $user->forceFill([
+                        'google_access_token' => null,
+                        'google_refresh_token' => null,
+                        'google_token_expires_at' => null,
+                    ])->save();
+
+                    throw new GoogleDesconectado((string) ($new['error_description'] ?? ''));
+                }
+
                 throw new RuntimeException('Falha ao renovar token Google: '.($new['error_description'] ?? $new['error']));
             }
             $user->google_access_token = $new['access_token'];
@@ -468,8 +483,7 @@ class GoogleCalendarService
 
     /**
      * Verifica se um intervalo específico está livre na agenda do usuário.
-     * $ignoreEventId permite ignorar um evento (usado ao REMARCAR: a própria reunião
-     * que está sendo movida não pode contar como conflito consigo mesma).
+     * $ignoreEventId: evento que NÃO conta como conflito (o que está sendo remarcado).
      */
     public function isFree(User $user, Carbon $start, Carbon $end, ?string $ignoreEventId = null): bool
     {

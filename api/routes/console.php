@@ -2,6 +2,7 @@
 
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schedule;
 
 Artisan::command('inspire', function () {
@@ -26,6 +27,14 @@ Schedule::command('lists:sync')
 
 Schedule::command('wpp:backfill')
     ->everyThirtyMinutes()
+    ->withoutOverlapping()
+    ->runInBackground();
+
+// Fotos de perfil dos contatos → binário no disco. Precisa de um número Evolution
+// conectado (a API oficial da Meta não entrega foto de contato); sem ele o comando
+// só avisa e sai. De hora em hora, 200 conversas por vez, das mais recentes para trás.
+Schedule::command('wa:avatars --limite=200')
+    ->hourly()
     ->withoutOverlapping()
     ->runInBackground();
 
@@ -80,3 +89,14 @@ Schedule::command('meetings:attendance-tick')
     ->everyFiveMinutes()
     ->withoutOverlapping()
     ->runInBackground();
+
+// Batimento do agendador: o painel do super-admin usa isto para dizer se o scheduler
+// está vivo. Sem ele, "os ticks pararam" só é descoberto quando alguém repara que a IA
+// não responde mais — e não dá para perguntar ao pm2, que é do root.
+// Grava STRING, não objeto: valor de cache com objeto dentro volta como
+// __PHP_Incomplete_Class em alguns processos e quebraria justamente a tela que se olha
+// quando o resto já está quebrado.
+Schedule::call(fn () => Cache::put('super.heartbeat', now()->toIso8601String(), 3600))
+    ->everyMinute()
+    ->name('super-heartbeat')
+    ->withoutOverlapping();

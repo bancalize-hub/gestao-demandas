@@ -14,9 +14,12 @@ use Illuminate\Http\Request;
  */
 class AgentController extends Controller
 {
-    public function index()
+    /** `kind` separa as duas caixas: 'ops' (opera a VPS) e 'marketing' (Facebook Ads). */
+    public function index(Request $request)
     {
-        return AgentSession::orderByDesc('updated_at')->get(['id', 'title', 'cwd', 'updated_at']);
+        return AgentSession::where('kind', $request->query('kind', 'ops'))
+            ->orderByDesc('updated_at')
+            ->get(['id', 'title', 'kind', 'cwd', 'updated_at']);
     }
 
     public function store(Request $request)
@@ -24,10 +27,12 @@ class AgentController extends Controller
         $data = $request->validate([
             'title' => 'nullable|string|max:120',
             'cwd' => 'nullable|string|max:300',
+            'kind' => 'nullable|in:ops,marketing',
         ]);
 
         return AgentSession::create([
             'title' => $data['title'] ?? 'Nova sessão',
+            'kind' => $data['kind'] ?? 'ops',
             'cwd' => $data['cwd'] ?? '/var/www/gestao',
         ]);
     }
@@ -40,6 +45,7 @@ class AgentController extends Controller
 
         return [
             'id' => $session->id,
+            'kind' => $session->kind,
             'messages' => $session->messages,
             'active_job_id' => $active?->id,
         ];

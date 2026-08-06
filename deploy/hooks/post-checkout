@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Instalado por deploy/install-hooks.sh. Ver deploy/refresh.sh para o porquê.
+#
+# $3 = 1 quando foi troca de branch (o que muda o código servido); 0 é checkout de
+# arquivo isolado, que não justifica reconstruir cache.
+[ "${3:-0}" = "1" ] || exit 0
+[ "$(git rev-parse --show-toplevel 2>/dev/null)" = "/var/www/gestao" ] || exit 0
+
+exec /var/www/gestao/deploy/refresh.sh

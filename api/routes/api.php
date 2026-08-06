@@ -17,10 +17,12 @@ use App\Http\Controllers\Api\LabelController;
 use App\Http\Controllers\Api\LeadActivityController;
 use App\Http\Controllers\Api\MaterialController;
 use App\Http\Controllers\Api\MemoryController;
+use App\Http\Controllers\Api\MarketingController;
 use App\Http\Controllers\Api\MessageController;
 use App\Http\Controllers\Api\QuickReplyController;
 use App\Http\Controllers\Api\StageAutomationController;
 use App\Http\Controllers\Api\StageController;
+use App\Http\Controllers\Api\SuperController;
 use App\Http\Controllers\Api\TaskController;
 use App\Http\Controllers\Api\WhatsAppCloudController;
 use App\Http\Controllers\Api\WhatsAppController;
@@ -70,6 +72,7 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
     // CRM
     Route::get('/conversations', [ConversationController::class, 'index']);
     Route::get('/conversations/{conversation}', [ConversationController::class, 'show']);
+    Route::get('/conversations/{conversation}/avatar', [ConversationController::class, 'avatar']);
     Route::patch('/conversations/{conversation}', [ConversationController::class, 'update']);
     Route::get('/conversations/{conversation}/messages', [MessageController::class, 'index']);
     Route::post('/conversations/{conversation}/messages', [MessageController::class, 'store']);
@@ -109,6 +112,30 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
         Route::post('/agent/sessions/{session}/messages', [AgentController::class, 'message']);
         Route::get('/agent/jobs/{job}', [AgentController::class, 'job']);
         Route::post('/agent/jobs/{job}/stop', [AgentController::class, 'stop']);
+
+        // Marketing: credencial do Facebook Ads + biblioteca de criativos. O terminal
+        // do agente de marketing usa as rotas /agent acima (sessões com kind=marketing).
+        Route::get('/marketing/status', [MarketingController::class, 'status']);
+        Route::post('/marketing/credentials', [MarketingController::class, 'salvar']);
+        Route::post('/marketing/test', [MarketingController::class, 'testar']);
+        Route::get('/marketing/creatives', [MarketingController::class, 'criativos']);
+        Route::post('/marketing/creatives', [MarketingController::class, 'subirCriativo']);
+        Route::patch('/marketing/creatives/{creative}', [MarketingController::class, 'atualizarCriativo']);
+        Route::delete('/marketing/creatives/{creative}', [MarketingController::class, 'apagarCriativo']);
+        Route::get('/marketing/creatives/{creative}/arquivo', [MarketingController::class, 'arquivo']);
+        // Painel de gestão de campanhas do Facebook Ads (métricas, ativar/pausar, orçamento).
+        Route::get('/marketing/campanhas', [MarketingController::class, 'campanhas']);
+        Route::get('/marketing/metricas', [MarketingController::class, 'metricasFb']);
+        Route::get('/marketing/ad-stats', [MarketingController::class, 'adStats']);
+        Route::patch('/marketing/campanhas/{id}', [MarketingController::class, 'atualizarCampanha']);
+
+        // Painel da PLATAFORMA (página /super): fala de todas as empresas ao mesmo tempo,
+        // por isso vive aqui dentro e nunca no grupo comum. Ver PLANO-SUPER-ADMIN.md.
+        Route::get('/super/companies', [SuperController::class, 'empresas']);
+        Route::patch('/super/companies/{company}', [SuperController::class, 'alternarEmpresa']);
+        Route::get('/super/wa-accounts', [SuperController::class, 'numeros']);
+        Route::patch('/super/wa-accounts/{conta}', [SuperController::class, 'alternarNumero']);
+        Route::get('/super/platform', [SuperController::class, 'plataforma']);
     });
 
     Route::get('/stages', [StageController::class, 'index']);

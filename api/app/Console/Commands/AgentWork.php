@@ -3,7 +3,10 @@
 namespace App\Console\Commands;
 
 use App\Models\AgentJob;
+use App\Models\AgentSession;
+use App\Models\WaAccount;
 use App\Support\Claude;
+use App\Support\Tenancy;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
@@ -51,35 +54,98 @@ class AgentWork extends Command
      * Aqui o token do painel (o mesmo do resto da IA, trocável em Admin → Memória, sem SSH)
      * é espelhado num arquivo que só o gestao-agent lê, e o comando o exporta na hora.
      */
-    private function sincronizaCredencial(): bool
+    private function sincronizaCredencial(string $usuario, string $arquivo): bool
     {
         $token = Claude::token();
         if (! $token) {
             return false;
         }
 
-        if (! is_file(self::TOKEN_FILE) || trim((string) @file_get_contents(self::TOKEN_FILE)) !== $token) {
+        if (! is_file($arquivo) || trim((string) @file_get_contents($arquivo)) !== $token) {
             // Fecha as permissões ANTES de escrever: um arquivo 0644 com o token, mesmo
             // por um instante, é o tipo de janela que não precisa existir.
-            touch(self::TOKEN_FILE);
-            @chmod(self::TOKEN_FILE, 0600);
-            file_put_contents(self::TOKEN_FILE, $token."\n");
-            @chown(self::TOKEN_FILE, self::RUN_AS);
-            @chgrp(self::TOKEN_FILE, self::RUN_AS);
+            touch($arquivo);
+            @chmod($arquivo, 0600);
+            file_put_contents($arquivo, $token."\n");
+            @chown($arquivo, $usuario);
+            @chgrp($arquivo, $usuario);
         }
 
         return true;
     }
 
+    /**
+     * Agente de MARKETING: mesma tela e mesmo streaming, superfície completamente
+     * diferente. `--tools ""` desliga TODAS as ferramentas nativas (sem bash, sem ler
+     * ou escrever arquivo, sem web) e o `--strict-mcp-config` faz o CLI ignorar
+     * qualquer MCP configurado em outro lugar. Sobra exatamente o servidor fbads —
+     * cujas ferramentas criam tudo PAUSADO. Sem `--dangerously-skip-permissions`:
+     * o allowlist abaixo é a única autorização que existe.
+     *
+     * Roda como www-data (não gestao-agent) porque o servidor MCP é um `artisan` e
+     * precisa do .env e do storage do Laravel — que são de www-data.
+     */
+    /** O que transforma o agente da VPS num agente de marketing: só o texto abaixo. */
+    private function instrucoesMarketing(AgentSession $session): string
+    {
+        $empresa = (int) $session->company_id;
+
+        // O número de destino NUNCA pode ser digitado pelo modelo: em 03/08/2026 ele
+        // inverteu dois dígitos e os 9 anúncios da conta apontaram para um WhatsApp que
+        // não era do usuário. Vem do banco, pronto para copiar.
+        // company_id explícito: este comando roda no worker, sem empresa vinculada, e aí
+        // o escopo global é inerte — sem o filtro, sairia o número de OUTRA empresa.
+        $numero = WaAccount::where('company_id', $empresa)
+            ->orderByRaw("role = 'primary' desc")
+            ->value('phone');
+        $destino = $numero
+            ? "O WhatsApp que recebe os leads é o {$numero}. NUNCA digite outro número: o link do
+        anúncio é exatamente `https://api.whatsapp.com/send?phone={$numero}&text=Criativo+N`, com N
+        igual ao número do criativo usado. Esse texto pré-preenchido é o que faz o CRM saber de qual
+        anúncio veio cada lead — se mudar o formato, a origem do lead se perde."
+            : 'ATENÇÃO: a empresa não tem número de WhatsApp cadastrado — pergunte ao usuário qual é
+        o link de destino antes de criar qualquer anúncio.';
+
+        return <<<TXT
+        Nesta sessão você é o agente de MARKETING: cuida da conta de Facebook Ads do usuário.
+        Fale português do Brasil, direto e sem enrolação.
+
+        Para agir no Facebook use SEMPRE o CLI do próprio sistema, nunca chamadas HTTP na mão:
+
+          cd /var/www/gestao/api && php artisan fbads <acao> --empresa={$empresa} [opções]
+
+        Ações: conta | criativos | campanhas | criar-campanha | criar-conjunto | criar-anuncio | metricas
+        Veja `php artisan fbads --help` para todas as opções. A saída é JSON.
+
+        REGRA QUE NÃO SE NEGOCIA: tudo que o CLI cria nasce PAUSADO, e é assim de propósito.
+        Nunca diga que um anúncio está no ar. Ao terminar, diga em uma linha o que foi criado
+        e que o usuário precisa revisar e publicar no Gerenciador de Anúncios.
+
+        Antes de criar anúncio, rode `fbads criativos`: as imagens são as que o usuário subiu
+        pela tela, chamadas "Criativo 1", "Criativo 2"…, e as observações dele dizem para que
+        serve cada uma. Referencie pelo nome, ex.: --criativo="Criativo 3".
+
+        {$destino}
+
+        O orçamento fica na campanha OU no conjunto, nunca nos dois. Se faltar informação
+        essencial (objetivo, público, orçamento, link), pergunte em vez de inventar — errar
+        aqui gasta dinheiro do usuário.
+
+        Não edite o código do sistema nesta sessão: seu trabalho é operar a conta de anúncios.
+        TXT;
+    }
+
     private function runJob(AgentJob $job): void
     {
         $session = $job->session;
+        if ($session->company_id) {
+            app(Tenancy::class)->set((int) $session->company_id);
+        }
         $job->update(['status' => 'running', 'started_at' => now(), 'output' => '']);
 
-        $cwd = $session->cwd ?: '/var/www/gestao';
-        $sid = $session->claude_session_id;
+        $marketing = $session->kind === 'marketing';
 
-        if (! $this->sincronizaCredencial()) {
+        if (! $this->sincronizaCredencial(self::RUN_AS, self::TOKEN_FILE)) {
             $job->update([
                 'status' => 'error',
                 'error' => 'Nenhum token da IA configurado. Vá em Admin → Memória → Conexão da IA e conecte.',
@@ -89,10 +155,18 @@ class AgentWork extends Command
             return;
         }
 
+        $cwd = $session->cwd ?: '/var/www/gestao';
+        $sid = $session->claude_session_id;
+
         // Comando: roda como gestao-agent; prompt vai por STDIN (sem injeção). cwd/sid são escapados.
         $claudeArgs = self::CLAUDE.' -p --output-format stream-json --verbose --dangerously-skip-permissions';
         if ($sid && preg_match('/^[A-Za-z0-9\-]{8,}$/', $sid)) {
             $claudeArgs .= ' --resume '.escapeshellarg($sid);
+        }
+        // Marketing é o MESMO motor do /agente (assinatura, shell) — só muda a instrução:
+        // em vez de operar a VPS, ele age no Facebook pelo CLI `php artisan fbads`.
+        if ($marketing) {
+            $claudeArgs .= ' --append-system-prompt '.escapeshellarg($this->instrucoesMarketing($session));
         }
         // O token vai por ARQUIVO, não por argumento: em `ps` a linha de comando é pública.
         $inner = 'export CLAUDE_CODE_OAUTH_TOKEN="$(cat '.escapeshellarg(self::TOKEN_FILE).')"; '
@@ -210,6 +284,27 @@ class AgentWork extends Command
         $this->info("job {$job->id} concluído");
     }
 
+    /** "nome=Tráfego · objetivo=OUTCOME_TRAFFIC" — o suficiente para auditar sem abrir nada. */
+    private function resumoArgs(array $in): string
+    {
+        $partes = [];
+        foreach ($in as $chave => $valor) {
+            if (is_array($valor)) {
+                $valor = implode('/', array_map(fn ($v) => is_scalar($v) ? (string) $v : '…', $valor));
+            }
+            $valor = trim((string) $valor);
+            if ($valor === '') {
+                continue;
+            }
+            $partes[] = $chave.'='.mb_strimwidth(preg_replace('/\s+/', ' ', $valor) ?? '', 0, 60, '…');
+            if (count($partes) >= 4) {
+                break;
+            }
+        }
+
+        return $partes ? ' '.implode(' · ', $partes) : '';
+    }
+
     /** Converte um evento stream-json numa linha legível; devolve [texto, session_id?]. */
     private function renderEvent(string $line): array
     {
@@ -236,6 +331,10 @@ class AgentWork extends Command
                     $in = $block['input'] ?? [];
                     if ($name === 'Bash' && isset($in['command'])) {
                         $out .= "\n$ ".$in['command']."\n";
+                    } elseif (str_starts_with($name, 'mcp__fbads__')) {
+                        // Ferramenta do agente de marketing: o nome cru (mcp__fbads__criar_campanha)
+                        // e um input vazio não dizem nada na tela — mostra a ação e os argumentos.
+                        $out .= "\n[".substr($name, 12).$this->resumoArgs($in)."]\n";
                     } else {
                         $brief = $in['file_path'] ?? ($in['path'] ?? ($in['pattern'] ?? ''));
                         $out .= "\n[".$name.($brief ? ' '.$brief : '')."]\n";

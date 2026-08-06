@@ -232,6 +232,21 @@ function initialsOf(name: string): string {
   return ((parts[0][0] || '') + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase()
 }
 
+/**
+ * A foto do contato sai pela NOSSA API, nunca pelo link do WhatsApp.
+ *
+ * O `pps.whatsapp.net` que vem no campo `avatar` tem prazo de validade (`oe=`) e passa a
+ * responder 403 depois de alguns dias — apontar o `<img>` direto para ele fazia a foto de
+ * todo mundo sumir com o tempo. O endpoint serve o binário que guardamos em disco; o campo
+ * do banco vira só o sinal de que existe foto. Quando não existe, fica vazio e a tela cai
+ * no avatar de iniciais, como já fazia.
+ */
+function avatarUrl(c: any): string {
+  if (!c?.avatar || !c?.slug) return ''
+  const base = useRuntimeConfig().public.apiOrigin as string
+  return `${base}/api/conversations/${encodeURIComponent(c.slug)}/avatar`
+}
+
 // Última mensagem foi enviada por nós? (mensagens vêm ordenadas por ts ascendente).
 function lastIsOut(messages: any[] | undefined): boolean {
   if (!messages || !messages.length) return false
@@ -250,7 +265,7 @@ function mapConv(c: any): Conversation {
     display = masked || 'Contato WhatsApp'
   }
   return {
-    id: c.slug, name: display, nameSaved, initials: nameSaved ? initialsOf(display) : (c.initials || '#'), color: colorForId(c.slug || c.name || String(c.id)), avatar: c.avatar ?? '', online: !!c.online,
+    id: c.slug, name: display, nameSaved, initials: nameSaved ? initialsOf(display) : (c.initials || '#'), color: colorForId(c.slug || c.name || String(c.id)), avatar: avatarUrl(c), online: !!c.online,
     statusText: c.status_text ?? '', role: c.role ?? '', dealValue: c.deal_value ?? '', dealUnit: c.deal_unit ?? '',
     stage: c.stage ?? '', stageColor: c.stage_color ?? '#8696a0', prob: c.prob ?? 0, hot: !!c.hot,
     preview: c.preview ?? '', time: c.time ?? '', lastMessageAt: c.last_message_at ?? null, startedAt: c.started_ts ?? null, unread: c.unread ?? 0, archived: !!c.archived, autoReply: !!c.auto_reply, lastOut: c.last_message ? !!c.last_message.is_out : lastIsOut(c.messages), inMemory: !!c.in_memory, tags: c.tags ?? [],

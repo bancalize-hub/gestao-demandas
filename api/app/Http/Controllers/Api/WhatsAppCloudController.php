@@ -383,12 +383,19 @@ class WhatsAppCloudController extends Controller
         $conversaNova = ! $conv->exists;
 
         // Lead de anúncio clicável (Click-to-WhatsApp): guarda de onde veio.
+        //
+        // `ctwa_clid` é o identificador do CLIQUE no anúncio, e é a única chave que liga
+        // este lead de volta ao Facebook depois. Sem ele não existe evento de conversão
+        // atribuível (ver MetaConversions) — então guarda-se sempre, mesmo que hoje só
+        // o painel use `id` e `titulo`.
         if ($temReferral) {
             $custom = (array) ($conv->custom_fields ?? []);
             $custom['anuncio'] = array_filter([
                 'titulo' => $raw['referral']['headline'] ?? null,
                 'origem' => $raw['referral']['source_type'] ?? null,
                 'id' => $raw['referral']['source_id'] ?? null,
+                'ctwa_clid' => $raw['referral']['ctwa_clid'] ?? null,
+                'url' => $raw['referral']['source_url'] ?? null,
             ]);
             $conv->custom_fields = $custom;
         }
@@ -420,6 +427,12 @@ class WhatsAppCloudController extends Controller
         // "Leads de anúncio" viva sem ninguém importar nada à mão.
         if (! $isOut) {
             LeadsDeAnuncio::registrarSeAnuncio($conv, $preview, $temReferral, $conversaNova);
+            LeadsDeAnuncio::detectarCriativo($conv, $preview, $conversaNova);
+            // Primeiro contato de um lead de anúncio = conversão "Lead" para a Meta.
+            // Vai depois do save() porque é o save que grava o ctwa_clid que o evento usa.
+            if ($temReferral) {
+                \App\Support\MetaConversions::enviarUmaVez($conv, \App\Support\MetaConversions::LEAD);
+            }
         }
 
         // Prospect respondeu a um disparo → marca o contato da campanha.

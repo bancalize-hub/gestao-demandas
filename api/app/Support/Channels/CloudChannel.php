@@ -374,7 +374,9 @@ class CloudChannel implements WaChannel
     /** Janela de atendimento: 24h a contar da última mensagem recebida do cliente. */
     public function canSendFreeform(?int $lastInboundTs): bool
     {
-        return $lastInboundTs !== null && (time() - $lastInboundTs) < 24 * 3600;
+        // now() (e não time()): mesmo instante em produção, mas é o relógio que o Carbon
+        // controla — a janela de 24h é justamente o que se precisa simular em teste.
+        return $lastInboundTs !== null && (now()->timestamp - $lastInboundTs) < 24 * 3600;
     }
 
     public function markRead(string $waId): bool

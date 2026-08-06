@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { type CalEvent, useCrmStore } from '~/stores/crm'
 
@@ -179,7 +179,7 @@ function openEdit(ev: CalEvent) {
 }
 function closeModal() { modalOpen.value = false }
 
-// Clicar no card abre a FICHA do cliente da reunião. Sem lead vinculado, cai na edição do evento.
+// Abre a FICHA do cliente da reunião (a partir do popup de detalhes).
 function openClient(ev: CalEvent) {
   if (ev.conversation_slug) {
     crm.activeId = ev.conversation_slug
@@ -365,6 +365,95 @@ function setView(v: 'dia' | 'semana' | 'mes') {
   else if (v === 'dia') { focusedDay.value = new Date(); nav(0) }
   else loadWeek()
 }
+
+// ===== Linha do "agora" =====
+
+/**
+ * O relógio da tela. A linha do horário atual só desce se algo re-renderizar: sem este
+ * tick ela congelaria na hora em que a página abriu, que é pior do que não ter linha.
+ * Meio minuto é o passo mais grosso que ainda parece contínuo (a linha anda ~0,5 px).
+ */
+const agora = ref(new Date())
+let relogio: ReturnType<typeof setInterval> | null = null
+onMounted(() => { relogio = setInterval(() => (agora.value = new Date()), 30_000) })
+onBeforeUnmount(() => { if (relogio) clearInterval(relogio) })
+
+/** Altura (px) do horário atual dentro da grade — null quando está fora da faixa 07h–21h. */
+const nowTop = computed(() => {
+  const h = agora.value.getHours() + agora.value.getMinutes() / 60
+  if (h < START_HOUR || h > END_HOUR) return null
+  return (h - START_HOUR) * HOUR_H
+})
+const nowLabel = computed(() => agora.value.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }))
+
+/** A grade abre já no horário atual em vez de às 07:00 — o dia começa onde você está. */
+const gradeRef = ref<HTMLElement | null>(null)
+onMounted(() => {
+  requestAnimationFrame(() => {
+    if (gradeRef.value && nowTop.value !== null) gradeRef.value.scrollTop = Math.max(0, nowTop.value - 140)
+  })
+})
+
+/** A próxima reunião: a que está acontecendo agora ou, na falta, a primeira que ainda vem. */
+const proxima = computed(() => {
+  const t = agora.value.getTime()
+  return crm.events
+    .filter(ev => ev.starts_at && !ev.all_day)
+    .filter(ev => (ev.ends_at ? new Date(ev.ends_at).getTime() : new Date(ev.starts_at!).getTime() + 3600_000) >= t)
+    .sort((a, b) => new Date(a.starts_at!).getTime() - new Date(b.starts_at!).getTime())[0] ?? null
+})
+
+/** "agora", "em 25 min", "em 2h10" — contagem regressiva curta p/ o chip do topo. */
+function faltam(ev: CalEvent): string {
+  const min = Math.round((new Date(ev.starts_at!).getTime() - agora.value.getTime()) / 60000)
+  if (min <= 0) return 'agora'
+  if (min < 60) return `em ${min} min`
+  const h = Math.floor(min / 60)
+  const m = min % 60
+  return m ? `em ${h}h${String(m).padStart(2, '0')}` : `em ${h}h`
+}
+function ehHoje(ev: CalEvent) { return !!ev.starts_at && isToday(new Date(ev.starts_at)) }
+
+// ===== Popup de detalhes do evento =====
+
+/**
+ * Clicar no card abre os DETALHES, não a ficha do cliente: o clique era um atalho que
+ * levava para outra tela sem mostrar o que era a reunião. A ficha, a conversa e o Meet
+ * viraram botões aqui dentro.
+ */
+const detalhe = ref<CalEvent | null>(null)
+/** O evento pode ser recarregado (presença apurada, resumo) — segue o que está no store. */
+const detalheAtual = computed(() => detalhe.value ? (crm.events.find(e => e.id === detalhe.value!.id) ?? detalhe.value) : null)
+function openDetails(ev: CalEvent) { detalhe.value = ev }
+function closeDetails() { detalhe.value = null }
+
+const STATUS_TXT: Record<EvStatus, { label: string, color: string } | null> = {
+  compareceu: { label: '✓ Cliente compareceu', color: 'var(--accent-hi)' },
+  faltou: { label: '✗ Cliente não compareceu', color: 'var(--c-orange-strong)' },
+  aovivo: { label: '🔴 Acontecendo agora', color: 'var(--c-info)' },
+  pendente: { label: '⏳ Aguardando apuração de presença', color: 'var(--c-warn)' },
+  futura: { label: 'Agendada', color: 'var(--c-ai)' },
+  simples: null,
+}
+
+/** "Terça-feira, 4 de agosto · 16:30 – 17:30" */
+function dataLonga(ev: CalEvent): string {
+  if (!ev.starts_at) return ''
+  const s = new Date(ev.starts_at)
+  const diaSemana = s.toLocaleDateString('pt-BR', { weekday: 'long' })
+  const dia = `${diaSemana.charAt(0).toUpperCase()}${diaSemana.slice(1)}, ${s.getDate()} de ${MONTHS[s.getMonth()].toLowerCase()}`
+  return ev.all_day ? `${dia} · dia inteiro` : `${dia} · ${hm(ev.starts_at)} – ${hm(ev.ends_at)}`
+}
+
+function editarDoDetalhe(ev: CalEvent) { closeDetails(); openEdit(ev) }
+function fichaDoDetalhe(ev: CalEvent) { closeDetails(); openClient(ev) }
+function conversaDoDetalhe(ev: CalEvent) { closeDetails(); openWhatsApp(ev) }
+async function excluirDoDetalhe(ev: CalEvent) {
+  saving.value = true
+  try { await crm.deleteEvent(ev.id) }
+  catch { banner.value = { type: 'erro', text: 'Não consegui excluir o evento.' } }
+  finally { saving.value = false; closeDetails() }
+}
 </script>
 
 <template>
@@ -373,7 +462,20 @@ function setView(v: 'dia' | 'semana' | 'mes') {
       <!-- Cabeçalho -->
       <div style="padding:22px 30px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--c-surface-1);">
         <div>
-          <div style="font-size:23px;font-weight:800;letter-spacing:-.3px;">Agenda</div>
+          <div style="display:flex;align-items:center;gap:12px;">
+            <div style="font-size:23px;font-weight:800;letter-spacing:-.3px;">Agenda</div>
+            <!-- Relógio + próxima reunião: dá a hora e o que vem a seguir sem ler a grade -->
+            <span style="font-size:12.5px;font-weight:700;color:var(--c-danger);background:var(--c-surface-1);padding:4px 10px;border-radius:8px;font-variant-numeric:tabular-nums;">🕐 {{ nowLabel }}</span>
+            <button
+              v-if="proxima"
+              style="background:var(--c-surface-1);border:none;color:var(--c-text-secondary);font-family:inherit;font-size:12.5px;font-weight:600;padding:4px 10px;border-radius:8px;cursor:pointer;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+              :title="`Ver detalhes de ${proxima.title}`"
+              @click="openDetails(proxima!)"
+            >
+              Próxima: <strong style="color:var(--c-text);">{{ hm(proxima.starts_at) }} {{ proxima.title }}</strong>
+              <span style="color:var(--accent-soft);"> · {{ ehHoje(proxima) ? faltam(proxima) : 'outro dia' }}</span>
+            </button>
+          </div>
           <div style="font-size:13.5px;color:var(--c-text-muted);margin-top:3px;">{{ periodLabel }}</div>
         </div>
         <div v-if="crm.googleConnected" style="display:flex;gap:10px;align-items:center;">
@@ -413,7 +515,7 @@ function setView(v: 'dia' | 'semana' | 'mes') {
       </div>
 
       <!-- Grade da semana / dia -->
-      <div v-else-if="viewMode !== 'mes'" style="flex:1;overflow:auto;padding:0 30px 24px;">
+      <div v-else-if="viewMode !== 'mes'" ref="gradeRef" style="flex:1;overflow:auto;padding:0 30px 24px;">
         <!-- Cabeçalho dos dias -->
         <div :style="`display:grid;grid-template-columns:${gridCols};position:sticky;top:0;background:var(--c-bg-deep);z-index:3;padding-top:14px;`">
           <div />
@@ -435,8 +537,21 @@ function setView(v: 'dia' | 'semana' | 'mes') {
 
           <!-- Camada dos eventos posicionados -->
           <div :style="`position:absolute;inset:0;display:grid;grid-template-columns:${gridCols};pointer-events:none;`">
-            <div />
+            <!-- Coluna das horas: a etiqueta do horário atual, colada na linha -->
+            <div style="position:relative;">
+              <div
+                v-if="nowTop !== null"
+                :style="`position:absolute;right:6px;top:${nowTop - 9}px;background:var(--c-danger);color:#fff;font-size:10.5px;font-weight:800;padding:2px 6px;border-radius:6px;line-height:1.3;z-index:2;`"
+              >{{ nowLabel }}</div>
+            </div>
             <div v-for="d in gridDays" :key="`col${d.toISOString()}`" style="position:relative;">
+              <!-- Linha do "agora": só no dia de hoje, descendo com o relógio -->
+              <div
+                v-if="isToday(d) && nowTop !== null"
+                :style="`position:absolute;left:0;right:0;top:${nowTop}px;border-top:2px solid var(--c-danger);z-index:2;`"
+              >
+                <span :style="`position:absolute;left:-5px;top:-6px;width:10px;height:10px;border-radius:50%;background:var(--c-danger);`" />
+              </div>
               <div
                 v-for="p in eventsForDay(d)" :key="p.ev.id" :class="['evcard', { attended: p.ev.attended, live: evStatus(p.ev) === 'aovivo' }]"
                 draggable="true"
@@ -444,7 +559,7 @@ function setView(v: 'dia' | 'semana' | 'mes') {
                   ? `pointer-events:auto;position:absolute;left:3px;right:3px;top:${p.top}px;height:${p.height}px;background:linear-gradient(135deg,var(--accent-hi),var(--accent-deep));border-left:5px solid var(--accent-hi);border-radius:7px;padding:5px 8px;overflow:hidden;cursor:grab;box-shadow:0 2px 14px rgba(var(--accent-rgb),.55);`
                   : `pointer-events:auto;position:absolute;left:3px;right:3px;top:${p.top}px;height:${p.height}px;background:${p.color.bg};border-left:3px solid ${p.color.bar};border-radius:7px;padding:5px 8px;overflow:hidden;cursor:grab;${evStatus(p.ev) === 'aovivo' ? 'box-shadow:0 0 0 2px var(--c-info);' : ''}`"
                 :title="p.ev.conversation_name ? `Abrir ficha de ${p.ev.conversation_name}` : 'Abrir evento'"
-                @click="openClient(p.ev)"
+                @click="openDetails(p.ev)"
                 @dragstart="onEventDragStart(p.ev, $event)"
               >
                 <button class="editpin" title="Editar evento" :style="`position:absolute;top:3px;right:3px;background:rgba(11,20,26,${p.ev.attended ? '.28' : '.6'});border:none;border-radius:6px;padding:2px;cursor:pointer;display:flex;color:${p.ev.attended ? 'var(--accent-ink)' : p.color.fg};`" @click.stop="openEdit(p.ev)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
@@ -472,7 +587,7 @@ function setView(v: 'dia' | 'semana' | 'mes') {
               v-for="ev in eventsOfDay(d).slice(0, 4)" :key="ev.id"
               :style="`font-size:10.5px;font-weight:600;border-radius:5px;padding:2px 5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:${colorFor(ev).bg};color:${colorFor(ev).fg};border-left:3px solid ${colorFor(ev).bar};`"
               :title="ev.title"
-              @click.stop="openClient(ev)"
+              @click.stop="openDetails(ev)"
             >{{ ev.attended ? '✓ ' : (ev.no_show ? '✗ ' : '') }}{{ hm(ev.starts_at) }} {{ ev.title }}</div>
             <div v-if="eventsOfDay(d).length > 4" style="font-size:10px;color:var(--c-text-muted);">+{{ eventsOfDay(d).length - 4 }} mais</div>
           </div>
@@ -501,7 +616,7 @@ function setView(v: 'dia' | 'semana' | 'mes') {
               ? 'position:relative;background:rgba(255,90,60,.18);border:1px solid rgba(255,90,60,.5);border-radius:13px;padding:14px;cursor:pointer;'
               : 'position:relative;background:var(--c-surface-2);border-radius:13px;padding:14px;cursor:pointer;'"
           :title="ev.conversation_name ? `Abrir ficha de ${ev.conversation_name}` : 'Abrir evento'"
-          @click="openClient(ev)"
+          @click="openDetails(ev)"
         >
           <button class="editpin" title="Editar evento" :style="`position:absolute;top:10px;right:10px;background:${ev.attended ? 'rgba(var(--accent-ink-rgb),.18)' : 'var(--c-surface-1)'};border:none;border-radius:8px;padding:5px;cursor:pointer;display:flex;color:${ev.attended ? 'var(--accent-ink)' : 'var(--c-text-secondary)'};`" @click.stop="openEdit(ev)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
           <div :style="`font-size:11px;font-weight:700;color:${ev.attended ? 'rgba(var(--accent-ink-rgb),.85)' : (ev.no_show ? 'var(--c-orange-soft)' : 'var(--c-text-muted)')};`">{{ ev.attended ? '✓ COMPARECEU · ' : (ev.no_show ? '✗ NÃO COMPARECEU · ' : '') }}{{ ev.all_day ? 'Dia inteiro' : hm(ev.starts_at) }}</div>
@@ -580,6 +695,63 @@ function setView(v: 'dia' | 'semana' | 'mes') {
         <div style="font-size:12.5px;color:var(--c-text-muted);margin-bottom:14px;">{{ summaryFor.title }} · {{ hm(summaryFor.starts_at) }}</div>
         <div style="font-size:13.5px;line-height:1.6;color:var(--c-text);white-space:pre-wrap;">{{ summaryFor.summary }}</div>
         <button v-if="summaryFor.conversation_slug" class="wabtn" style="margin-top:18px;background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:13px;font-weight:700;padding:9px 16px;border-radius:9px;cursor:pointer;" @click="openClient(summaryFor!); summaryFor = null">Abrir ficha do cliente →</button>
+      </div>
+    </div>
+
+    <!-- Detalhes do evento: o que abre ao clicar num card -->
+    <div v-if="detalheAtual" style="position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:52;padding:24px;" @click.self="closeDetails">
+      <div style="width:440px;max-width:94vw;max-height:84vh;overflow-y:auto;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:16px;box-shadow:0 18px 60px rgba(0,0,0,.45);">
+        <!-- Faixa de cor do evento, igual à do card -->
+        <div :style="`height:5px;border-radius:16px 16px 0 0;background:${colorFor(detalheAtual).bar};`" />
+        <div style="padding:18px 22px 22px;">
+          <div style="display:flex;align-items:flex-start;gap:10px;">
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:18px;font-weight:800;line-height:1.3;">{{ detalheAtual.title }}</div>
+              <div style="font-size:13px;color:var(--c-text-muted);margin-top:5px;">{{ dataLonga(detalheAtual) }}</div>
+            </div>
+            <button style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:24px;line-height:1;padding:0 2px;" title="Fechar" @click="closeDetails">×</button>
+          </div>
+
+          <div v-if="STATUS_TXT[evStatus(detalheAtual)]" style="margin-top:12px;">
+            <span :style="`display:inline-block;font-size:11.5px;font-weight:700;padding:4px 10px;border-radius:7px;color:${STATUS_TXT[evStatus(detalheAtual)]!.color};background:var(--c-surface-1);`">{{ STATUS_TXT[evStatus(detalheAtual)]!.label }}</span>
+          </div>
+
+          <div style="margin-top:14px;display:flex;flex-direction:column;gap:9px;font-size:13px;">
+            <div v-if="detalheAtual.conversation_name" style="display:flex;gap:9px;">
+              <span style="color:var(--c-text-faint);width:18px;">👤</span><span>{{ detalheAtual.conversation_name }}</span>
+            </div>
+            <div v-if="detalheAtual.location" style="display:flex;gap:9px;">
+              <span style="color:var(--c-text-faint);width:18px;">📍</span><span>{{ detalheAtual.location }}</span>
+            </div>
+            <div v-if="rsvp(detalheAtual).total" style="display:flex;gap:9px;">
+              <span style="color:var(--c-text-faint);width:18px;">✉️</span>
+              <span>{{ rsvp(detalheAtual).total }} {{ rsvp(detalheAtual).total === 1 ? 'convidado' : 'convidados' }}<span v-if="rsvp(detalheAtual).yes" style="color:var(--accent-soft);"> · {{ rsvp(detalheAtual).yes }} confirmou</span></span>
+            </div>
+            <div v-if="detalheAtual.reminder_sent" style="display:flex;gap:9px;color:var(--accent-soft);">
+              <span style="width:18px;">🔔</span><span>Lembrete enviado ao cliente</span>
+            </div>
+            <div v-if="detalheAtual.description" style="display:flex;gap:9px;">
+              <span style="color:var(--c-text-faint);width:18px;">📝</span><span style="white-space:pre-wrap;line-height:1.5;color:var(--c-text-secondary);">{{ detalheAtual.description }}</span>
+            </div>
+          </div>
+
+          <div v-if="detalheAtual.summary" style="margin-top:14px;background:var(--c-surface-0);border-radius:10px;padding:12px 14px;max-height:200px;overflow-y:auto;">
+            <div style="font-size:11.5px;font-weight:700;color:var(--c-text-muted);margin-bottom:6px;">📋 RESUMO DA REUNIÃO</div>
+            <div style="font-size:13px;line-height:1.6;white-space:pre-wrap;">{{ detalheAtual.summary }}</div>
+          </div>
+
+          <!-- Ações: Meet, conversa, ficha, editar -->
+          <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:18px;">
+            <a v-if="detalheAtual.hangout_link" class="wabtn" :href="detalheAtual.hangout_link" target="_blank" style="text-decoration:none;background:var(--accent);color:var(--accent-ink);font-size:13px;font-weight:700;padding:9px 14px;border-radius:9px;">📹 Entrar no Meet</a>
+            <button v-if="convOf(detalheAtual)" style="background:var(--c-surface-2);border:none;color:var(--c-text);font-family:inherit;font-size:13px;font-weight:700;padding:9px 14px;border-radius:9px;cursor:pointer;" @click="conversaDoDetalhe(detalheAtual!)">💬 Ir para a conversa</button>
+            <button v-if="detalheAtual.conversation_slug" style="background:var(--c-surface-2);border:none;color:var(--c-text);font-family:inherit;font-size:13px;font-weight:700;padding:9px 14px;border-radius:9px;cursor:pointer;" @click="fichaDoDetalhe(detalheAtual!)">📇 Ficha do cliente</button>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:10px;">
+            <button style="background:transparent;border:1px solid var(--c-surface-3);color:var(--c-text-muted);font-family:inherit;font-size:12.5px;font-weight:600;padding:8px 13px;border-radius:9px;cursor:pointer;" @click="editarDoDetalhe(detalheAtual!)">🕑 Editar / remarcar</button>
+            <div style="flex:1;" />
+            <button style="background:transparent;border:1px solid var(--c-danger-bg);color:var(--c-danger-soft);font-family:inherit;font-size:12.5px;font-weight:600;padding:8px 13px;border-radius:9px;cursor:pointer;" :disabled="saving" @click="excluirDoDetalhe(detalheAtual!)">Excluir</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>

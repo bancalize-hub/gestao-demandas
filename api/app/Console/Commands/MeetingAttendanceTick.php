@@ -120,6 +120,9 @@ class MeetingAttendanceTick extends Command
                 if ($attended) {
                     StageMover::move($meeting->conversation, $doneStage, $user->id, "Reunião realizada em {$when}");
                     LeadActivity::log($meeting->conversation->id, 'reuniao', "✅ Cliente compareceu à reunião ({$when})", $lista);
+                    // Presença CONFIRMADA no Meet — o evento mais valioso do funil para a
+                    // Meta otimizar, porque separa quem apareceu de quem só marcou.
+                    \App\Support\MetaConversions::enviarUmaVez($meeting->conversation, \App\Support\MetaConversions::REUNIAO_REALIZADA);
                 } else {
                     LeadActivity::log($meeting->conversation->id, 'reuniao', "⚠️ Cliente não compareceu à reunião ({$when})", $lista ?: null);
                     // No-show → cria um follow-up (Task) p/ remarcar. Roda uma vez só (este bloco

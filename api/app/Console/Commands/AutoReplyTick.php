@@ -147,18 +147,18 @@ class AutoReplyTick extends Command
                 // Se a conversa tem pinta de agendamento, entrega ao agendador (marcar, remarcar ou
                 // cancelar). Ele é quem faz valer a regra de ouro — um agendamento ativo por contato —
                 // então não bloqueamos mais quando já existe reunião: é justamente aí que mora a
-                // remarcação. Com reunião ativa, só chamamos quando o cliente fala em mudar/desmarcar.
+                // remarcação. Com reunião ativa, só chamamos quando o lead fala em mudar/desmarcar.
                 $active = Meeting::activeFor($conv->id);
-                $vaiAgendar = $googleUser && $conv->phone && $this->looksLikeScheduling($conv)
-                    && (! $active || $this->looksLikeChange($conv));
+                $agendar = $googleUser && $conv->phone && $this->looksLikeScheduling($conv)
+                    && (! $active || $this->looksLikeReschedule($conv));
 
-                if ($vaiAgendar) {
+                if ($agendar) {
                     try {
                         $res = $scheduler->decideAndBook($googleUser, $conv, $ai->memoryContext($conv));
-                        // Usa a mensagem do agendador SEMPRE que ele agiu (marcou/remarcou/cancelou/perguntou)
-                        // e também quando ainda não há reunião (aí a mensagem é a proposta de horários).
-                        // Assim a IA nunca diz "confirmado" sem o evento ter sido realmente criado — e, com
-                        // reunião já marcada, um "action: nada" cai na resposta normal da IA.
+                        // Usa a mensagem do agendador SEMPRE que ele agiu (marcou/remarcou/cancelou/
+                        // perguntou) e também quando ainda não há reunião (aí é a proposta de horários).
+                        // Assim a IA nunca diz "confirmado" sem o evento ter sido realmente criado — e,
+                        // com reunião já marcada, um "action: nada" cai na resposta normal da IA.
                         $agiu = ($res['action'] ?? 'nada') !== 'nada';
                         if (! empty($res['message']) && ($agiu || ! $active)) {
                             $reply = $res['message'];
@@ -171,6 +171,18 @@ class AutoReplyTick extends Command
                 // Não agendou → resposta de texto normal (mesmo estilo/regras da sugestão).
                 if ($reply === null) {
                     $reply = $ai->generate($conv);
+
+                    // A resposta de texto não marca nada: se ela promete reunião ("está confirmada",
+                    // "o convite vai chegar") sem existir evento, o lead fica com uma reunião que só
+                    // existe no papo. Não dá para desdizer sozinho, mas fica registrado para revisão.
+                    if ($reply && ! $active
+                        && preg_match('/reuni[ãa]o (est[áa] )?(confirmad|marcad|agendad)|convite.*(chegar|enviad)|'
+                            .'j[áa] (marquei|agendei|deixei marcad)/iu', $reply)) {
+                        Evolution::log('auto_reply.confirmou_sem_agendar', [
+                            'conversation_id' => $conv->id,
+                            'trecho' => mb_substr($reply, 0, 200),
+                        ], 'error');
+                    }
                 }
 
                 if ($reply === null || trim($reply) === '') {
@@ -238,24 +250,26 @@ class AutoReplyTick extends Command
     }
 
     /**
-     * O cliente falou em mudar/desmarcar a reunião que já existe? Filtro barato antes de gastar
-     * uma chamada de IA: pega tanto os pedidos explícitos ("preciso adiar", "cancelar") quanto o
-     * sinal decisivo da remarcação — ele citar um dia/horário nas últimas mensagens.
+     * O lead está pedindo para mexer numa reunião já marcada? Filtro barato antes de gastar uma
+     * chamada de IA: pega os pedidos explícitos ("preciso adiar", "cancelar") e também o sinal
+     * decisivo da remarcação — ele citar um dia/horário, mesmo sem usar a palavra "remarcar".
+     * Só olha o que o LEAD escreveu/falou (as nossas mensagens sempre citam data e horário).
      */
-    private function looksLikeChange(Conversation $conv): bool
+    private function looksLikeReschedule(Conversation $conv): bool
     {
         $recent = $conv->messages()
             ->where('is_out', false)
             ->where(fn ($q) => $q->where('type', 'text')->whereNotNull('text')
                 ->orWhere(fn ($v) => $v->where('type', 'voice')->whereNotNull('transcript')))
-            ->reorder()->orderByDesc('ts')->orderByDesc('id')->take(3)
+            ->reorder()->orderByDesc('ts')->orderByDesc('id')->take(4)
             ->get(['type', 'text', 'transcript'])
             ->map(fn ($m) => $m->type === 'voice' ? (string) $m->transcript : (string) $m->text)
             ->implode(' ');
 
         return (bool) preg_match(
-            '/remarc|desmarc|cancel|adiar|transferir|imprevisto|n[ãa]o vou conseguir|n[ãa]o consigo|'
-            .'outro (dia|hor[áa]rio)|mudar|trocar|passar para|semana que vem|melhor n[ao]\b|'
+            '/remarc|reagend|desmarc|cancel|adia[rn]|antecip|transferir|passar para|semana que vem|'
+            .'mudar|trocar|outro (dia|hor[áa]rio)|n[ãa]o (vou )?consig|n[ãa]o vou conseguir|'
+            .'n[ãa]o vai dar|imprevisto|melhor n[ao]\b|'
             .'\d{1,2}\s*h\b|\d{1,2}:\d{2}|amanh[ãa]|segunda|ter[çc]a|quarta|quinta|sexta/iu',
             $recent,
         );

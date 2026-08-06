@@ -42,16 +42,18 @@ class NudgeTick extends Command
             return self::SUCCESS;
         }
 
-        // Fora da janela de horário (ou domingo) ninguém é incomodado: a pendência
-        // simplesmente espera o próximo tick dentro do expediente.
-        if (! $this->dentroDaJanela()) {
-            return self::SUCCESS;
-        }
-
         // IA fora do ar (token revogado etc.): retomada não é urgente, espera a trégua.
         if (Claude::indisponivel()) {
             return self::SUCCESS;
         }
+
+        // Fora do expediente (ou domingo) só o PRIMEIRO degrau vale. Ele é a continuação
+        // de uma conversa que estava viva minutos atrás — e o atendimento automático já
+        // responde a qualquer hora, então segurar esse empurrão até as 9h transformaria
+        // "emendar no assunto" em "sumiu e voltou no dia seguinte". Os degraus longos
+        // (20h, 3 e 7 dias) continuam presos ao horário comercial: aí sim é abordagem
+        // nova, e ninguém quer ser abordado às 4 da manhã.
+        $janela = $this->dentroDaJanela();
 
         $max = count($delays);
         $tenancy = app(Tenancy::class);
@@ -69,6 +71,10 @@ class NudgeTick extends Command
             ->whereNull('auto_reply_due_at')
             ->where('nudge_count', '<', $max)
             ->where('last_message_at', '<=', now()->subMinutes(min($delays)))
+            // Fora do expediente nem adianta carregar quem já passou do teto do primeiro
+            // degrau (3x o próprio degrau): seria varrer a base inteira toda madrugada
+            // para descartar tudo em `processar()`.
+            ->when(! $janela, fn ($q) => $q->where('last_message_at', '>=', now()->subMinutes($delays[0] * 3)))
             ->orderByDesc('last_message_at')
             ->limit((int) config('services.nudge.per_tick', 15))
             ->get();
@@ -77,7 +83,7 @@ class NudgeTick extends Command
             $tenancy->set($conv->company_id);
 
             try {
-                $this->processar($conv, $delays, $ai, $sender);
+                $this->processar($conv, $delays, $ai, $sender, $janela);
             } catch (\Throwable $e) {
                 // Uma conversa problemática nunca derruba o tick (nem as demais).
                 Log::error('nudge: falha na conversa', ['conv' => $conv->id, 'e' => $e->getMessage()]);
@@ -89,7 +95,7 @@ class NudgeTick extends Command
         return self::SUCCESS;
     }
 
-    private function processar(Conversation $conv, array $delays, AiReplyService $ai, ChatSender $sender): void
+    private function processar(Conversation $conv, array $delays, AiReplyService $ai, ChatSender $sender, bool $janela): void
     {
         if (! Company::find($conv->company_id)?->nudge_enabled) {
             return;
@@ -134,7 +140,9 @@ class NudgeTick extends Command
             return;
         }
 
-        $silencio = time() - (int) ($ultima->ts ?: $ultima->created_at?->timestamp);
+        // now() (e não time()): mesmo instante em produção, mas é o relógio que o Carbon
+        // controla — sem isso não dá para exercitar os degraus em teste.
+        $silencio = now()->timestamp - (int) ($ultima->ts ?: $ultima->created_at?->timestamp);
 
         // Degrau da escada. O primeiro (30 min) existe só para o caso "sumiu no meio da
         // conversa": o lead falou pouco antes da nossa mensagem E o silêncio ainda é curto.
@@ -149,6 +157,11 @@ class NudgeTick extends Command
             }
         }
 
+        // Só o degrau quente escapa do horário comercial (ver o comentário em handle()).
+        if (! $janela && $tier !== 0) {
+            return;
+        }
+
         // Espalhamento fixo por conversa: sem ele, todo lead vencido recebe no mesmo minuto
         // em que a janela abre — cheira a robô e concentra envios no mesmo número. Proporcional
         // ao degrau (teto de 3h), senão o empurrão de 30 min chegaria horas depois.
@@ -159,14 +172,10 @@ class NudgeTick extends Command
         }
 
         // API oficial: fora das 24h desde a última mensagem DO CLIENTE a Meta recusa texto
-        // livre — e uma retomada é, por definição, fora dessa janela. Encerra a rodada com
-        // registro (em vez de tentar de novo a cada tick) e deixa para o humano/template.
+        // livre — e todo degrau a partir do de 20h cai fora dessa janela, então sem este
+        // caminho a retomada simplesmente não existiria no número oficial.
         if (! $conv->canSendFreeform()) {
-            $conv->update(['nudge_count' => count($delays), 'nudge_last_at' => now()]);
-            Evolution::log('nudge.janela_fechada', [
-                'conversation_id' => $conv->id,
-                'wa_account_id' => $conv->wa_account_id,
-            ], 'warning');
+            $this->porTemplate($conv, $delays, $tier, $silencio, $ai, $sender);
 
             return;
         }
@@ -209,6 +218,114 @@ class NudgeTick extends Command
         );
 
         $this->info("nudge: retomou conversa {$conv->id} ({$conv->name}) — tentativa ".($tier + 1));
+    }
+
+    /**
+     * Retomada pelo caminho que sobra na Cloud API fora das 24h: TEMPLATE aprovado.
+     *
+     * O template é uma frase fixa aprovada pela Meta — a IA não escreve a mensagem, só
+     * preenche as duas variáveis ({{1}} primeiro nome, {{2}} assunto que estava em jogo).
+     * Sem template configurado não há o que enviar: encerra a rodada com registro, em vez
+     * de tentar de novo a cada tick e queimar uma chamada de IA por tentativa.
+     */
+    private function porTemplate(Conversation $conv, array $delays, int $tier, int $silencio, AiReplyService $ai, ChatSender $sender): void
+    {
+        $nome = (string) config('services.nudge.template');
+        if (trim($nome) === '') {
+            $this->encerrarRodada($conv, $delays, 'nudge.janela_fechada');
+
+            return;
+        }
+
+        // Quais variáveis o template tem sai do PRÓPRIO `template_text` — ele é a cópia da
+        // frase aprovada, então :nome/:assunto ali são exatamente {{1}}/{{2}} na Meta. Mandar
+        // parâmetro a mais (ou a menos) do que o template declara é recusa na hora (132000),
+        // e assim trocar de template é mexer só no .env, sem voltar aqui.
+        $frase = (string) config('services.nudge.template_text');
+
+        $vars = [];
+        if (str_contains($frase, ':nome')) {
+            $vars[':nome'] = $this->primeiroNome($conv);
+        }
+        if (str_contains($frase, ':assunto')) {
+            $vars[':assunto'] = $this->assunto($conv, $ai);
+        }
+
+        // A bolha do chat tem que ser a MESMA frase que o cliente recebeu, senão o
+        // atendente responde sem saber o que foi enviado no lugar dele.
+        $espelho = str_replace(array_keys($vars), array_values($vars), $frase);
+
+        $msg = $sender->template(
+            $conv,
+            $nome,
+            (string) config('services.nudge.template_language', 'pt_BR'),
+            array_values($vars),
+            $espelho,
+        );
+
+        if (! $msg) {
+            // Quase sempre é template não aprovado / nome ou idioma errado — nada que se
+            // resolva em 5 minutos. Encerra a rodada (o motivo fica no log da Meta).
+            $this->encerrarRodada($conv, $delays, 'nudge.template_falhou');
+
+            return;
+        }
+
+        $conv->update(['nudge_count' => $tier + 1, 'nudge_last_at' => now()]);
+
+        LeadActivity::log(
+            $conv->id,
+            'nudge',
+            'IA retomou o contato por template ('.($tier + 1).'ª tentativa, após '.$this->humano($silencio).' de silêncio)',
+            $espelho,
+        );
+
+        $this->info("nudge: retomou conversa {$conv->id} ({$conv->name}) por template — tentativa ".($tier + 1));
+    }
+
+    /**
+     * O assunto que estava em jogo, em poucas palavras — é a variável {{2}} do template.
+     * Vai para dentro de uma frase pronta ("nossa conversa sobre ___"), então precisa ser
+     * um pedaço de frase, não uma mensagem.
+     */
+    private function assunto(Conversation $conv, AiReplyService $ai): string
+    {
+        $texto = $ai->generate(
+            $conv,
+            'NÃO escreva uma mensagem para o cliente. Responda APENAS com o assunto concreto que vocês '
+            .'estavam tratando nesta conversa, em no máximo 6 palavras, para encaixar na frase '
+            .'"nossa conversa sobre ___". O trecho é lido PELO cliente, então fale com ele: use '
+            .'"a sua operação", nunca "a operação dele/dela". Sem aspas, sem ponto final, sem explicação. '
+            .'Exemplos de resposta válida: "as taxas do gateway", "a integração com o seu ERP".',
+        );
+
+        $texto = trim((string) $texto, " \t\n\r\0\x0B\"'.");
+
+        // Uma variável de template NÃO pode ir vazia (a Meta recusa) e não pode ter quebra
+        // de linha. Se a IA devolveu qualquer coisa fora do esperado, cai no genérico.
+        $texto = trim(preg_replace('/\s+/u', ' ', $texto) ?? '');
+
+        return ($texto !== '' && mb_strlen($texto) <= 60) ? $texto : 'o que conversamos por aqui';
+    }
+
+    /** Primeiro nome do lead — variável {{1}}. Conversa sem nome (só telefone) vira saudação neutra. */
+    private function primeiroNome(Conversation $conv): string
+    {
+        $nome = trim((string) $conv->name);
+        $primeiro = $nome !== '' ? (preg_split('/\s+/', $nome)[0] ?? '') : '';
+
+        return ($primeiro !== '' && ! preg_match('/^\+?\d+$/', $primeiro)) ? $primeiro : 'tudo bem';
+    }
+
+    /** Fecha a rodada de retomadas desta conversa (nada mais será tentado até o lead voltar). */
+    private function encerrarRodada(Conversation $conv, array $delays, string $evento): void
+    {
+        $conv->update(['nudge_count' => count($delays), 'nudge_last_at' => now()]);
+
+        Evolution::log($evento, [
+            'conversation_id' => $conv->id,
+            'wa_account_id' => $conv->wa_account_id,
+        ], 'warning');
     }
 
     /**

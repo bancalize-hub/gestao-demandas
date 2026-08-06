@@ -7,6 +7,7 @@ use App\Models\MarketingCreative;
 use App\Models\MarketingCredential;
 use App\Support\FacebookAds;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 
@@ -25,6 +26,8 @@ class MarketingController extends Controller
             'app_id' => $c->app_id,
             'ad_account_id' => $c->ad_account_id,
             'page_id' => $c->page_id,
+            'dataset_id' => $c->dataset_id,
+            'capi_test_code' => $c->capi_test_code,
             'graph_version' => $c->graph_version,
             'tem_token' => filled($c->access_token),
             'tem_app_secret' => filled($c->app_secret),
@@ -42,11 +45,13 @@ class MarketingController extends Controller
             'access_token' => 'nullable|string|max:1000',
             'ad_account_id' => 'nullable|string|max:64',
             'page_id' => 'nullable|string|max:64',
+            'dataset_id' => 'nullable|string|max:64',
+            'capi_test_code' => 'nullable|string|max:64',
             'graph_version' => 'nullable|string|max:10',
         ]);
 
         $c = MarketingCredential::atual();
-        foreach (['app_id', 'ad_account_id', 'page_id', 'graph_version'] as $campo) {
+        foreach (['app_id', 'ad_account_id', 'page_id', 'dataset_id', 'capi_test_code', 'graph_version'] as $campo) {
             if (array_key_exists($campo, $data)) {
                 $c->$campo = $data[$campo] ?: null;
             }
@@ -143,5 +148,287 @@ class MarketingController extends Controller
             'Content-Type' => $creative->mime ?: 'image/jpeg',
             'Cache-Control' => 'private, max-age=86400',
         ]);
+    }
+
+    /**
+     * Último resultado BOM de uma chamada à Graph API, guardado por 6 h.
+     *
+     * A Graph API falha sozinha — limite de requisições (code 17), token expirado, um 500
+     * do lado deles. Sem isto, um tropeço de 30 segundos esvaziava o painel inteiro: a
+     * lista de campanhas subia como exceção, o front caía no `catch` e zerava a tabela
+     * SEM dizer por quê. Melhor mostrar o número de minutos atrás, avisando, do que "—".
+     */
+    private static function ultimoBom(string $nome, callable $buscar): array
+    {
+        $chave = "fb_ok:{$nome}:".MarketingCredential::atual()->getKey();
+
+        try {
+            $dados = $buscar();
+            Cache::put($chave, ['dados' => $dados, 'em' => now()->toIso8601String()], now()->addHours(6));
+
+            return ['dados' => $dados, 'erro' => null, 'de' => null];
+        } catch (\Throwable $e) {
+            $cache = Cache::get($chave);
+
+            return [
+                'dados' => $cache['dados'] ?? [],
+                'erro' => $e->getMessage(),
+                'de' => $cache['em'] ?? null,
+            ];
+        }
+    }
+
+    /** Lista campanhas do Facebook Ads com orçamento e status. */
+    public function campanhas(Request $request)
+    {
+        $limite = $request->integer('limite', 50);
+        $r = self::ultimoBom('campanhas', fn () => FacebookAds::make()->listarCampanhas($limite));
+
+        return response()->json(['campanhas' => $r['dados'], 'erro' => $r['erro'], 'de' => $r['de']]);
+    }
+
+    /** Insights: impressões, cliques, gasto, CPM, CPC, ações por campanha/conjunto/anúncio. */
+    public function metricasFb(Request $request)
+    {
+        $nivel = $request->get('nivel', 'campaign');
+        $periodo = $request->get('periodo', 'last_7d');
+        $id = $request->get('id');
+        [$desde, $ateData] = self::datasCustomizadas($request);
+
+        $chave = "metricas:{$nivel}:{$periodo}:{$id}:{$desde}:{$ateData}";
+        $r = self::ultimoBom($chave, fn () => FacebookAds::make()->metricas($nivel, $periodo, $id, $desde, $ateData));
+
+        return response()->json(['metricas' => $r['dados'], 'erro' => $r['erro'], 'de' => $r['de']]);
+    }
+
+    /**
+     * O intervalo escolhido no calendário (`de`/`ate`, YYYY-MM-DD), quando houver.
+     *
+     * Datas invertidas são trocadas em vez de recusadas: quem clica primeiro no fim e
+     * depois no início quer o mesmo intervalo, não um erro.
+     *
+     * @return array{0: ?string, 1: ?string}
+     */
+    private static function datasCustomizadas(Request $request): array
+    {
+        $de = $request->query('de');
+        $ate = $request->query('ate');
+        $formato = fn ($d) => is_string($d) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $d) ? $d : null;
+
+        $de = $formato($de);
+        $ate = $formato($ate);
+        if (! $de || ! $ate) {
+            return [null, null];
+        }
+
+        return $de <= $ate ? [$de, $ate] : [$ate, $de];
+    }
+
+    /**
+     * Métricas reais do CRM por campanha do Facebook Ads.
+     *
+     * Fonte primária: custom_fields->anuncio->id (ad_id do referral do WhatsApp).
+     * O ad_id é cruzado com o mapeamento ad→campanha via FB API (cache de 10 min).
+     * Fonte secundária (legado): custom_fields->criativo (texto "Criativo N").
+     *
+     * REUNIÃO VEM DA AGENDA, NÃO DA ETAPA. Contar `stage = 'agendamento'` dava zero em
+     * toda campanha: na empresa 1 a etapa chamada "Reunião Agendada" tem a CHAVE
+     * `proposta` (a chave `agendamento` é outra etapa, anterior). Chave de etapa é
+     * texto livre por empresa — não serve de métrica. A tabela `meetings` é o registro
+     * de verdade da reunião, tem data própria e não some quando o lead avança de etapa.
+     *
+     * O `periodo` é o MESMO date_preset usado no gasto: sem ele o CPL dividia o gasto
+     * de 7/30 dias pelos leads de todos os tempos — número que não é de período nenhum.
+     */
+    public function adStats(Request $request)
+    {
+        [$desde, $ateData] = self::datasCustomizadas($request);
+        [$de, $ate] = self::janela((string) $request->query('periodo', 'last_7d'), $desde, $ateData);
+
+        $adId = "JSON_UNQUOTE(JSON_EXTRACT(conversations.custom_fields, '$.anuncio.id'))";
+        $criativo = "JSON_UNQUOTE(JSON_EXTRACT(conversations.custom_fields, '$.criativo'))";
+
+        // --- fonte primária: anuncio.id (referral do WhatsApp) -------------------
+        $statsPorAdId = $this->statsPorChave($adId, $de, $ate);
+
+        // Mapeamento ad_id → campaign_id via FB API (cacheado 10 min). A chave leva a
+        // credencial: o mapa é da conta de anúncios DAQUELA empresa, e uma chave global
+        // serviria os anúncios de uma empresa para a outra.
+        //
+        // SEM ESTE MAPA NÃO EXISTE LINHA NENHUMA: todo lead é descartado no `continue`
+        // abaixo e o painel devolve `stats_campanha: []` — na tela, Leads/Reuniões/Vendas
+        // zerados em TODAS as campanhas, como se o anúncio não tivesse dado resultado.
+        // Por isso a falha sobe no `erro` em vez de ser engolida: já aconteceu de um
+        // arquivo de cache escrito por outro usuário do sistema (artisan rodado como root)
+        // derrubar a escrita do www-data e zerar o painel inteiro sem uma linha de log.
+        $adCampMap = [];
+        $erro = null;
+        try {
+            $cacheKey = 'fb_ad_camp_map:'.MarketingCredential::atual()->getKey();
+            $adCampMap = Cache::remember($cacheKey, 600, function () {
+                $map = [];
+                foreach (FacebookAds::make()->listarAnuncios() as $ad) {
+                    if (! empty($ad['id']) && ! empty($ad['campaign_id'])) {
+                        $map[$ad['id']] = $ad['campaign_id'];
+                    }
+                }
+
+                return $map;
+            });
+        } catch (\Throwable $e) {
+            $erro = 'Não consegui cruzar os anúncios com as campanhas: '.$e->getMessage();
+            report($e);
+        }
+        if (! $erro && ! $adCampMap && $statsPorAdId) {
+            $erro = 'A conta de anúncios não devolveu nenhum anúncio — sem isso não dá para dizer de que campanha veio cada lead.';
+        }
+
+        // O lead que não casa com nenhuma campanha vai para um balde à parte, NUNCA para o
+        // lixo. Somado à tabela, ele fecha a conta com o total de leads do CRM; descartado
+        // em silêncio (como era antes), ele fazia o painel mentir por omissão.
+        $porCampanha = [];
+        $semAtribuicao = self::ZERADO;
+        foreach ($statsPorAdId as $ad => $stat) {
+            $campId = $adCampMap[$ad] ?? null;
+            if (! $campId) {
+                foreach (self::ZERADO as $campo => $_) {
+                    $semAtribuicao[$campo] += $stat[$campo];
+                }
+
+                continue;
+            }
+            if (! isset($porCampanha[$campId])) {
+                $porCampanha[$campId] = ['campaign_id' => $campId] + self::ZERADO;
+            }
+            foreach (self::ZERADO as $campo => $_) {
+                $porCampanha[$campId][$campo] += $stat[$campo];
+            }
+        }
+
+        // --- fonte secundária: criativo textual (legado) -------------------------
+        $statsCriativo = [];
+        foreach ($this->statsPorChave($criativo, $de, $ate) as $nome => $stat) {
+            $statsCriativo[] = ['criativo' => $nome] + $stat;
+        }
+
+        return response()->json([
+            'stats' => $statsCriativo,
+            'stats_campanha' => array_values($porCampanha),
+            'sem_atribuicao' => $semAtribuicao,
+            'erro' => $erro,
+            'periodo' => ['de' => $de->toDateTimeString(), 'ate' => $ate->toDateTimeString()],
+        ]);
+    }
+
+    /** Formato de uma linha de stats — também serve de acumulador zerado. */
+    private const ZERADO = ['leads' => 0, 'responderam' => 0, 'reunioes' => 0, 'realizadas' => 0, 'vendas' => 0];
+
+    /**
+     * O funil do período agrupado por uma chave de atribuição (ad_id ou "Criativo N"),
+     * lida do custom_fields da conversa.
+     *
+     * COORTE: uma janela só, a da CHEGADA DO LEAD. Toda coluna da linha fala das mesmas
+     * pessoas — dos leads que entraram no período, quantos responderam, marcaram reunião,
+     * compareceram e compraram. A reunião conta na janela em que o LEAD entrou, não na
+     * data em que foi marcada.
+     *
+     * Já foi das duas maneiras: contar a reunião pela data em que ela foi marcada fazia
+     * a linha exibir reunião com ZERO lead (o lead chegou 23h17 de ontem e marcou 00h22
+     * de hoje) e, pior, a coluna ao lado dividia o gasto de HOJE por uma reunião que o
+     * dinheiro de ONTEM produziu. Custo por reunião só significa alguma coisa quando o
+     * numerador e o denominador vêm do mesmo dinheiro.
+     *
+     * "Realizada" é a reunião com presença confirmada (`attended`), apurada pela Meet
+     * API — reunião futura ou no-show não entra.
+     *
+     * @return array<string, array{leads:int, responderam:int, reunioes:int, realizadas:int, vendas:int}>
+     */
+    private function statsPorChave(string $chave, \Illuminate\Support\Carbon $de, \Illuminate\Support\Carbon $ate): array
+    {
+        // "Respondeu" = mandou 2+ mensagens. A primeira é automática (o clique no anúncio
+        // já dispara o texto pré-preenchido do "Enviar mensagem"), então 1 mensagem não
+        // prova interesse nenhum — é a segunda que separa o curioso de quem quer conversar.
+        $respondeu = '(SELECT COUNT(*) FROM messages m WHERE m.conversation_id = conversations.id AND m.is_out = 0) >= 2';
+        // A reunião vem da AGENDA, não da etapa do funil (chave de etapa é texto livre por
+        // empresa — foi o que zerava a coluna). Subconsulta em vez de join: com join, um
+        // lead com duas reuniões contaria duas vezes no COUNT(*) dos leads.
+        $reunioes = '(SELECT COUNT(*) FROM meetings mt WHERE mt.conversation_id = conversations.id)';
+        $realizadas = '(SELECT COUNT(*) FROM meetings mt WHERE mt.conversation_id = conversations.id AND mt.attended = 1)';
+
+        $linhas = [];
+
+        $rows = \App\Models\Conversation::selectRaw("
+            {$chave} as chave,
+            COUNT(*) as leads,
+            SUM({$respondeu}) as responderam,
+            SUM({$reunioes}) as reunioes,
+            SUM({$realizadas}) as realizadas,
+            SUM(conversations.stage = 'fechado') as vendas
+        ")
+            ->whereRaw("{$chave} IS NOT NULL")
+            ->where('conversations.created_at', '>=', $de)
+            ->where('conversations.created_at', '<', $ate)
+            ->groupByRaw($chave)
+            ->get();
+
+        foreach ($rows as $r) {
+            $linhas[$r->chave] = [
+                'leads' => (int) $r->leads,
+                'responderam' => (int) $r->responderam,
+                'reunioes' => (int) $r->reunioes,
+                'realizadas' => (int) $r->realizadas,
+                'vendas' => (int) $r->vendas,
+            ];
+        }
+
+        return $linhas;
+    }
+
+    /**
+     * A janela de datas que corresponde ao date_preset da Meta, no fuso da conta
+     * (America/Sao_Paulo dos dois lados). Verificado contra a Graph API: `last_7d` e
+     * `last_30d` terminam ONTEM — não incluem hoje. `today` e `this_month` incluem.
+     *
+     * @return array{0: \Illuminate\Support\Carbon, 1: \Illuminate\Support\Carbon}
+     */
+    private static function janela(string $periodo, ?string $desde = null, ?string $ateData = null): array
+    {
+        $hoje = now()->startOfDay();
+
+        // Intervalo do calendário: as DUAS pontas entram (o dia final inteiro), por isso
+        // o +1 dia no fim — a janela é [de 00:00, ate+1 00:00). É o mesmo intervalo que o
+        // `time_range` da Graph API cobre, lá com o `until` inclusivo.
+        if ($desde && $ateData) {
+            return [\Illuminate\Support\Carbon::parse($desde)->startOfDay(), \Illuminate\Support\Carbon::parse($ateData)->startOfDay()->addDay()];
+        }
+
+        return match ($periodo) {
+            'today'      => [$hoje, $hoje->copy()->addDay()],
+            'last_30d'   => [$hoje->copy()->subDays(30), $hoje],
+            'this_month' => [$hoje->copy()->startOfMonth(), $hoje->copy()->addDay()],
+            default      => [$hoje->copy()->subDays(7), $hoje], // last_7d
+        };
+    }
+
+    /** Atualiza status (ACTIVE|PAUSED) e/ou orçamento de uma campanha existente. */
+    public function atualizarCampanha(Request $request, string $id)
+    {
+        $data = $request->validate([
+            'status' => 'nullable|string|in:ACTIVE,PAUSED',
+            'orcamento_diario_reais' => 'nullable|numeric|min:1',
+        ]);
+
+        $params = array_filter([
+            'status' => $data['status'] ?? null,
+            'orcamento_diario_reais' => isset($data['orcamento_diario_reais']) ? (float) $data['orcamento_diario_reais'] : null,
+        ], fn ($v) => $v !== null);
+
+        try {
+            $resultado = FacebookAds::make()->atualizarCampanha($id, $params);
+        } catch (\Throwable $e) {
+            return response()->json(['ok' => false, 'erro' => $e->getMessage()], 422);
+        }
+
+        return response()->json(['ok' => true, 'resultado' => $resultado]);
     }
 }

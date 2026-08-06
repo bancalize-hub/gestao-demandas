@@ -239,17 +239,63 @@ class FacebookAds
         ]);
     }
 
-    /** Métricas. `nivel` = account | campaign | adset | ad. */
-    public function metricas(string $nivel = 'campaign', string $periodo = 'last_7d', ?string $id = null): array
+    /**
+     * Lista todos os anúncios da conta com campaign_id — usado para cruzar o referral
+     * do WhatsApp (anuncio.id = ad_id) com a campanha correspondente no painel.
+     */
+    public function listarAnuncios(int $limite = 500): array
     {
-        $alvo = $id ?: $this->conta();
-        $r = $this->call('GET', '/'.$alvo.'/insights', [
-            'level' => $nivel,
-            'date_preset' => $periodo,
-            'fields' => 'campaign_name,adset_name,ad_name,impressions,clicks,ctr,spend,cpc,cpm,actions',
-            'limit' => 50,
+        $r = $this->call('GET', '/'.$this->conta().'/ads', [
+            'fields' => 'id,name,campaign_id',
+            'limit' => max(1, min($limite, 500)),
         ]);
 
         return $r['data'] ?? [];
+    }
+
+    /**
+     * Métricas. `nivel` = account | campaign | adset | ad.
+     *
+     * Com `$de`/`$ate` (YYYY-MM-DD) usa `time_range` em vez de `date_preset` — é assim que
+     * o painel consulta um intervalo escolhido no calendário. Atenção: o `until` da Graph
+     * API é INCLUSIVO, ao contrário da janela do CRM, que é [de, ate).
+     */
+    public function metricas(string $nivel = 'campaign', string $periodo = 'last_7d', ?string $id = null, ?string $de = null, ?string $ate = null): array
+    {
+        $alvo = $id ?: $this->conta();
+        $params = [
+            'level' => $nivel,
+            'fields' => 'campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,impressions,clicks,ctr,spend,cpc,cpm,actions',
+            'limit' => 50,
+        ];
+        if ($de && $ate) {
+            $params['time_range'] = json_encode(['since' => $de, 'until' => $ate]);
+        } else {
+            $params['date_preset'] = $periodo;
+        }
+
+        $r = $this->call('GET', '/'.$alvo.'/insights', $params);
+
+        return $r['data'] ?? [];
+    }
+
+    /**
+     * Atualiza uma campanha existente: status (ACTIVE|PAUSED) e/ou orçamento diário.
+     * Não cria nada — é gestão do que já existe no Facebook.
+     */
+    public function atualizarCampanha(string $campanhaId, array $params): array
+    {
+        $data = [];
+        if (isset($params['status'])) {
+            $data['status'] = $params['status'];
+        }
+        if (isset($params['orcamento_diario_reais'])) {
+            $data['daily_budget'] = (int) round($params['orcamento_diario_reais'] * 100);
+        }
+        if (empty($data)) {
+            throw new RuntimeException('Nenhum campo para atualizar.');
+        }
+
+        return $this->call('POST', "/{$campanhaId}", $data);
     }
 }

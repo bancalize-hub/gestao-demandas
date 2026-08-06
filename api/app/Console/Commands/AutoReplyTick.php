@@ -144,10 +144,15 @@ class AutoReplyTick extends Command
                 $reply = null;
 
                 // Se a conversa tem pinta de agendamento, tenta marcar sozinho (cria evento + Meet).
-                // Não tenta de novo se já enviamos um link de reunião (evita marcar duas vezes).
-                if ($googleUser && $conv->phone && $this->looksLikeScheduling($conv) && ! $this->alreadyBooked($conv)) {
+                // Com uma reunião FUTURA já marcada, o agendador só entra se o lead falou em
+                // remarcar — aí ele MOVE o evento existente (não marca uma segunda reunião).
+                $pending = $this->pendingMeeting($conv);
+                $agendar = $googleUser && $conv->phone && $this->looksLikeScheduling($conv)
+                    && (! $pending || $this->looksLikeReschedule($conv));
+
+                if ($agendar) {
                     try {
-                        $res = $scheduler->decideAndBook($googleUser, $conv, $ai->memoryContext($conv));
+                        $res = $scheduler->decideAndBook($googleUser, $conv, $ai->memoryContext($conv), $pending);
                         // Usa a mensagem do agendador SEMPRE que ele rodou: se marcou, é a confirmação com
                         // link do Meet; se não marcou (horário ocupado/dia inválido), é a proposta de horários.
                         // Assim a IA nunca diz "confirmado" sem o evento ter sido realmente criado.
@@ -162,6 +167,18 @@ class AutoReplyTick extends Command
                 // Não agendou → resposta de texto normal (mesmo estilo/regras da sugestão).
                 if ($reply === null) {
                     $reply = $ai->generate($conv);
+
+                    // A resposta de texto não marca nada: se ela promete reunião ("está confirmada",
+                    // "o convite vai chegar") sem existir evento, o lead fica com uma reunião que só
+                    // existe no papo. Não dá para desdizer sozinho, mas fica registrado para revisão.
+                    if ($reply && ! $pending
+                        && preg_match('/reuni[ãa]o (est[áa] )?(confirmad|marcad|agendad)|convite.*(chegar|enviad)|'
+                            .'j[áa] (marquei|agendei|deixei marcad)/iu', $reply)) {
+                        Evolution::log('auto_reply.confirmou_sem_agendar', [
+                            'conversation_id' => $conv->id,
+                            'trecho' => mb_substr($reply, 0, 200),
+                        ], 'error');
+                    }
                 }
 
                 if ($reply === null || trim($reply) === '') {
@@ -228,11 +245,35 @@ class AutoReplyTick extends Command
         return (bool) preg_match('/\d{1,2}\s*h\b|\d{1,2}:\d{2}|amanh[ãa]|hoje|segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|reuni|marcar|agend|hor[áa]rio|pode ser|confirm|fechado|call|meet/iu', $recent);
     }
 
-    /** Já existe uma reunião marcada nesta conversa? (enviamos um link do Meet recentemente.) */
-    private function alreadyBooked(Conversation $conv): bool
+    /**
+     * Reunião FUTURA já marcada nesta conversa (a que uma remarcação moveria).
+     *
+     * Antes isto era "já enviei algum link do Meet nesta conversa?", e ficava verdadeiro para
+     * sempre: depois da primeira reunião o agendador nunca mais rodava ali, então quando o lead
+     * remarcava (ou marcava uma segunda), quem respondia era a resposta de texto comum — que
+     * dizia "confirmado" sem nada ter sido criado na agenda.
+     */
+    private function pendingMeeting(Conversation $conv): ?\App\Models\Meeting
     {
-        return $conv->messages()
-            ->where('is_out', true)->where('text', 'like', '%meet.google.com%')
-            ->exists();
+        return \App\Models\Meeting::where('conversation_id', $conv->id)
+            ->where('starts_at', '>', now())
+            ->orderBy('starts_at')
+            ->first();
+    }
+
+    /** O lead está pedindo para mexer numa reunião já marcada? */
+    private function looksLikeReschedule(Conversation $conv): bool
+    {
+        $recent = $conv->messages()
+            ->where('type', 'text')->whereNotNull('text')
+            ->reorder()->orderByDesc('ts')->orderByDesc('id')->take(6)
+            ->pluck('text')->implode(' ');
+
+        return (bool) preg_match(
+            '/remarc|reagend|desmarc|cancel|adia[rn]|antecip|transferir|passar para|mudar o (hor[áa]rio|dia)|'
+            .'trocar o (hor[áa]rio|dia)|outro (dia|hor[áa]rio)|n[ãa]o (vou )?consig|n[ãa]o vou conseguir|'
+            .'n[ãa]o vai dar|imprevisto/iu',
+            $recent,
+        );
     }
 }

@@ -23,6 +23,14 @@ Schedule::command('wpp:backfill')
     ->withoutOverlapping()
     ->runInBackground();
 
+// Fotos de perfil dos contatos → binário no disco. Precisa de um número Evolution
+// conectado (a API oficial da Meta não entrega foto de contato); sem ele o comando
+// só avisa e sai. De hora em hora, 200 conversas por vez, das mais recentes para trás.
+Schedule::command('wa:avatars --limite=200')
+    ->hourly()
+    ->withoutOverlapping()
+    ->runInBackground();
+
 // Transcrição de áudios recebidos (Groq Whisper) → a IA "ouve" os áudios do cliente.
 Schedule::command('voice:transcribe-tick')
     ->everyMinute()

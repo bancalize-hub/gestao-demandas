@@ -6,6 +6,7 @@ use App\Models\AgentJob;
 use App\Models\AgentSession;
 use App\Models\WaAccount;
 use App\Support\Claude;
+use App\Support\Tenancy;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
@@ -137,6 +138,9 @@ class AgentWork extends Command
     private function runJob(AgentJob $job): void
     {
         $session = $job->session;
+        if ($session->company_id) {
+            app(Tenancy::class)->set((int) $session->company_id);
+        }
         $job->update(['status' => 'running', 'started_at' => now(), 'output' => '']);
 
         $marketing = $session->kind === 'marketing';

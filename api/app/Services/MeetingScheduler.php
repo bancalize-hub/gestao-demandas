@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Conversation;
+use App\Models\Meeting;
 use App\Models\User;
 use App\Support\Claude;
 use Carbon\Carbon;
@@ -21,8 +22,11 @@ class MeetingScheduler
      * Decide e, se o lead confirmou, agenda a reunião. Retorna um array neutro:
      * ['scheduled'=>bool, 'message'=>?string, 'note'=>?string, 'event'=>?array,
      *  'meet_link'=>?string, 'slot_label'=>?string, 'error'=>?string].
+     *
+     * $existing = reunião FUTURA já marcada nesta conversa. Quando existe, o lead só pode
+     * REMARCAR: o evento do Google é MOVIDO (não se cria um segundo), mantendo o mesmo Meet.
      */
-    public function decideAndBook(User $user, Conversation $conversation, string $memoryContext = ''): array
+    public function decideAndBook(User $user, Conversation $conversation, string $memoryContext = '', ?Meeting $existing = null): array
     {
         $durationMin = 60; // reuniões de 1 hora
         $slots = $this->google->freeSlots($user, $durationMin);
@@ -80,13 +84,37 @@ class MeetingScheduler
         $agora = Carbon::now($tz);
         $agoraStr = $agora->locale('pt_BR')->isoFormat('dddd, DD/MM/YYYY HH:mm');
 
+        // Já existe reunião marcada? Então a única razão para marcar de novo é REMARCAÇÃO.
+        $existingBlock = '';
+        $regraPrincipal = <<<'R'
+        REGRA PRINCIPAL — só marque a reunião se o LEAD JÁ CONFIRMOU um dia e horário concretos
+        (ex.: "pode ser quinta às 14h", "amanhã 17:30 fica bom"):
+        - "book": true nesse caso.
+        - "book": false em TODOS os outros casos (o lead ainda não confirmou). NÃO marque: deixe book_day e
+          book_time vazios e escreva uma mensagem propondo 2 ou 3 das SUGESTÕES acima para ele confirmar.
+        R;
+        if ($existing) {
+            $existingLabel = $existing->starts_at->copy()->setTimezone($tz)
+                ->locale('pt_BR')->isoFormat('dddd, DD/MM [às] HH:mm');
+            $existingBlock = "REUNIÃO JÁ MARCADA COM ESTE LEAD: {$existingLabel}.\n\n";
+            $regraPrincipal = <<<'R'
+            REGRA PRINCIPAL — este lead JÁ TEM reunião marcada. Você só marca de novo quando ele pediu para
+            REMARCAR e JÁ CONFIRMOU o novo dia e horário (ex.: "não vou conseguir, pode ser quinta às 14h?"
+            seguido de "12:30 melhor"):
+            - "book": true SÓ nesse caso — a reunião existente é MOVIDA para o novo horário.
+            - "book": false em TODOS os outros casos: ele só pediu para remarcar mas ainda não escolheu o novo
+              horário (proponha 2 ou 3 das SUGESTÕES acima), ou está falando de outro assunto (responda o assunto
+              e NÃO mexa na reunião). Nunca trate a reunião já marcada como se fosse uma remarcação.
+            R;
+        }
+
         $prompt = <<<TXT
         Você é o assistente de um atendente que organiza reuniões com leads.
 
         DATA/HORA ATUAL: {$agoraStr} (fuso America/Sao_Paulo, offset -03:00).
 
         {$memoryContext}
-        DADOS DO LEAD:
+        {$existingBlock}DADOS DO LEAD:
         {$lead}
 
         CONVERSA (Atendente = nós; {$conversation->name} = lead):
@@ -98,11 +126,7 @@ class MeetingScheduler
         DIAS DISPONÍVEIS NA AGENDA (use o YYYY-MM-DD ao confirmar):
         {$daysList}
 
-        REGRA PRINCIPAL — só marque a reunião se o LEAD JÁ CONFIRMOU um dia e horário concretos
-        (ex.: "pode ser quinta às 14h", "amanhã 17:30 fica bom"):
-        - "book": true nesse caso.
-        - "book": false em TODOS os outros casos (o lead ainda não confirmou). NÃO marque: deixe book_day e
-          book_time vazios e escreva uma mensagem propondo 2 ou 3 das SUGESTÕES acima para ele confirmar.
+        {$regraPrincipal}
 
         AO MARCAR ("book": true), preencha:
         - "book_day": a DATA combinada no formato YYYY-MM-DD. NUNCA calcule a data você mesmo — interprete
@@ -158,7 +182,17 @@ class MeetingScheduler
         if ($book && $start) {
             $end = $start->copy()->addMinutes($durationMin);
 
-            if (! $this->google->isFree($user, $start, $end)) {
+            // Remarcação para o MESMO horário não é remarcação: nada muda, não reenvia confirmação.
+            if ($existing && $existing->starts_at && $existing->starts_at->copy()->setTimezone($tz)->eq($start)) {
+                return [
+                    'scheduled' => false,
+                    'message' => $data['message'],
+                    'note' => 'A reunião já está marcada nesse horário — nada foi alterado.',
+                ];
+            }
+
+            // Ao remarcar, a própria reunião que estamos movendo não conta como conflito.
+            if (! $this->google->isFree($user, $start, $end, $existing?->google_event_id)) {
                 return [
                     'scheduled' => false,
                     'message' => $data['message'],
@@ -177,21 +211,38 @@ class MeetingScheduler
                 $attendees[] = $leadEmail;
             }
 
-            $event = $this->google->createEvent($user, [
+            $payload = [
                 'title' => $data['title'] ?? ('Reunião — '.$conversation->name),
                 'description' => "Reunião agendada a partir da conversa com {$conversation->name} no CRM.",
                 'starts_at' => $start->toIso8601String(),
                 'ends_at' => $end->toIso8601String(),
                 'attendees' => $attendees,
                 'add_meet' => true,
-            ]);
+            ];
+
+            // REMARCAÇÃO: move o evento que já existe (mantendo o mesmo link do Meet) em vez de
+            // criar um segundo — senão o lead fica com duas reuniões e dois lembretes.
+            $remarcou = false;
+            if ($existing && $existing->google_event_id) {
+                try {
+                    $event = $this->google->updateEvent($user, $existing->google_event_id, $payload);
+                    $remarcou = true;
+                } catch (\Throwable $e) {
+                    // Evento sumiu da agenda (apagado na mão): cai para criação normal.
+                    $event = $this->google->createEvent($user, $payload);
+                }
+            } else {
+                $event = $this->google->createEvent($user, $payload);
+            }
 
             // Mensagem de confirmação montada pelo SERVIDOR — garante que o texto bate com a data marcada.
             $firstName = preg_split('/\s+/', trim((string) $conversation->name))[0] ?? '';
             $hasName = $firstName !== '' && ! preg_match('/^\+?\d+$/', $firstName);
             $saudacao = $hasName ? "Perfeito, {$firstName}!" : 'Perfeito!';
             $slotLabel = $start->locale('pt_BR')->isoFormat('dddd, DD/MM [às] HH:mm');
-            $message = "{$saudacao} Reunião confirmada para {$slotLabel}. Até lá! 😊";
+            $message = $remarcou
+                ? "{$saudacao} Reunião remarcada para {$slotLabel}. Até lá! 😊"
+                : "{$saudacao} Reunião confirmada para {$slotLabel}. Até lá! 😊";
             $meet = $event['hangout_link'] ?? null;
             if ($meet) {
                 $message .= "\n\nSegue o link da nossa reunião no Google Meet: {$meet}";
@@ -200,7 +251,7 @@ class MeetingScheduler
             // Registra a reunião: serve para o lembrete (WhatsApp, se houver telefone) e para a
             // apuração de presença/resumo depois da reunião (Meet API + read.ai). user_id é a conta
             // Google que vai consultar a Meet API.
-            \App\Models\Meeting::create([
+            $attrs = [
                 'conversation_id' => $conversation->id,
                 'user_id' => $user->id,
                 'phone' => $conversation->phone,
@@ -210,18 +261,29 @@ class MeetingScheduler
                 'meet_link' => $meet,
                 'google_event_id' => $event['id'] ?? null,
                 'reminder_lead_minutes' => (int) config('services.meeting_reminder.lead_minutes', 60),
-            ]);
+            ];
+            if ($existing) {
+                // Mudou de horário → o lembrete precisa disparar de novo, para a data nova.
+                $existing->update($attrs + ['reminder_sent_at' => null]);
+            } else {
+                Meeting::create($attrs);
+            }
 
             // Move o lead para "Reunião Agendada" no funil (etiqueta sincroniza no WhatsApp).
             \App\Services\StageMover::move(
                 $conversation,
                 (string) config('services.crm.stage_meeting_booked', 'proposta'),
                 $user->id,
-                "Reunião agendada para {$slotLabel}",
+                $remarcou ? "Reunião remarcada para {$slotLabel}" : "Reunião agendada para {$slotLabel}",
             );
+
+            // Conta para o Facebook que este clique virou reunião — é o sinal que faz a
+            // campanha de conversão otimizar por agendamento, não por clique.
+            \App\Support\MetaConversions::enviarUmaVez($conversation, \App\Support\MetaConversions::REUNIAO_MARCADA);
 
             return [
                 'scheduled' => true,
+                'rescheduled' => $remarcou,
                 'event' => $event,
                 'meet_link' => $meet,
                 'slot_label' => $slotLabel,

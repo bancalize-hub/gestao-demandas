@@ -48,6 +48,20 @@ class StageMover
 
         self::syncWhatsAppLabel($conversation, $oldKey, $stage->key);
 
+        // Venda fechada → conversão para a Meta. Fica AQUI, e não no controller, porque
+        // este é o único lugar por onde toda mudança de etapa passa: arraste no funil,
+        // edição na ficha e automação caem todos neste método.
+        if ($stage->key === (string) config('services.crm.stage_won', 'fechado')) {
+            \App\Support\MetaConversions::enviarUmaVez(
+                $conversation,
+                \App\Support\MetaConversions::VENDA,
+                array_filter([
+                    'currency' => 'BRL',
+                    'value' => is_numeric($conversation->deal_value) ? (float) $conversation->deal_value : null,
+                ], fn ($v) => $v !== null),
+            );
+        }
+
         return true;
     }
 

@@ -9,8 +9,10 @@ use App\Models\Stage;
 use App\Services\AiReplyService;
 use App\Services\MeetingScheduler;
 use App\Services\StageMover;
+use App\Support\Avatars;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 
 class ConversationController extends Controller
 {
@@ -138,7 +140,12 @@ class ConversationController extends Controller
             return response()->json(['message' => 'IA indisponível no momento.'], 502);
         }
 
-        $result = $this->scheduler->decideAndBook($user, $conversation, $this->ai->memoryContext($conversation));
+        // Já tem reunião futura nesta conversa? Então o botão REMARCA (move o evento existente)
+        // em vez de criar uma segunda reunião com o mesmo lead.
+        $pending = \App\Models\Meeting::where('conversation_id', $conversation->id)
+            ->where('starts_at', '>', now())->orderBy('starts_at')->first();
+
+        $result = $this->scheduler->decideAndBook($user, $conversation, $this->ai->memoryContext($conversation), $pending);
 
         if (($result['error'] ?? null) === 'parse') {
             return response()->json(['message' => 'Não consegui interpretar a sugestão da IA. Tente de novo.'], 502);
@@ -146,11 +153,42 @@ class ConversationController extends Controller
 
         return response()->json(array_filter([
             'scheduled' => $result['scheduled'],
+            'rescheduled' => $result['rescheduled'] ?? null,
             'message' => $result['message'] ?? null,
             'note' => $result['note'] ?? null,
             'event' => $result['event'] ?? null,
             'meet_link' => $result['meet_link'] ?? null,
             'slot_label' => $result['slot_label'] ?? null,
         ], fn ($v) => $v !== null));
+    }
+
+    /**
+     * Foto de perfil do contato, servida do NOSSO disco.
+     *
+     * A coluna `avatar` guarda a URL que o WhatsApp devolveu, e essa URL MORRE: o link do
+     * `pps.whatsapp.net` carrega um `oe=` de validade e depois de alguns dias responde 403.
+     * Era por isso que as fotos sumiam de todo mundo com o tempo — o `<img>` apontava
+     * direto para um link vencido. Aqui o binário é baixado uma vez e fica no disco; a URL
+     * do banco passa a ser só a origem, não o que a tela consome.
+     */
+    public function avatar(Conversation $conversation)
+    {
+        $path = Avatars::pathFor($conversation);
+
+        if (! is_file($path)) {
+            // Cache negativo: sem ele, uma conversa cuja foto morreu tentaria baixar de
+            // novo a cada renderização da lista — centenas de requisições por tela.
+            abort_if((bool) Cache::get("wa-avatar-miss:{$conversation->id}"), 404);
+
+            if (! Avatars::baixar($conversation)) {
+                Cache::put("wa-avatar-miss:{$conversation->id}", true, now()->addHours(6));
+                abort(404);
+            }
+        }
+
+        return response()->file($path, [
+            'Content-Type' => Avatars::mimeDe($path),
+            'Cache-Control' => 'private, max-age=86400',
+        ]);
     }
 }

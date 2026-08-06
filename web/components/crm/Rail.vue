@@ -111,7 +111,7 @@ onBeforeUnmount(() => {
     <button v-if="user?.is_admin" class="navbtn" :style="nav(route.path === '/admin/campanhas')" title="Campanhas (prospecção)" @click="navigateTo('/admin/campanhas')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21.5 3.2 2.8 10.4a.6.6 0 0 0 .05 1.13l4.9 1.6 1.6 4.9a.6.6 0 0 0 1.13.05Z" stroke-linejoin="round" /><path d="m21.5 3.2-13.75 9.93" stroke-linecap="round" /></svg>
     </button>
-    <button v-if="user?.is_super_admin" class="navbtn" :style="nav(route.path === '/marketing')" title="Marketing (anúncios no Facebook)" @click="navigateTo('/marketing')">
+    <button v-if="user?.is_super_admin" class="navbtn" :style="nav(route.path.startsWith('/marketing'))" title="Gerenciador de anúncios (Facebook Ads)" @click="navigateTo('/marketing')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11v2a1 1 0 0 0 1 1h2v4h2v-4l10 4.5v-15L8 8H4a1 1 0 0 0-1 1Z" stroke-linecap="round" stroke-linejoin="round" /></svg>
     </button>
     <button v-if="user?.is_admin" class="navbtn" :style="nav(route.path === '/admin/memoria')" title="Memória da IA" @click="navigateTo('/admin/memoria')">
@@ -165,6 +165,11 @@ onBeforeUnmount(() => {
           <svg v-if="isDark" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="4.2" /><path d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6" stroke-linecap="round" /></svg>
           <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 14.5A8 8 0 0 1 9.5 4a7 7 0 1 0 10.5 10.5Z" stroke-linecap="round" stroke-linejoin="round" /></svg>
           {{ isDark ? 'Tema claro' : 'Tema escuro' }}
+        </button>
+
+        <button v-if="user?.is_super_admin" class="usermenu-item" :class="{ active: route.path === '/admin/meta-ads' }" role="menuitem" @click="goFromMenu('/admin/meta-ads')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11v2a1 1 0 0 0 1 1h2v4h2v-4l10 4.5v-15L8 8H4a1 1 0 0 0-1 1Z" stroke-linecap="round" stroke-linejoin="round" /></svg>
+          Conexão Facebook Ads
         </button>
 
         <div class="usermenu-sep" />

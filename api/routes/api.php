@@ -72,6 +72,7 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
     // CRM
     Route::get('/conversations', [ConversationController::class, 'index']);
     Route::get('/conversations/{conversation}', [ConversationController::class, 'show']);
+    Route::get('/conversations/{conversation}/avatar', [ConversationController::class, 'avatar']);
     Route::patch('/conversations/{conversation}', [ConversationController::class, 'update']);
     Route::get('/conversations/{conversation}/messages', [MessageController::class, 'index']);
     Route::post('/conversations/{conversation}/messages', [MessageController::class, 'store']);
@@ -122,6 +123,11 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
         Route::patch('/marketing/creatives/{creative}', [MarketingController::class, 'atualizarCriativo']);
         Route::delete('/marketing/creatives/{creative}', [MarketingController::class, 'apagarCriativo']);
         Route::get('/marketing/creatives/{creative}/arquivo', [MarketingController::class, 'arquivo']);
+        // Painel de gestão de campanhas do Facebook Ads (métricas, ativar/pausar, orçamento).
+        Route::get('/marketing/campanhas', [MarketingController::class, 'campanhas']);
+        Route::get('/marketing/metricas', [MarketingController::class, 'metricasFb']);
+        Route::get('/marketing/ad-stats', [MarketingController::class, 'adStats']);
+        Route::patch('/marketing/campanhas/{id}', [MarketingController::class, 'atualizarCampanha']);
 
         // Painel da PLATAFORMA (página /super): fala de todas as empresas ao mesmo tempo,
         // por isso vive aqui dentro e nunca no grupo comum. Ver PLANO-SUPER-ADMIN.md.

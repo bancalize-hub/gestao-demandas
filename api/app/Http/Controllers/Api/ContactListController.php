@@ -39,8 +39,26 @@ class ContactListController extends Controller
 
     public function update(Request $request, ContactList $contactList)
     {
-        $data = $request->validate(['name' => 'required|string|max:120']);
-        $contactList->update(['name' => trim($data['name'])]);
+        $data = $request->validate([
+            'name' => 'sometimes|string|max:120',
+            'auto' => 'sometimes|boolean', // desligar = congelar a lista como está hoje
+        ]);
+
+        if (isset($data['name'])) {
+            $contactList->name = trim($data['name']);
+        }
+        if (array_key_exists('auto', $data)) {
+            // Ligar o automático exige saber QUAL é o critério. Lista de planilha/manual (ou
+            // uma lista antiga sem critério gravado) não tem regra nenhuma — ligar ali faria
+            // o sync despejar a base inteira dentro dela.
+            abort_if(
+                $data['auto'] && ! $contactList->criteria && $contactList->kind !== 'anuncio',
+                422,
+                'Esta lista não tem um critério gravado — crie uma lista a partir do CRM para ela se alimentar sozinha.',
+            );
+            $contactList->auto = $data['auto'];
+        }
+        $contactList->save();
 
         return response()->json($contactList);
     }
@@ -157,7 +175,16 @@ class ContactListController extends Controller
             return response()->json(['message' => 'Nenhuma conversa encontrada com esse filtro.'], 422);
         }
 
-        $lista = ContactList::create(['name' => trim($data['name']), 'kind' => 'crm']);
+        // A lista guarda o CRITÉRIO, não só o resultado de agora: o `lists:sync` reaplica
+        // a cada 15 min e o lead que chegar amanhã entra sozinho. Sem isso, a lista era a
+        // foto do dia em que nasceu e a campanha disparava para uma base velha.
+        $lista = ContactList::create([
+            'name' => trim($data['name']),
+            'kind' => 'crm',
+            'auto' => true,
+            'criteria' => ['stage' => $data['stage'] ?? null, 'somente_anuncio' => false],
+            'synced_at' => now(),
+        ]);
 
         $novos = 0;
         foreach ($conversas as $c) {

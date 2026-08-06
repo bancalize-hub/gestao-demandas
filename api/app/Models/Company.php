@@ -25,6 +25,7 @@ class Company extends Model
         return [
             'is_active' => 'boolean',
             'auto_reply_new_leads' => 'boolean',
+            'nudge_enabled' => 'boolean',
         ];
     }
 

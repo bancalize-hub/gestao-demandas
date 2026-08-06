@@ -183,7 +183,9 @@ class MemoryController extends Controller
     private function validateChunk(Request $request): array
     {
         return $request->validate([
-            'kind' => 'required|in:faq,preco,objecao,procedimento,fato',
+            // 'tutorial' = como MEXER no sistema (passo a passo de tela). Entra no prompt por
+            // relevância, não por data — a base de tutorial é grande e muda de assunto a cada pergunta.
+            'kind' => 'required|in:faq,preco,objecao,procedimento,fato,tutorial',
             'gatilho' => 'required|string|max:255',
             'conteudo' => 'required|string|max:2000',
             'keywords' => 'nullable|string|max:255',

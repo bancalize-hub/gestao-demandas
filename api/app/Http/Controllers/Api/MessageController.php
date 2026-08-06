@@ -169,6 +169,12 @@ class MessageController extends Controller
             ]);
         }
 
+        // Humano assumiu e escreveu para o lead: a rodada de retomada ativa recomeça do zero
+        // (se o lead sumir depois desta mensagem, a IA volta a ter as 3 tentativas).
+        if (($data['is_out'] ?? false) && $conversation->nudge_count) {
+            $conversation->update(['nudge_count' => 0, 'nudge_last_at' => null]);
+        }
+
         Realtime::messageCreated($message);
 
         return response()->json($message, 201);

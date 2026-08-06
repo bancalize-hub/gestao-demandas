@@ -53,6 +53,8 @@ class Conversation extends Model
         'archived' => 'boolean',
         'auto_reply' => 'boolean',
         'auto_reply_due_at' => 'datetime',
+        'nudge_count' => 'integer',
+        'nudge_last_at' => 'datetime',
         'tags' => 'array',
         'interactions' => 'array',
         'custom_fields' => 'array',
@@ -86,7 +88,7 @@ class Conversation extends Model
             // MessageCreated (preview/time/last_message_at) ou é ação do próprio
             // cliente (unread=0 ao abrir o chat). Antes, o PATCH de unread gerava
             // broadcast → o próprio cliente re-baixava lista+thread ao ABRIR a conversa.
-            $quiet = ['unread', 'time', 'preview', 'last_message_at', 'auto_reply_due_at', 'online', 'status_text', 'updated_at'];
+            $quiet = ['unread', 'time', 'preview', 'last_message_at', 'auto_reply_due_at', 'online', 'status_text', 'updated_at', 'nudge_count', 'nudge_last_at'];
             if (! $conv->wasRecentlyCreated && empty(array_diff(array_keys($conv->getChanges()), $quiet))) {
                 return;
             }

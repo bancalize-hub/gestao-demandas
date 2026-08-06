@@ -10,11 +10,14 @@ use Illuminate\Support\Facades\Storage;
 
 class StageAutomationController extends Controller
 {
-    /** Configurações gerais de automação da empresa (hoje: IA automática p/ leads novos). */
+    /** Configurações gerais de automação da empresa (IA em leads novos + retomada ativa). */
     public function settings(Request $request)
     {
+        $company = $request->user()->company;
+
         return response()->json([
-            'auto_reply_new_leads' => (bool) $request->user()->company?->auto_reply_new_leads,
+            'auto_reply_new_leads' => (bool) $company?->auto_reply_new_leads,
+            'nudge_enabled' => (bool) $company?->nudge_enabled,
         ]);
     }
 
@@ -23,16 +26,18 @@ class StageAutomationController extends Controller
     {
         abort_unless((bool) $request->user()?->is_admin, 403, 'Apenas administradores.');
 
+        // Cada chave é opcional: a tela manda só a que o usuário mexeu.
         $data = $request->validate([
-            'auto_reply_new_leads' => 'required|boolean',
+            'auto_reply_new_leads' => 'sometimes|boolean',
+            'nudge_enabled' => 'sometimes|boolean',
         ]);
 
         $company = $request->user()->company;
-        $company->auto_reply_new_leads = $data['auto_reply_new_leads'];
-        $company->save();
+        $company->fill($data)->save();
 
         return response()->json([
             'auto_reply_new_leads' => (bool) $company->auto_reply_new_leads,
+            'nudge_enabled' => (bool) $company->nudge_enabled,
         ]);
     }
 

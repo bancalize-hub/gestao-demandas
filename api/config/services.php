@@ -73,6 +73,39 @@ return [
         'stale_hours' => (int) env('AUTO_REPLY_STALE_HOURS', 6),
     ],
 
+    // Retomada ativa ("nudge"): a IA não espera o lead voltar — ela busca quem sumiu no meio
+    // da conversa. delays_minutes = minutos de SILÊNCIO (desde a última mensagem) para cada
+    // degrau da escada; o tamanho da lista é o teto de retomadas por rodada de silêncio.
+    // Padrão: 30 min (ainda na mesma conversa) → 20h → 3 dias → 7 dias.
+    //
+    // O primeiro degrau só vale se a conversa estava VIVA: o lead falou nos últimos
+    // flow_minutes antes da nossa mensagem. Fora disso ele é pulado — cutucar em 30 min
+    // quem já estava frio é atropelo, não retomada.
+    //
+    // A janela de horário evita mandar mensagem de madrugada; domingo nunca.
+    'nudge' => [
+        'delays_minutes' => array_values(array_filter(array_map(
+            'intval',
+            explode(',', (string) env('NUDGE_DELAYS_MINUTES', '30,1200,4320,10080')),
+        ))),
+        'flow_minutes' => (int) env('NUDGE_FLOW_MINUTES', 120),
+        'start_hour' => (int) env('NUDGE_START_HOUR', 9),
+        'end_hour' => (int) env('NUDGE_END_HOUR', 19),
+        'per_tick' => (int) env('NUDGE_PER_TICK', 15),
+
+        // Número na API oficial: retomada de 3+ dias cai fora da janela de 24h e a Meta só
+        // aceita TEMPLATE aprovado. O template tem 2 variáveis: {{1}} primeiro nome do lead,
+        // {{2}} assunto que estava sendo tratado (a IA preenche). `template_text` é a MESMA
+        // frase aprovada, usada só para espelhar a bolha no chat — manter as duas em sincronia.
+        // Sem template configurado, a rodada é encerrada com registro (nada é enviado).
+        'template' => env('NUDGE_TEMPLATE', 'retomada_conversa'),
+        'template_language' => env('NUDGE_TEMPLATE_LANG', 'pt_BR'),
+        'template_text' => env(
+            'NUDGE_TEMPLATE_TEXT',
+            'Oi :nome, tudo bem? Ficamos de continuar nossa conversa sobre :assunto e não quis deixar você sem retorno. Se quiser retomar, é só responder por aqui.',
+        ),
+    ],
+
     'meeting_reminder' => [
         'enabled' => env('MEETING_REMINDER_ENABLED', true),
         'lead_minutes' => (int) env('MEETING_REMINDER_LEAD_MINUTES', 60), // quanto antes lembrar (padrão: 1h)

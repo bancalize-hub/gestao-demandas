@@ -21,6 +21,22 @@ use Illuminate\Support\Collection;
  */
 class AiReplyService
 {
+    /**
+     * Palavras que não dizem nada sobre o assunto. Precisam sair ANTES da pontuação:
+     * como o conhecimento é curto e curado, "como"/"quero"/"preciso" são RAROS nele —
+     * a pontuação por raridade dava a elas o maior peso e "como faço X" caía em qualquer
+     * conhecimento que tivesse "como" no título.
+     */
+    private const VAZIAS = [
+        'como', 'quero', 'queria', 'preciso', 'precisa', 'onde', 'quando', 'qual', 'quais', 'porque',
+        'para', 'pelo', 'pela', 'esta', 'este', 'esse', 'essa', 'isso', 'aqui', 'ainda', 'agora',
+        'meus', 'minha', 'minhas', 'nosso', 'nossa', 'seus', 'suas', 'voce', 'voces', 'tenho', 'temos',
+        'fazer', 'faco', 'faca', 'consigo', 'posso', 'pode', 'poderia', 'deve', 'devo', 'tudo', 'tipo',
+        'sobre', 'mais', 'menos', 'muito', 'depois', 'antes', 'entao', 'mesmo', 'tambem', 'sendo',
+        'obrigado', 'favor', 'gente', 'dia', 'tarde', 'noite', 'certo', 'ficou', 'ficar', 'sabe',
+        'estou', 'estava', 'seria', 'teria', 'nada', 'algum', 'alguma', 'todo', 'toda', 'cada',
+    ];
+
     /** Monta o prompt (voz + conhecimento + histórico) e gera a resposta. Retorna null se indisponível. */
     public function generate(Conversation $conversation, ?string $instruction = null, ?string $previous = null): ?string
     {
@@ -131,7 +147,7 @@ class AiReplyService
 
         $regraConvite = ($jaConvidou && ! $leadTocouNoAssunto)
             ? '- Você JÁ convidou para a reunião e o lead não respondeu sobre isso. NÃO convide de novo nesta mensagem: '
-                .'responda só o que ele perguntou e pare por aí. Insistir a cada mensagem afasta o lead.'
+                .'fique no assunto que ele levantou e pare por aí. Insistir a cada mensagem afasta o lead.'
             : '- Se fizer sentido, convide para a reunião UMA vez — nunca em duas mensagens seguidas.';
 
         // Materiais (PDF etc.): a IA recebe a lista com o "quando" de cada um e decide se
@@ -149,9 +165,14 @@ class AiReplyService
                 ."que você já enviou nesta conversa.\n";
         }
 
-        $task = ($instruction && $previous)
-            ? "Você ia mandar esta mensagem:\n\"{$previous}\"\n\nReescreva-a aplicando este ajuste pedido pelo atendente: \"{$instruction}\". Mantenha o estilo, as regras, o conhecimento e o objetivo da etapa."
-            : 'Escreva a próxima mensagem do Atendente.';
+        // Três modos: reescrever uma mensagem com o ajuste pedido, escrever sob uma instrução
+        // específica (follow-up, retomada ativa) ou simplesmente responder o lead.
+        // Instrução sem `previous` era ignorada em silêncio — o follow-up caía na genérica.
+        $task = match (true) {
+            $instruction && $previous => "Você ia mandar esta mensagem:\n\"{$previous}\"\n\nReescreva-a aplicando este ajuste pedido pelo atendente: \"{$instruction}\". Mantenha o estilo, as regras, o conhecimento e o objetivo da etapa.",
+            (bool) $instruction => $instruction,
+            default => 'Escreva a próxima mensagem do Atendente.',
+        };
 
         $prompt = <<<TXT
         Você é o ATENDENTE escrevendo a próxima mensagem para um lead no WhatsApp.
@@ -259,28 +280,100 @@ class AiReplyService
             ->map(fn ($m) => trim(($m->text ?? '').' '.($m->transcript ?? '')))
             ->implode(' ');
 
-        $words = collect(preg_split('/\W+/u', mb_strtolower($recent)))
-            ->filter(fn ($w) => mb_strlen($w) >= 4)->unique();
+        // Sem acento dos dois lados: no WhatsApp o cliente escreve "usuario", "e-mail nao
+        // chega", "antecipacao" — com acento no cadastro e sem acento na pergunta, nada casava.
+        $texto = self::normalizar($recent);
+        $words = collect(preg_split('/\W+/u', $texto))
+            ->filter(fn ($w) => mb_strlen($w) >= 4 && ! in_array($w, self::VAZIAS, true))
+            ->unique();
 
         // O playbook do TIME (como o SDR/Closer/CS atende) entra SEMPRE: é sobre o nosso
         // comportamento, não sobre o que o lead escreveu — depender de palavra-chave fazia
         // ele quase nunca aparecer. O conhecimento geral (produto, preço, objeções) segue
         // por relevância, que é o que evita despejar 60 chunks no prompt.
+        //
+        // Os TUTORIAIS são a exceção dentro do time: são dezenas (uma tela do sistema cada) e
+        // mudam de assunto a cada pergunta do cliente. Entrassem por data, como o playbook, só
+        // os 8 últimos existiriam para a IA — quem perguntasse da logo receberia o tutorial de
+        // maquininha. Por isso eles disputam por palavra-chave, igual ao conhecimento geral.
         $teamId = ChatTab::forStage($conversation->stage)?->id;
-        $team = $teamId ? MemoryChunk::where('chat_tab_id', $teamId)->latest('id')->take(8)->get() : collect();
+        $team = $teamId
+            ? MemoryChunk::where('chat_tab_id', $teamId)->where('kind', '!=', 'tutorial')->latest('id')->take(8)->get()
+            : collect();
+        $tutoriais = $teamId
+            ? MemoryChunk::where('chat_tab_id', $teamId)->where('kind', 'tutorial')->get()
+            : collect();
 
         $geral = MemoryChunk::whereNull('chat_tab_id')->get();
-        if ($words->isEmpty() || $geral->isEmpty()) {
+        if ($words->isEmpty() || ($geral->isEmpty() && $tutoriais->isEmpty())) {
             return $team->concat($geral->take(5))->values();
         }
 
-        $relevantes = $geral->map(function ($c) use ($words) {
-            $hay = mb_strtolower(($c->keywords ?? '').' '.$c->gatilho);
-            $c->score = $words->filter(fn ($w) => str_contains($hay, $w))->count();
+        $pontuar = fn (Collection $chunks, int $limite) => $this->pontuarPorRelevancia($chunks, $words, $texto, $limite);
 
-            return $c;
-        })->filter(fn ($c) => $c->score > 0)->sortByDesc('score')->take(5);
+        // Tutorial é resposta longa e específica: 3 já cobrem a pergunta e sobra contexto.
+        $relevantes = $pontuar($tutoriais, 3)->concat($pontuar($geral, 5));
 
         return $team->concat($relevantes)->values();
+    }
+
+    /**
+     * Ordena os conhecimentos pela pergunta do cliente.
+     *
+     * Contar palavras casadas não bastava: "lojista", "conta" e "cadastro" aparecem em
+     * quase todo tutorial e empatavam tudo — "quero vender maquininha" caía no tutorial de
+     * menu. Aqui cada palavra vale o INVERSO de quantos conhecimentos a contêm (palavra que
+     * casa com tudo quase não pontua; "favicon", "smtp", "antecipacao" decidem), e casar
+     * no gatilho vale o dobro de casar nas palavras-chave. O conteúdo fica de fora de
+     * propósito: texto longo casa com qualquer coisa.
+     */
+    private function pontuarPorRelevancia(Collection $chunks, Collection $words, string $pergunta, int $limite): Collection
+    {
+        if ($chunks->isEmpty() || $words->isEmpty()) {
+            return collect();
+        }
+
+        $campos = $chunks->mapWithKeys(fn ($c) => [$c->id => [
+            'gatilho' => self::normalizar((string) $c->gatilho),
+            'busca' => self::normalizar(($c->keywords ?? '').' '.$c->gatilho),
+        ]]);
+
+        $frequencia = $words->mapWithKeys(fn ($w) => [
+            $w => $campos->filter(fn ($f) => str_contains($f['busca'], $w))->count(),
+        ]);
+
+        return $chunks->map(function ($c) use ($words, $campos, $frequencia, $pergunta) {
+            $f = $campos[$c->id];
+            $c->score = $words->sum(function ($w) use ($f, $frequencia) {
+                if ($frequencia[$w] === 0 || ! str_contains($f['busca'], $w)) {
+                    return 0;
+                }
+                // Teto no peso: com 44 conhecimentos, uma palavra que só aparece em um deles
+                // ganharia peso 1 e decidiria sozinha — inclusive quando é palavra à toa.
+                $peso = min(1 / $frequencia[$w], 0.5);
+
+                return str_contains($f['gatilho'], $w) ? $peso * 2 : $peso;
+            });
+
+            // Frase inteira das palavras-chave dentro da pergunta ("vender maquininha",
+            // "trocar a logo") é o sinal mais forte que existe: vale mais que palavra solta.
+            $c->score += 1.5 * collect(explode(',', self::normalizar((string) $c->keywords)))
+                ->map(fn ($k) => trim($k))
+                ->filter(fn ($k) => str_contains($k, ' ') && str_contains($pergunta, $k))
+                ->count();
+
+            return $c;
+        })->filter(fn ($c) => $c->score > 0)->sortByDesc('score')->take($limite);
+    }
+
+    /** Minúsculas e sem acento — o cliente digita "usuario", o cadastro diz "usuário". */
+    private static function normalizar(string $texto): string
+    {
+        return strtr(mb_strtolower($texto), [
+            'á' => 'a', 'à' => 'a', 'ã' => 'a', 'â' => 'a', 'ä' => 'a',
+            'é' => 'e', 'è' => 'e', 'ê' => 'e', 'í' => 'i', 'ì' => 'i', 'î' => 'i',
+            'ó' => 'o', 'ò' => 'o', 'õ' => 'o', 'ô' => 'o', 'ö' => 'o',
+            'ú' => 'u', 'ù' => 'u', 'û' => 'u', 'ü' => 'u', 'ç' => 'c', 'ñ' => 'n',
+        ]);
     }
 }

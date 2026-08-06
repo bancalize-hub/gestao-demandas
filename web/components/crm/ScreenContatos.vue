@@ -9,7 +9,7 @@ const search = ref('')
 // ---- Listas de contatos ----------------------------------------------------
 // A agenda deixou de ser "o que veio do Google": cada lista é um grupo (Google,
 // planilha importada, leads do CRM) e é o que a campanha usa no disparo.
-interface Lista { id: number, name: string, kind: string, contacts_count: number }
+interface Lista { id: number, name: string, kind: string, auto?: boolean, contacts_count: number }
 const listas = ref<Lista[]>([])
 // null = tela de cards (as listas). 'todos' ou o id = dentro de uma lista, vendo contatos.
 const vendo = ref<number | 'todos' | null>(null)
@@ -37,14 +37,19 @@ function voltarParaListas() {
   carregarListas()
 }
 const nomeDaLista = computed(() => listaAtiva.value ? (listas.value.find(l => l.id === listaAtiva.value)?.name || '') : 'Todos os contatos')
-const kindDaLista = computed(() => listas.value.find(l => l.id === listaAtiva.value)?.kind || '')
+const listaAtivaObj = computed(() => listas.value.find(l => l.id === listaAtiva.value))
+const kindDaLista = computed(() => listaAtivaObj.value?.kind || '')
 
-function descricaoDaLista(kind: string) {
+// Lista automática guarda o critério e é reaplicada a cada 15 min — o lead que chegar
+// amanhã entra sozinho. Dizer isso na tela evita a dúvida de "preciso puxar de novo?".
+function descricaoDaLista(kind: string, auto = false) {
+  if (auto && kind === 'anuncio') return 'Se alimenta sozinha: todo lead que chega pelo anúncio entra aqui'
+  if (auto && kind === 'crm') return 'Se alimenta sozinha: todo lead novo que casa com o filtro entra aqui'
   return ({
     google: 'Sincronizada com a sua agenda do Google',
     planilha: 'Importada de planilha',
-    crm: 'Gerada a partir das conversas do CRM',
-    anuncio: 'Se alimenta sozinha: todo lead que chega pelo anúncio entra aqui',
+    crm: 'Gerada a partir das conversas do CRM (foto do momento em que foi criada)',
+    anuncio: 'Leads que chegaram pelo anúncio',
   } as Record<string, string>)[kind] || 'Lista criada por você'
 }
 
@@ -208,7 +213,7 @@ function remove() {
               <span style="font-size:24px;">{{ iconeDaLista(l.kind) }}</span>
               <div style="flex:1;min-width:0;padding-right:14px;">
                 <div style="font-size:15px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ l.name }}</div>
-                <div style="font-size:11.5px;color:var(--c-text-faint);margin-top:2px;line-height:1.35;">{{ descricaoDaLista(l.kind) }}</div>
+                <div style="font-size:11.5px;color:var(--c-text-faint);margin-top:2px;line-height:1.35;">{{ descricaoDaLista(l.kind, l.auto) }}</div>
               </div>
             </div>
             <div style="font-size:26px;font-weight:800;letter-spacing:-1px;">{{ l.contacts_count }}</div>
@@ -233,7 +238,7 @@ function remove() {
             <span v-if="listaAtiva">{{ iconeDaLista(kindDaLista) }}</span>{{ nomeDaLista }}
           </div>
           <div style="font-size:12.5px;color:var(--c-text-muted);margin-top:2px;">
-            {{ crm.contacts.length }} contatos<template v-if="listaAtiva"> · {{ descricaoDaLista(kindDaLista) }}</template>
+            {{ crm.contacts.length }} contatos<template v-if="listaAtiva"> · {{ descricaoDaLista(kindDaLista, listaAtivaObj?.auto) }}</template>
           </div>
         </div>
         <button class="wabtn" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:13px;font-weight:700;padding:9px 15px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:6px;flex-shrink:0;" @click="openNew">

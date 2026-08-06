@@ -73,10 +73,17 @@ class QualificarTick extends Command
             // Lead antigo já foi triado na mão ou não importa mais para a decisão de verba.
             ->where('created_at', '>=', now()->subDays(45))
             ->where(function ($q) {
-                $q->whereNull('qualified')
+                // Nunca olhada por ninguém. O `qualified_auto = 0` é o que impede o laço:
+                // quando a IA responde "não dá para julgar", a conversa CONTINUA com
+                // qualified NULL — só que agora com auto = 1. Sem esta condição ela
+                // voltaria para a fila na rodada seguinte, e as mesmas conversas mudas
+                // seriam re-julgadas para sempre, queimando chamadas e travando o resto
+                // do histórico atrás delas.
+                $q->where(fn ($s) => $s->whereNull('qualified')->where('qualified_auto', false))
                     // Marca da IA que envelheceu: chegou mensagem nova depois dela, e a
                     // conversa pode ter mudado de figura (o "quero empréstimo" que depois
-                    // conta que tem uma operação rodando).
+                    // conta que tem uma operação rodando). Vale inclusive para o veredito
+                    // "não deu para julgar" — é justamente quem costuma falar depois.
                     ->orWhere(fn ($s) => $s->where('qualified_auto', true)
                         ->whereColumn('last_message_at', '>', 'updated_at'));
             })

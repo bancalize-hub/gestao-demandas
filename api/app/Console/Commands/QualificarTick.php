@@ -84,8 +84,16 @@ class QualificarTick extends Command
                     // conversa pode ter mudado de figura (o "quero empréstimo" que depois
                     // conta que tem uma operação rodando). Vale inclusive para o veredito
                     // "não deu para julgar" — é justamente quem costuma falar depois.
+                    //
+                    // COMPARA COM `qualified_at`, NUNCA COM `updated_at`: quem grava
+                    // `last_message_at` grava pelo Eloquent, que carimba `updated_at` no
+                    // mesmo UPDATE. As duas sobem juntas, então `last_message_at >
+                    // updated_at` era falso sempre e o palpite da primeira mensagem
+                    // congelava para sempre — inclusive em lead que depois marcou reunião.
+                    // `qualified_at` só é escrito aqui, então ninguém o empurra à frente.
                     ->orWhere(fn ($s) => $s->where('qualified_auto', true)
-                        ->whereColumn('last_message_at', '>', 'updated_at'));
+                        ->where(fn ($t) => $t->whereNull('qualified_at')
+                            ->orWhereColumn('last_message_at', '>', 'qualified_at')));
             })
             ->whereHas('messages', fn ($q) => $q->where('is_out', false), '>=', self::MIN_MENSAGENS)
             ->orderByDesc('last_message_at')
@@ -106,6 +114,10 @@ class QualificarTick extends Command
                 'qualified' => $qualificado,
                 'qualified_reason' => $motivo,
                 'qualified_auto' => true,
+                // Carimbo do julgamento, e o único lugar que escreve esta coluna. É ele
+                // que faz "chegou mensagem depois que eu julguei" ser uma pergunta
+                // respondível — ver o comentário da fila em triarEmpresa().
+                'qualified_at' => now(),
             ])->save();
 
             $marcados++;

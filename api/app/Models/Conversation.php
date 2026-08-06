@@ -57,6 +57,7 @@ class Conversation extends Model
         'archived' => 'boolean',
         'qualified' => 'boolean',
         'qualified_auto' => 'boolean',
+        'qualified_at' => 'datetime',
         'auto_reply' => 'boolean',
         'auto_reply_due_at' => 'datetime',
         'nudge_count' => 'integer',

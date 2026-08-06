@@ -18,6 +18,8 @@ class StageAutomationController extends Controller
         return response()->json([
             'auto_reply_new_leads' => (bool) $company?->auto_reply_new_leads,
             'nudge_enabled' => (bool) $company?->nudge_enabled,
+            'qualify_enabled' => (bool) $company?->qualify_enabled,
+            'qualify_criteria' => (string) ($company?->qualify_criteria ?? ''),
         ]);
     }
 
@@ -30,6 +32,8 @@ class StageAutomationController extends Controller
         $data = $request->validate([
             'auto_reply_new_leads' => 'sometimes|boolean',
             'nudge_enabled' => 'sometimes|boolean',
+            'qualify_enabled' => 'sometimes|boolean',
+            'qualify_criteria' => 'sometimes|nullable|string|max:4000',
         ]);
 
         $company = $request->user()->company;
@@ -38,6 +42,8 @@ class StageAutomationController extends Controller
         return response()->json([
             'auto_reply_new_leads' => (bool) $company->auto_reply_new_leads,
             'nudge_enabled' => (bool) $company->nudge_enabled,
+            'qualify_enabled' => (bool) $company->qualify_enabled,
+            'qualify_criteria' => (string) ($company->qualify_criteria ?? ''),
         ]);
     }
 

@@ -132,9 +132,13 @@ function fmtSize(b: number) {
 }
 
 // ---- IA automática para leads novos + retomada ativa (veio da antiga tela de Automações) ----
-type AutomationSettings = { auto_reply_new_leads: boolean, nudge_enabled: boolean }
+type AutomationSettings = { auto_reply_new_leads: boolean, nudge_enabled: boolean, qualify_enabled: boolean, qualify_criteria: string }
 const autoReplyNewLeads = ref(false)
 const nudgeEnabled = ref(false)
+const qualifyEnabled = ref(false)
+const qualifyCriteria = ref('')
+const qualifyCriteriaSalvo = ref('')
+const savingQualify = ref(false)
 const savingSetting = ref(false)
 const savingNudge = ref(false)
 async function loadSettings() {
@@ -142,8 +146,25 @@ async function loadSettings() {
     const r = await api<AutomationSettings>('/api/automation-settings')
     autoReplyNewLeads.value = r.auto_reply_new_leads
     nudgeEnabled.value = r.nudge_enabled
+    qualifyEnabled.value = r.qualify_enabled
+    qualifyCriteria.value = r.qualify_criteria || ''
+    qualifyCriteriaSalvo.value = qualifyCriteria.value
   }
   catch { /* */ }
+}
+
+/** Liga/desliga a pré-triagem e salva o critério. Sem critério não há o que ligar. */
+async function salvarQualify(payload: Partial<AutomationSettings>) {
+  if (savingQualify.value) return
+  savingQualify.value = true
+  try {
+    const r = await api<AutomationSettings>('/api/automation-settings', { method: 'PATCH', body: payload })
+    qualifyEnabled.value = r.qualify_enabled
+    qualifyCriteria.value = r.qualify_criteria || ''
+    qualifyCriteriaSalvo.value = qualifyCriteria.value
+  }
+  catch (e: any) { alert(e?.response?._data?.message || 'Não consegui salvar.') }
+  finally { savingQualify.value = false }
 }
 async function toggleAutoReplyNewLeads() {
   if (savingSetting.value) return
@@ -454,6 +475,47 @@ onMounted(() => { load(); loadAi(); loadMaterials(); loadSettings() })
             >
               <span :style="{ position: 'absolute', top: '3px', left: nudgeEnabled ? '25px' : '3px', width: '24px', height: '24px', borderRadius: '50%', background: 'var(--c-on-accent)', transition: 'left .15s' }" />
             </button>
+          </div>
+
+          <!-- pré-triagem: a IA separa lead bom de lead perdido -->
+          <div style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:16px;padding:22px;">
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+              <div style="flex:1;min-width:200px;">
+                <div style="font-size:15px;font-weight:800;">IA faz a triagem dos leads</div>
+                <div style="font-size:12.5px;color:var(--c-text-muted);margin-top:3px;line-height:1.5;">
+                  A cada 3 minutos a IA lê as conversas novas e marca cada lead como qualificado ou desqualificado, com
+                  o motivo. É um palpite: aparece com contorno tracejado no chat até alguém confirmar, e some do
+                  automático assim que você clica. Quando não dá para julgar, ela deixa sem triagem em vez de chutar.
+                  É esse número que vira o <strong>custo por lead qualificado</strong> no Marketing.
+                </div>
+              </div>
+              <button
+                :disabled="savingQualify || !qualifyCriteriaSalvo"
+                :title="qualifyCriteriaSalvo ? '' : 'Escreva e salve o critério antes de ligar'"
+                :style="{ width: '52px', height: '30px', borderRadius: '20px', border: 'none', cursor: (savingQualify || !qualifyCriteriaSalvo) ? 'default' : 'pointer', position: 'relative', flexShrink: 0, background: qualifyEnabled ? 'var(--accent)' : 'var(--c-surface-3)', opacity: (savingQualify || !qualifyCriteriaSalvo) ? 0.6 : 1, transition: 'background .15s' }"
+                @click="salvarQualify({ qualify_enabled: !qualifyEnabled })"
+              >
+                <span :style="{ position: 'absolute', top: '3px', left: qualifyEnabled ? '25px' : '3px', width: '24px', height: '24px', borderRadius: '50%', background: 'var(--c-on-accent)', transition: 'left .15s' }" />
+              </button>
+            </div>
+            <div style="margin-top:16px;">
+              <label for="criterio-qual" style="font-size:12px;font-weight:800;color:var(--c-text-muted);letter-spacing:.4px;">QUEM É LEAD BOM PARA VOCÊ</label>
+              <textarea
+                id="criterio-qual"
+                v-model="qualifyCriteria"
+                rows="8"
+                placeholder="Descreva o que você vende e, em duas listas, quem é QUALIFICADO e quem é DESQUALIFICADO. Seja concreto: use as frases que os leads ruins costumam mandar."
+                style="width:100%;margin-top:8px;background:var(--c-surface-0);border:1px solid var(--c-surface-2);border-radius:12px;padding:12px 14px;color:var(--c-text);font-family:inherit;font-size:13.5px;line-height:1.6;resize:vertical;"
+              />
+              <div style="display:flex;align-items:center;gap:10px;margin-top:10px;">
+                <button
+                  :disabled="savingQualify || qualifyCriteria === qualifyCriteriaSalvo"
+                  :style="{ background: qualifyCriteria === qualifyCriteriaSalvo ? 'var(--c-surface-2)' : 'var(--accent)', color: qualifyCriteria === qualifyCriteriaSalvo ? 'var(--c-text-faint)' : 'var(--c-on-accent)', border: 'none', borderRadius: '10px', padding: '9px 18px', fontFamily: 'inherit', fontSize: '13px', fontWeight: 800, cursor: (savingQualify || qualifyCriteria === qualifyCriteriaSalvo) ? 'default' : 'pointer' }"
+                  @click="salvarQualify({ qualify_criteria: qualifyCriteria })"
+                >{{ savingQualify ? 'Salvando…' : 'Salvar critério' }}</button>
+                <span v-if="qualifyCriteria !== qualifyCriteriaSalvo" style="font-size:12px;color:var(--c-warn-hi);">alterações não salvas</span>
+              </div>
+            </div>
           </div>
 
           <!-- materiais que a IA envia -->

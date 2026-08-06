@@ -69,7 +69,16 @@ class ConversationController extends Controller
             'deal_value', 'deal_unit', 'name', 'auto_reply',
             // Ficha do lead (CRM) — edição manual pela ScreenContact.
             'email', 'company', 'origin', 'responsible', 'role', 'segmento', 'notes', 'custom_fields',
+            'qualified',
         ]));
+
+        // Triagem feita por gente vence a da IA e passa a ser definitiva: o tick só mexe
+        // em quem ainda está NULL ou traz marca automática. Sem isto, o palpite da IA
+        // voltaria por cima da correção de quem leu a conversa.
+        if ($conversation->wasChanged('qualified')) {
+            $conversation->qualified_auto = false;
+            $conversation->save();
+        }
 
         // Ligou o atendimento automático: se o lead está aguardando (última mensagem é dele),
         // já agenda uma resposta. Desligou: cancela qualquer resposta pendente.

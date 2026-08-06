@@ -60,6 +60,11 @@ export interface Conversation {
   unread: number
   archived: boolean
   autoReply: boolean
+  /** Triagem: true = qualificado, false = desqualificado, null = ainda não triado. */
+  qualified: boolean | null
+  qualifiedReason: string
+  /** A marca veio da IA e ainda não foi confirmada por gente. */
+  qualifiedAuto: boolean
   lastOut: boolean
   inMemory: boolean
   tags: Tag[]
@@ -269,6 +274,9 @@ function mapConv(c: any): Conversation {
     statusText: c.status_text ?? '', role: c.role ?? '', dealValue: c.deal_value ?? '', dealUnit: c.deal_unit ?? '',
     stage: c.stage ?? '', stageColor: c.stage_color ?? '#8696a0', prob: c.prob ?? 0, hot: !!c.hot,
     preview: c.preview ?? '', time: c.time ?? '', lastMessageAt: c.last_message_at ?? null, startedAt: c.started_ts ?? null, unread: c.unread ?? 0, archived: !!c.archived, autoReply: !!c.auto_reply, lastOut: c.last_message ? !!c.last_message.is_out : lastIsOut(c.messages), inMemory: !!c.in_memory, tags: c.tags ?? [],
+    // `?? null` e não `!!`: "sem triagem" é um estado de verdade, diferente de desqualificado.
+    qualified: c.qualified === null || c.qualified === undefined ? null : !!c.qualified,
+    qualifiedReason: c.qualified_reason ?? '', qualifiedAuto: !!c.qualified_auto,
     phone: c.phone ?? '', email: c.email ?? '', company: c.company ?? '', origin: c.origin ?? '', responsible: c.responsible ?? '',
     segmento: c.segmento ?? '', notes: c.notes ?? '',
     interactions: c.interactions ?? [],
@@ -676,6 +684,28 @@ export const useCrmStore = defineStore('crm', {
       if (!c) return
       c.autoReply = !c.autoReply
       api()(`/api/conversations/${id}`, { method: 'PATCH', body: { auto_reply: c.autoReply } }).catch(() => { c.autoReply = !c.autoReply })
+    },
+    /**
+     * Triagem do lead. Cicla qualificado → desqualificado → sem triagem.
+     *
+     * Marcar à mão apaga o "auto": a partir daí a IA não mexe mais nesta conversa, então
+     * o chip para de mudar sozinho debaixo de quem acabou de decidir.
+     */
+    setQualified(id: string, value: boolean | null) {
+      const c = this.conversations.find(x => x.id === id)
+      if (!c) return
+      const antes = { q: c.qualified, motivo: c.qualifiedReason, auto: c.qualifiedAuto }
+      c.qualified = value
+      c.qualifiedAuto = false
+      if (value === null) c.qualifiedReason = ''
+      api()(`/api/conversations/${id}`, { method: 'PATCH', body: { qualified: value } })
+        .catch(() => { c.qualified = antes.q; c.qualifiedReason = antes.motivo; c.qualifiedAuto = antes.auto })
+    },
+    /** Próximo estado do ciclo do chip de triagem. */
+    cycleQualified(id: string) {
+      const c = this.conversations.find(x => x.id === id)
+      if (!c) return
+      this.setQualified(id, c.qualified === null ? true : (c.qualified ? false : null))
     },
     async memorize(id: string) {
       const c = this.conversations.find(x => x.id === id)

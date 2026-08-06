@@ -55,6 +55,14 @@ Schedule::command('nudge:tick')
     ->everyFiveMinutes()
     ->withoutOverlapping();
 
+// Pré-triagem dos leads pela IA (qualificado / desqualificado), que alimenta o custo por
+// lead qualificado no painel de marketing. A cada 3 min: o valor está em a triagem
+// acompanhar o gasto do anúncio, mas ninguém decide orçamento no intervalo de 1 minuto —
+// e cada rodada sobe um processo do CLI numa VPS de 2 vCPU.
+Schedule::command('leads:qualificar-tick')
+    ->everyThreeMinutes()
+    ->withoutOverlapping();
+
 // Lembrete de reunião: avisa o cliente pelo WhatsApp X min antes de começar (padrão 1h).
 Schedule::command('meetings:remind-tick')
     ->everyMinute()

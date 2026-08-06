@@ -338,6 +338,9 @@ const EMPTY = {
   stageStyle: {}, avatarHeader: { width: '42px', height: '42px', borderRadius: '50%', background: 'var(--c-surface-2)' },
   avatarBig: { width: '74px', height: '74px', borderRadius: '50%', background: 'var(--c-surface-2)', margin: '0 auto 11px' },
   progStyle: { width: '0%', height: '100%' }, tags: [] as { label: string, style: Record<string, string> }[],
+  // Sem conversa aberta o cabeçalho não aparece, mas `active.qual` é lido antes disso —
+  // sem o chip vazio aqui, o acesso quebra a tela inteira em vez de não mostrar nada.
+  autoReply: false, qual: qualChip(null, '', false),
 }
 
 const active = computed(() => {
@@ -345,6 +348,7 @@ const active = computed(() => {
   if (!c) return EMPTY
   return {
     id: c.id, name: c.name, initials: c.initials, avatar: c.avatar, role: c.role, autoReply: c.autoReply,
+    qual: qualChip(c.qualified, c.qualifiedReason, c.qualifiedAuto),
     phone: maskPhone(c.phone), statusText: c.statusText, statusColor: c.online ? 'var(--accent)' : 'var(--c-text-muted)',
     dealValue: c.dealValue, dealUnit: c.dealUnit || '', stage: c.stage,
     probText: `${c.prob}% de probabilidade de fechamento`,
@@ -362,10 +366,38 @@ const active = computed(() => {
 const ROW_STYLE = { display: 'flex', gap: '12px', padding: '11px 12px', borderRadius: '13px', cursor: 'pointer', alignItems: 'center', position: 'relative' }
 const DOT_STYLE = { position: 'absolute', bottom: '1px', right: '1px', width: '12px', height: '12px', borderRadius: '50%', background: 'var(--accent)', border: '2.5px solid var(--c-bg)' }
 
+/**
+ * Chip de triagem do lead. Um clique cicla: sem triagem → qualificado → desqualificado.
+ *
+ * O contorno tracejado diz que a marca é um palpite da IA que ninguém confirmou ainda —
+ * é o que separa "a máquina achou" de "eu decidi", e some no primeiro clique.
+ */
+function qualChip(q: boolean | null, motivo: string, auto: boolean, curto = false) {
+  const est = q === true
+    ? { txt: 'Qualificado', icone: '✓', cor: 'var(--accent-ink)', bg: 'var(--accent)', borda: 'var(--accent)' }
+    : q === false
+      ? { txt: curto ? 'Desqualif.' : 'Desqualificado', icone: '✕', cor: 'var(--c-danger)', bg: 'rgba(var(--c-danger-rgb),.14)', borda: 'var(--c-danger)' }
+      : { txt: 'Triar', icone: '◌', cor: 'var(--c-text-muted)', bg: 'var(--c-surface-2)', borda: 'transparent' }
+
+  const oQue = q === true ? 'Qualificado' : q === false ? 'Desqualificado' : 'Ainda sem triagem'
+  const quem = q === null ? '' : (auto ? ' (palpite da IA — clique para confirmar ou corrigir)' : ' (marcado por você)')
+  return {
+    txt: est.txt,
+    icone: est.icone,
+    titulo: `${oQue}${quem}${motivo ? `\n\n${motivo}` : ''}\n\nClique para mudar.`,
+    style: {
+      color: est.cor,
+      background: est.bg,
+      border: auto && q !== null ? `1px dashed ${est.borda}` : '1px solid transparent',
+    },
+  }
+}
+
 const list = computed(() => crm.conversations.map(c => ({
   id: c.id, name: c.name, initials: c.initials, avatar: c.avatar, preview: c.preview, time: fmtListTime(c.lastMessageAt, c.time),
   unread: c.unread, online: c.online, hot: !!c.hot, hasUnread: c.unread > 0, archived: c.archived, inMemory: c.inMemory, tags: c.tags || [], stage: c.stage,
   autoReply: c.autoReply, lastOut: c.lastOut, stageColor: c.stageColor,
+  qual: qualChip(c.qualified, c.qualifiedReason, c.qualifiedAuto, true),
   stageName: (crm.stages.find(s => s.key === c.stage)?.name) || c.stage,
   rowStyle: ROW_STYLE,
   avatarStyle: { width: '48px', height: '48px', borderRadius: '50%', background: c.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '16px', flexShrink: 0, position: 'relative' },
@@ -940,6 +972,7 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
               <div style="display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap;">
                 <button class="ghost" :style="{ fontSize: '10.5px', fontWeight: 700, color: c.stageColor, background: `${c.stageColor}22`, padding: '2px 9px', borderRadius: '6px', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }" @click.stop="stageFor = stageFor === c.id ? '' : c.id; menuFor = ''">{{ c.stageName }} ▾</button>
                 <button class="ghost" :title="c.autoReply ? 'Atendimento automático ligado — clique para desligar' : 'Ativar atendimento automático (IA responde sozinha)'" :style="{ fontSize: '10.5px', fontWeight: 700, padding: '2px 9px', borderRadius: '6px', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', color: c.autoReply ? 'var(--accent-ink)' : 'var(--c-text-muted)', background: c.autoReply ? 'var(--accent)' : 'var(--c-surface-2)' }" @click.stop="crm.toggleAutoReply(c.id)">🤖 {{ c.autoReply ? 'IA ligada' : 'IA' }}</button>
+                <button class="ghost" :title="c.qual.titulo" :style="{ ...c.qual.style, fontSize: '10.5px', fontWeight: 700, padding: '2px 9px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }" @click.stop="crm.cycleQualified(c.id)">{{ c.qual.icone }} {{ c.qual.txt }}</button>
               </div>
             </div>
             <div v-if="stageFor === c.id" style="position:absolute;left:62px;top:58px;z-index:31;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:5px;min-width:170px;box-shadow:0 10px 28px rgba(0,0,0,.45);" @click.stop>
@@ -1007,6 +1040,10 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
           <button class="iconbtn" :title="active.autoReply ? 'Atendimento automático LIGADO — a IA responde sozinha. Clique para desligar.' : 'Ativar atendimento automático (a IA responde o lead sozinha)'" :style="{ height: '38px', borderRadius: '11px', border: 'none', display: 'flex', alignItems: 'center', gap: '6px', padding: '0 12px', cursor: 'pointer', fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 700, color: active.autoReply ? 'var(--accent-ink)' : 'var(--accent)', background: active.autoReply ? 'var(--accent)' : 'var(--c-surface-2)' }" @click="crm.toggleAutoReply(active.id)">
             <span style="font-size:15px;line-height:1;">🤖</span>
             {{ active.autoReply ? 'IA ligada' : 'Ativar IA' }}
+          </button>
+          <button class="iconbtn" :title="active.qual.titulo" :style="{ ...active.qual.style, height: '38px', borderRadius: '11px', display: 'flex', alignItems: 'center', gap: '6px', padding: '0 12px', cursor: 'pointer', fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 700 }" @click="crm.cycleQualified(active.id)">
+            <span style="font-size:14px;line-height:1;">{{ active.qual.icone }}</span>
+            {{ active.qual.txt }}
           </button>
           <button v-if="!isMobile" class="iconbtn agbtn" title="Agendar reunião com IA" style="height:38px;border-radius:11px;border:none;background:var(--c-surface-2);color:var(--accent);display:flex;align-items:center;gap:6px;padding:0 12px;cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:700;" @click="agendarReuniao">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18M9 16l2 2 4-4" stroke-linecap="round" stroke-linejoin="round" /></svg>

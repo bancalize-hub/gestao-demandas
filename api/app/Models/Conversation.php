@@ -31,6 +31,10 @@ class Conversation extends Model
         'deal_value', 'deal_unit', 'stage', 'stage_color', 'prob', 'hot', 'preview', 'time',
         'last_message_at', 'unread', 'archived', 'auto_reply', 'in_memory', 'tags', 'phone',
         'email', 'company', 'origin', 'responsible', 'segmento', 'notes', 'interactions', 'company_id',
+        // A triagem aparece no chip da lista e no cabeçalho, então tem de vir na lista.
+        // São dois tinyint e uma frase curta — o motivo vem junto porque decidir sem ver
+        // o porquê da marca da IA é o mesmo que não ter marca nenhuma.
+        'qualified', 'qualified_reason', 'qualified_auto',
     ];
 
     /**
@@ -52,6 +56,7 @@ class Conversation extends Model
         'unread' => 'integer',
         'archived' => 'boolean',
         'qualified' => 'boolean',
+        'qualified_auto' => 'boolean',
         'auto_reply' => 'boolean',
         'auto_reply_due_at' => 'datetime',
         'nudge_count' => 'integer',

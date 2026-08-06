@@ -51,6 +51,7 @@ class Conversation extends Model
         'prob' => 'integer',
         'unread' => 'integer',
         'archived' => 'boolean',
+        'qualified' => 'boolean',
         'auto_reply' => 'boolean',
         'auto_reply_due_at' => 'datetime',
         'nudge_count' => 'integer',

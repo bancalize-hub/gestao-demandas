@@ -321,7 +321,7 @@ class MarketingController extends Controller
     }
 
     /** Formato de uma linha de stats — também serve de acumulador zerado. */
-    private const ZERADO = ['leads' => 0, 'responderam' => 0, 'reunioes' => 0, 'realizadas' => 0, 'vendas' => 0];
+    private const ZERADO = ['leads' => 0, 'responderam' => 0, 'qualificados' => 0, 'reunioes' => 0, 'realizadas' => 0, 'vendas' => 0];
 
     /**
      * O funil do período agrupado por uma chave de atribuição (ad_id ou "Criativo N"),
@@ -341,7 +341,11 @@ class MarketingController extends Controller
      * "Realizada" é a reunião com presença confirmada (`attended`), apurada pela Meet
      * API — reunião futura ou no-show não entra.
      *
-     * @return array<string, array{leads:int, responderam:int, reunioes:int, realizadas:int, vendas:int}>
+     * "Qualificado" é julgamento humano gravado em `conversations.qualified`, não regra
+     * automática: só conta quem é 1. Lead ainda não triado (NULL) não infla nem afunda a
+     * coluna — some dela, e é por isso que qualificados nunca passa de leads.
+     *
+     * @return array<string, array{leads:int, responderam:int, qualificados:int, reunioes:int, realizadas:int, vendas:int}>
      */
     private function statsPorChave(string $chave, \Illuminate\Support\Carbon $de, \Illuminate\Support\Carbon $ate): array
     {
@@ -361,6 +365,7 @@ class MarketingController extends Controller
             {$chave} as chave,
             COUNT(*) as leads,
             SUM({$respondeu}) as responderam,
+            SUM(conversations.qualified = 1) as qualificados,
             SUM({$reunioes}) as reunioes,
             SUM({$realizadas}) as realizadas,
             SUM(conversations.stage = 'fechado') as vendas
@@ -375,6 +380,7 @@ class MarketingController extends Controller
             $linhas[$r->chave] = [
                 'leads' => (int) $r->leads,
                 'responderam' => (int) $r->responderam,
+                'qualificados' => (int) $r->qualificados,
                 'reunioes' => (int) $r->reunioes,
                 'realizadas' => (int) $r->realizadas,
                 'vendas' => (int) $r->vendas,

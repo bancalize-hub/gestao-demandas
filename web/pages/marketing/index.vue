@@ -15,12 +15,12 @@ interface Metrica {
   actions?: { action_type: string; value: string }[]
 }
 interface AdStat {
-  criativo: string; leads: number; responderam: number; reunioes: number; realizadas: number; vendas: number
+  criativo: string; leads: number; responderam: number; qualificados: number; reunioes: number; realizadas: number; vendas: number
 }
 interface AdStatCamp {
-  campaign_id: string; leads: number; responderam: number; reunioes: number; realizadas: number; vendas: number
+  campaign_id: string; leads: number; responderam: number; qualificados: number; reunioes: number; realizadas: number; vendas: number
 }
-type CrmCampo = 'leads' | 'responderam' | 'reunioes' | 'realizadas' | 'vendas'
+type CrmCampo = 'leads' | 'responderam' | 'qualificados' | 'reunioes' | 'realizadas' | 'vendas'
 
 // ---------------------------------------------------------------- período ---
 const periodos = [
@@ -230,6 +230,8 @@ const COLUNAS: Coluna[] = [
   { key: 'cpm', label: 'CPM', grupo: 'facebook', dica: 'Custo por mil impressões' },
   { key: 'leads', label: 'Leads CRM', grupo: 'crm', cor: '#25D366', dica: 'Leads que chegaram no CRM pelo referral do anúncio, no período' },
   { key: 'cpl', label: 'CPL real', grupo: 'crm', cor: '#25D366', dica: 'Gasto ÷ leads do CRM, no mesmo período' },
+  { key: 'qualificados', label: 'Qualificados', grupo: 'crm', cor: '#4CAF90', dica: 'Leads marcados como qualificados na triagem. Quem ainda não foi triado não conta aqui.' },
+  { key: 'custo_qualificado', label: 'Custo/qualif.', grupo: 'crm', cor: '#4CAF90', dica: 'Gasto ÷ leads qualificados — o custo que diz para onde levar a verba' },
   { key: 'reunioes', label: 'Reuniões', grupo: 'crm', cor: '#4CAF90', dica: 'Reuniões marcadas na agenda pelos leads que chegaram no período' },
   { key: 'custo_reuniao', label: 'Custo/reun.', grupo: 'crm', cor: '#4CAF90', dica: 'Gasto ÷ reuniões' },
   { key: 'realizadas', label: 'Realizadas', grupo: 'crm', cor: '#25D366', dica: 'Dessas reuniões, as que o cliente compareceu (presença apurada no Meet)' },
@@ -287,6 +289,8 @@ function celula(c: Campanha, key: string): Celula {
     case 'cpm': return { txt: m.cpm ? brl(m.cpm) : '—', cor: 'var(--c-text-secondary)' }
     case 'leads': return num(qtd(c, 'leads'), s?.leads ? `${s.responderam} respond.` : null, '#25D366')
     case 'cpl': return dinheiro(custoPor(c, 'leads'), '#25D366')
+    case 'qualificados': return num(qtd(c, 'qualificados'), s ? taxa(s.leads, s.qualificados) && `${taxa(s.leads, s.qualificados)} dos leads` : null, '#4CAF90')
+    case 'custo_qualificado': return dinheiro(custoPor(c, 'qualificados'), '#4CAF90')
     case 'reunioes': return num(qtd(c, 'reunioes'), s ? taxa(s.leads, s.reunioes) && `${taxa(s.leads, s.reunioes)} dos leads` : null, '#4CAF90')
     case 'custo_reuniao': return dinheiro(custoPor(c, 'reunioes'), '#4CAF90')
     case 'realizadas': return num(qtd(c, 'realizadas'), s ? taxa(s.reunioes, s.realizadas) && `${taxa(s.reunioes, s.realizadas)} compareceu` : null, '#25D366')
@@ -316,6 +320,8 @@ function total(key: string): Celula {
     case 'cpm': return dinheiro(cpmTotal(), 'var(--c-text-secondary)')
     case 'leads': return contagem('leads', totalCrm('leads') ? `${totalCrm('responderam')} respond.` : null, '#25D366')
     case 'cpl': return dinheiro(custoTotalPor(totalCrm('leads')), '#25D366')
+    case 'qualificados': return contagem('qualificados', taxa(totalCrm('leads'), totalCrm('qualificados')) && `${taxa(totalCrm('leads'), totalCrm('qualificados'))} dos leads`, '#4CAF90')
+    case 'custo_qualificado': return dinheiro(custoTotalPor(totalCrm('qualificados')), '#4CAF90')
     case 'reunioes': return contagem('reunioes', taxa(totalCrm('leads'), totalCrm('reunioes')) && `${taxa(totalCrm('leads'), totalCrm('reunioes'))} dos leads`, '#4CAF90')
     case 'custo_reuniao': return dinheiro(custoTotalPor(totalCrm('reunioes')), '#4CAF90')
     case 'realizadas': return contagem('realizadas', taxa(totalCrm('reunioes'), totalCrm('realizadas')) && `${taxa(totalCrm('reunioes'), totalCrm('realizadas'))} compareceu`, '#25D366')
@@ -338,7 +344,7 @@ function semAtrib(key: string): Celula {
   const apagado = 'var(--c-text-faint)'
   if (!s) return { txt: '' }
   if (key === 'campanha') return { txt: 'SEM ATRIBUIÇÃO', sub: 'anúncio fora das campanhas listadas', cor: apagado, forte: true }
-  const campos: Record<string, CrmCampo> = { leads: 'leads', reunioes: 'reunioes', realizadas: 'realizadas', vendas: 'vendas' }
+  const campos: Record<string, CrmCampo> = { leads: 'leads', qualificados: 'qualificados', reunioes: 'reunioes', realizadas: 'realizadas', vendas: 'vendas' }
   const campo = campos[key]
   if (!campo) return { txt: '—', cor: apagado }
   return {

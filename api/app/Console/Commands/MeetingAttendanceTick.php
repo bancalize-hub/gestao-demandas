@@ -2,12 +2,15 @@
 
 namespace App\Console\Commands;
 
+use App\Models\Conversation;
 use App\Models\LeadActivity;
 use App\Models\Meeting;
+use App\Models\Task;
 use App\Models\User;
 use App\Services\GmailService;
 use App\Services\GoogleCalendarService;
 use App\Services\StageMover;
+use App\Support\MetaConversions;
 use App\Support\Tenancy;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
@@ -70,6 +73,7 @@ class MeetingAttendanceTick extends Command
         }
         if (! $user || ! $user->hasGoogle()) {
             $meeting->update(['attendance_checked_at' => now()]); // sem conta Google p/ apurar — encerra
+
             return;
         }
 
@@ -82,6 +86,7 @@ class MeetingAttendanceTick extends Command
         if ($meeting->attendance_checked_at === null) {
             if (! $code) {
                 $meeting->update(['attendance_checked_at' => now()]); // reunião sem link do Meet — nada a apurar
+
                 return;
             }
 
@@ -95,14 +100,12 @@ class MeetingAttendanceTick extends Command
                     $meeting->attendance_checked_at = now();
                 }
                 $meeting->save();
+
                 return;
             }
 
-            // Humanos (sem o bot de anotação) ordenados por tempo em sala. O host costuma ser o
-            // que mais fica; o 2º maior é o cliente — exigimos ≥ X min dele para contar presença.
-            $humans = array_values(array_filter($res['participants'], fn ($p) => ! $p['bot']));
-            usort($humans, fn ($a, $b) => $b['minutes'] <=> $a['minutes']);
-            $clientMinutes = count($humans) >= 2 ? (int) $humans[1]['minutes'] : 0;
+            // Tempo do cliente na sala, ignorando bot e equipe (ver Meeting::clientMinutes).
+            $clientMinutes = Meeting::clientMinutes($res['participants']);
             $attended = $clientMinutes >= $minMinutes;
 
             $meeting->attended = $attended;
@@ -122,19 +125,19 @@ class MeetingAttendanceTick extends Command
                     LeadActivity::log($meeting->conversation->id, 'reuniao', "✅ Cliente compareceu à reunião ({$when})", $lista);
                     // Presença CONFIRMADA no Meet — o evento mais valioso do funil para a
                     // Meta otimizar, porque separa quem apareceu de quem só marcou.
-                    \App\Support\MetaConversions::enviarUmaVez($meeting->conversation, \App\Support\MetaConversions::REUNIAO_REALIZADA);
+                    MetaConversions::enviarUmaVez($meeting->conversation, MetaConversions::REUNIAO_REALIZADA);
                 } else {
                     LeadActivity::log($meeting->conversation->id, 'reuniao', "⚠️ Cliente não compareceu à reunião ({$when})", $lista ?: null);
                     // No-show → cria um follow-up (Task) p/ remarcar. Roda uma vez só (este bloco
                     // de apuração só executa enquanto attendance_checked_at era null).
-                    \App\Models\Task::create([
+                    Task::create([
                         'conversation_id' => $meeting->conversation->id,
                         'title' => "Remarcar reunião — {$meeting->conversation->name} não compareceu ({$when})",
                         'client' => $meeting->conversation->name,
                         'type' => 'followup',
                         'priority' => 'alta',
                         'column' => 'todo',
-                        'position' => (\App\Models\Task::where('column', 'todo')->min('position') ?? 0) - 1,
+                        'position' => (Task::where('column', 'todo')->min('position') ?? 0) - 1,
                         'starts_at' => now()->addHour(),
                     ]);
                 }
@@ -151,8 +154,11 @@ class MeetingAttendanceTick extends Command
                 $meeting->summary = $report['summary'];
                 $meeting->summary_source = 'read.ai';
                 $meeting->summarized_at = now();
-                // O relatório prova que a reunião ocorreu — marca presença mesmo sem a Meet API.
-                if (! $meeting->attended) {
+                // O relatório prova que a reunião OCORREU, não que o cliente entrou. Serve de
+                // presença só quando não houve medição nenhuma (conta Google pessoal, em que a
+                // Meet API não devolve participantes). Se medimos e o cliente ficou 0 min —
+                // reunião em que só a equipe entrou —, a medição vale e o resumo não a apaga.
+                if (! $meeting->attended && blank($meeting->attendees)) {
                     $meeting->attended = true;
                 }
                 $meeting->save();
@@ -184,7 +190,7 @@ class MeetingAttendanceTick extends Command
     }
 
     /** Prepende o resumo no campo Observações da ficha, sem apagar o que já existe. */
-    private function appendToNotes(\App\Models\Conversation $conv, string $when, string $summary): void
+    private function appendToNotes(Conversation $conv, string $when, string $summary): void
     {
         $block = "🗓 Reunião {$when} — resumo (read.ai)\n{$summary}";
         $current = trim((string) $conv->notes);

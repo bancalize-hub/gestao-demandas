@@ -134,6 +134,14 @@ return [
         'stage_meeting_booked' => env('CRM_STAGE_MEETING_BOOKED', 'proposta'),          // "Reunião Agendada"
         'stage_meeting_done' => env('CRM_STAGE_MEETING_DONE', 'reuniao-realizada'),      // "Reunião Realizada"
         'attendance_min_minutes' => (int) env('CRM_ATTENDANCE_MIN_MINUTES', 10),         // tempo mínimo p/ contar presença
+        // Quem é do TIME, por nome de exibição no Google Meet. Presença de cliente ignora
+        // estes nomes: a API do Meet não devolve e-mail (só display name), então casar por
+        // nome é o único caminho. Sem esta lista o cálculo conta a própria equipe como
+        // cliente — reunião em que só o Paulo e a Maysa entram sai como "compareceu".
+        'team_display_names' => array_values(array_filter(array_map(
+            'trim',
+            explode(',', (string) env('CRM_TEAM_DISPLAY_NAMES', 'Guilherme Rodrigues,Maysa Lima,Bancalize'))
+        ))),
     ],
 
 ];

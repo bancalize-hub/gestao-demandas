@@ -39,10 +39,17 @@ const ORDEM_SELOS: Status[] = ['validado', 'testando', 'reprovado']
 // sozinho no dia em que a peça sobe, sem precisar que alguém lembre de mudar o selo.
 const NAO_SUBIU = { rotulo: 'Não subiu', icone: '⏳', cor: 'var(--c-text-faint)', curto: 'Não subiram' }
 
-/** Já foi ao ar? Só dá para afirmar depois que o desempenho chega. */
+/**
+ * Já foi AO AR? Só dá para afirmar depois que o desempenho chega.
+ *
+ * Existir anúncio não basta: peça montada e deixada pausada nunca foi entregue a
+ * ninguém, e chamar isso de "em teste" faria a tela dizer que dez criativos estão
+ * sendo testados enquanto nenhum apareceu para uma única pessoa. O que prova a ida ao
+ * ar é entrega — estar ativo agora ou ter tido impressão no período.
+ */
 function subiu(c: Criativo): boolean | null {
   const d = desempenho.value[c.id]
-  return d ? d.anuncios > 0 : null
+  return d ? d.ativos > 0 || d.impressoes > 0 : null
 }
 
 /** O selo COMO A TELA MOSTRA — "em teste" vira "não subiu" quando nunca virou anúncio. */

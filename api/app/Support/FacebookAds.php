@@ -133,6 +133,13 @@ class FacebookAds
         ];
         if ($orcamentoDiarioReais !== null) {
             $params['daily_budget'] = (int) round($orcamentoDiarioReais * 100);
+        } else {
+            // Campanha SEM orçamento próprio (ABO — o orçamento mora em cada conjunto).
+            // A Meta passou a exigir esta declaração explícita nesse caso e recusa a
+            // criação inteira sem ela. `false` = cada conjunto gasta o próprio orçamento;
+            // `true` faria os conjuntos dividirem uma bolsa comum, e num teste de
+            // criativos isso é um criativo gastando o dinheiro do outro.
+            $params['is_adset_budget_sharing_enabled'] = 'false';
         }
 
         return $this->call('POST', '/'.$this->conta().'/campaigns', $params);
@@ -167,6 +174,16 @@ class FacebookAds
         ];
         if ($orcamentoDiarioReais !== null) {
             $params['daily_budget'] = (int) round($orcamentoDiarioReais * 100);
+            // A Meta passou a EXIGIR esta declaração em orçamento de conjunto (ABO): sem
+            // ela a criação é recusada inteira. `false` = cada conjunto gasta o próprio
+            // orçamento, que é como esta conta trabalha; `true` deixaria os conjuntos da
+            // campanha dividirem uma bolsa comum, e aí o teste de um criativo estaria
+            // gastando o dinheiro do outro.
+            $params['is_adset_budget_sharing_enabled'] = 'false';
+            // Maior volume pelo menor custo, sem teto de lance — é o que os conjuntos
+            // desta conta usam. Omitir NÃO cai neste padrão: a Meta escolhe uma
+            // estratégia com teto e recusa a criação por falta do valor do lance.
+            $params['bid_strategy'] = 'LOWEST_COST_WITHOUT_CAP';
         }
         if ($destino) {
             $params['destination_type'] = $destino;

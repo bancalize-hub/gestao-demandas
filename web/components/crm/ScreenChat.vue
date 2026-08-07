@@ -77,6 +77,14 @@ function onEditValue(v: string) {
 
 // Memória (aprender a conversa)
 const memoToast = ref('')
+// Um timer só: dois avisos seguidos faziam o timeout do primeiro apagar o segundo.
+// O tempo padrão é curto porque a maioria é confirmação; erro explicado pede mais.
+let toastTimer: ReturnType<typeof setTimeout> | null = null
+function toast(msg: string, ms = 2500) {
+  memoToast.value = msg
+  if (toastTimer) clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => { memoToast.value = '' }, ms)
+}
 async function doMemorize(id: string) {
   menuFor.value = ''
   memoToast.value = 'Aprendendo a conversa… (~30s)'
@@ -616,9 +624,9 @@ async function send() {
     sendingMedia.value = true
     const f = pendingFile.value
     const cap = el.value
-    const ok = await crm.sendMedia(f, cap)
+    const erro = await crm.sendMedia(f, cap)
     sendingMedia.value = false
-    if (ok) {
+    if (!erro) {
       el.value = ''
       el.style.height = 'auto'
       hasInput.value = false
@@ -630,8 +638,9 @@ async function send() {
       if (last?.id && last.isMedia) mediaCache[last.id] = URL.createObjectURL(f)
     }
     else {
-      memoToast.value = 'Falha ao enviar a mídia — tente de novo'
-      setTimeout(() => { memoToast.value = '' }, 2200)
+      // O anexo FICA pendente de propósito: fora da janela o certo é mandar template e
+      // voltar nele, não ter de escolher o arquivo tudo de novo.
+      toast(erro, 6000)
     }
     return
   }
@@ -778,11 +787,13 @@ const forwardList = computed(() => {
 async function doForward(convId: string) {
   if (forwardSending.value || !forwardMsg.value) return
   forwardSending.value = true
-  const ok = await crm.forwardMessage(convId, forwardMsg.value.id)
+  const erro = await crm.forwardMessage(convId, forwardMsg.value.id)
   forwardSending.value = false
   forwardMsg.value = null
-  memoToast.value = ok ? 'Mensagem encaminhada ✓' : 'Falha ao encaminhar'
-  setTimeout(() => { memoToast.value = '' }, 1800)
+  // Erro do servidor vem explicado (ex.: janela de 24h fechada) e precisa de tempo de
+  // leitura; o "✓" some rápido porque não há nada para fazer com ele.
+  if (erro) toast(erro, 6000)
+  else toast('Mensagem encaminhada ✓', 1800)
 }
 
 // Fecha emoji e menu de contexto ao clicar fora (os gatilhos usam @click.stop).
@@ -932,17 +943,16 @@ function sendRec() {
     const ext = (mr.mimeType || '').includes('ogg') ? 'ogg' : 'webm'
     const file = new File([blob], `audio-${Date.now()}.${ext}`, { type: mr.mimeType || 'audio/webm' })
     sendingMedia.value = true
-    const ok = await crm.sendMedia(file, '', dur)
+    const erro = await crm.sendMedia(file, '', dur)
     sendingMedia.value = false
-    if (ok) {
+    if (!erro) {
       await nextTick()
       scrollDown()
       const last = thread.value[thread.value.length - 1]
       if (last?.id && last.isMedia) mediaCache[last.id] = URL.createObjectURL(file)
     }
     else {
-      memoToast.value = 'Falha ao enviar o áudio'
-      setTimeout(() => { memoToast.value = '' }, 2200)
+      toast(erro, 6000)
     }
   }
   if (mr.state !== 'inactive') mr.stop()

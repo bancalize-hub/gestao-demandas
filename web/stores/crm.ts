@@ -863,8 +863,9 @@ export const useCrmStore = defineStore('crm', {
       catch (e: any) { return e?.response?._data?.message || 'Falha ao enviar o template.' }
     },
 
-    // Encaminha uma mensagem para outra conversa. Retorna true se foi.
-    async forwardMessage(targetConvId: string, messageId: number): Promise<boolean> {
+    // Encaminha uma mensagem para outra conversa.
+    /** NULL quando encaminhou; a frase do erro quando não (mesma regra do sendMedia). */
+    async forwardMessage(targetConvId: string, messageId: number): Promise<string | null> {
       try {
         const m = await api()<any>(`/api/conversations/${targetConvId}/forward`, { method: 'POST', body: { message_id: messageId } })
         const target = this.conversations.find(c => c.id === targetConvId)
@@ -873,10 +874,13 @@ export const useCrmStore = defineStore('crm', {
           target.time = m.time
           if (targetConvId === this.activeId) target.thread.push(mapMsg(m))
         }
-        return true
+        return null
       }
-      catch {
-        return false
+      catch (e: any) {
+        // Aqui NÃO se abre o painel de templates: o destino do encaminhamento costuma ser
+        // outra conversa, e o painel é sempre o da conversa aberta — abriria o template
+        // do contato errado. A frase do servidor já diz o que fazer.
+        return e?.response?._data?.message || 'Falha ao encaminhar.'
       }
     },
 
@@ -911,10 +915,17 @@ export const useCrmStore = defineStore('crm', {
       }
     },
 
-    // Envia mídia (imagem/vídeo/documento) pelo WhatsApp. Retorna true se foi.
-    async sendMedia(file: File, caption = '', dur = ''): Promise<boolean> {
+    // Envia mídia (imagem/vídeo/documento) pelo WhatsApp.
+    /**
+     * Devolve NULL quando enviou e a FRASE DO ERRO quando não.
+     *
+     * Devolvia só um booleano, e o `catch` vazio jogava fora a explicação que o servidor
+     * já mandava — inclusive "a janela de 24h fechou", que tem saída (template). Quem
+     * usava via só "Falha ao enviar" e ficava tentando de novo o que nunca ia passar.
+     */
+    async sendMedia(file: File, caption = '', dur = ''): Promise<string | null> {
       const conv = this.activeConv
-      if (!conv) return false
+      if (!conv) return 'Conversa não encontrada.'
       const fd = new FormData()
       fd.append('file', file)
       if (caption.trim()) fd.append('caption', caption.trim())
@@ -925,10 +936,13 @@ export const useCrmStore = defineStore('crm', {
         conv.preview = m.type === 'image' ? '📷 Foto' : m.type === 'video' ? '🎬 Vídeo' : `📄 ${m.file_name || 'arquivo'}`
         conv.time = m.time
         conv.unread = 0
-        return true
+        return null
       }
-      catch {
-        return false
+      catch (e: any) {
+        // Fora da janela, mídia livre não existe: o único caminho é template aprovado.
+        // Abre o painel já, como o envio de texto faz — a mesma saída, no mesmo lugar.
+        if (e?.response?._data?.code === 'window_closed') this.openTemplates()
+        return e?.response?._data?.message || 'Falha ao enviar a mídia — tente de novo.'
       }
     },
 

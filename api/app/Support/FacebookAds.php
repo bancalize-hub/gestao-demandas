@@ -254,6 +254,81 @@ class FacebookAds
     }
 
     /**
+     * Quais anúncios usam cada imagem da biblioteca — a ponte entre "Criativo 3" e o
+     * desempenho, que a Meta só reporta por ad_id.
+     *
+     * O hash mora em um de dois lugares conforme como o anúncio foi montado: solto em
+     * `creative.image_hash` (imagem única) ou dentro do `object_story_spec.link_data`
+     * — que é como ESTE sistema cria. Ler só o primeiro deixava justamente os anúncios
+     * criados aqui sem desempenho nenhum.
+     *
+     * @return array<string, list<array{id: string, name: string, ativo: bool}>> image_hash => anúncios
+     */
+    public function anunciosPorImagem(int $limite = 500): array
+    {
+        $r = $this->call('GET', '/'.$this->conta().'/ads', [
+            'fields' => 'id,name,effective_status,creative{image_hash,object_story_spec}',
+            'limit' => max(1, min($limite, 500)),
+        ]);
+
+        $out = [];
+        foreach ($r['data'] ?? [] as $ad) {
+            $c = $ad['creative'] ?? [];
+            $hash = $c['image_hash'] ?? ($c['object_story_spec']['link_data']['image_hash'] ?? null);
+            if (! $hash || empty($ad['id'])) {
+                continue;
+            }
+            $out[$hash][] = [
+                'id' => (string) $ad['id'],
+                'name' => (string) ($ad['name'] ?? ''),
+                'ativo' => ($ad['effective_status'] ?? '') === 'ACTIVE',
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
+     * Gasto e entrega de cada anúncio no período.
+     *
+     * Não dá para reusar {@see metricas()}: ela para em 50 linhas, e no nível de ANÚNCIO
+     * uma conta com algumas campanhas passa disso fácil — o criativo que ficasse de fora
+     * apareceria na tela com gasto zero, como se nunca tivesse rodado.
+     *
+     * @return array<string, array{gasto: float, impressoes: int, cliques: int}> ad_id => números
+     */
+    public function gastoPorAnuncio(string $periodo = 'last_7d', ?string $de = null, ?string $ate = null): array
+    {
+        $params = [
+            'level' => 'ad',
+            'fields' => 'ad_id,impressions,clicks,spend',
+            'limit' => 500,
+        ];
+        if ($de && $ate) {
+            $params['time_range'] = json_encode(['since' => $de, 'until' => $ate]);
+        } else {
+            $params['date_preset'] = $periodo;
+        }
+
+        $r = $this->call('GET', '/'.$this->conta().'/insights', $params);
+
+        $out = [];
+        foreach ($r['data'] ?? [] as $l) {
+            $id = (string) ($l['ad_id'] ?? '');
+            if ($id === '') {
+                continue;
+            }
+            $out[$id] = [
+                'gasto' => (float) ($l['spend'] ?? 0),
+                'impressoes' => (int) ($l['impressions'] ?? 0),
+                'cliques' => (int) ($l['clicks'] ?? 0),
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
      * Miniatura do criativo de cada campanha, para a tabela do painel.
      *
      * A imagem é o que identifica o anúncio para quem o criou — "Criativo 5" não diz nada

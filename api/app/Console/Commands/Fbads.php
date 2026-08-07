@@ -102,6 +102,8 @@ class Fbads extends Command
                 'nome' => $c->name,
                 'arquivo' => $c->original_name,
                 'observacoes' => $c->notes,
+                'status' => $c->statusParaIa(),
+                'motivo_do_status' => $c->status_note,
                 'ja_enviado_ao_facebook' => (bool) $c->fb_image_hash,
             ]))->all();
     }
@@ -150,6 +152,19 @@ class Fbads extends Command
         if (! $criativo) {
             $tem = MarketingCreative::orderBy('number')->pluck('name')->implode(', ');
             throw new \InvalidArgumentException("Não achei o criativo \"{$ref}\". Disponíveis: ".($tem ?: 'nenhum'));
+        }
+
+        // Criativo reprovado não volta ao ar. A trava é aqui, no comando, e não na tela:
+        // é por aqui que a IA cria anúncio, e o motivo de existir o selo é justamente
+        // não repetir o que já deu ruim quando ninguém lembra mais que deu.
+        if ($criativo->reprovado()) {
+            $motivo = filled($criativo->status_note) ? " Motivo: {$criativo->status_note}" : '';
+            $bons = MarketingCreative::where('status', MarketingCreative::VALIDADO)->orderBy('number')->pluck('name')->implode(', ');
+            throw new \InvalidArgumentException(
+                "{$criativo->name} está REPROVADO e não pode ir para anúncio novo.{$motivo} ".
+                'Para usar mesmo assim, tire a reprovação na tela de Criativos. '.
+                ($bons ? "Validados disponíveis: {$bons}." : 'Nenhum criativo validado no momento.')
+            );
         }
 
         $r = FacebookAds::make()->criarAnuncio(

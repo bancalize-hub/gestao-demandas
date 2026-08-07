@@ -9,9 +9,35 @@ class MarketingCreative extends Model
 {
     use BelongsToCompany;
 
+    /** Ainda sem veredito: subiu, talvez esteja rodando, ninguém decidiu. */
+    public const TESTANDO = 'testando';
+
+    /** Deu resultado — é o que se deve repetir. */
+    public const VALIDADO = 'validado';
+
+    /** Deu ruim. Não volta ao ar: a criação de anúncio recusa. */
+    public const REPROVADO = 'reprovado';
+
+    public const STATUS = [self::TESTANDO, self::VALIDADO, self::REPROVADO];
+
     protected $guarded = [];
 
-    protected $casts = ['size' => 'integer', 'number' => 'integer'];
+    protected $casts = ['size' => 'integer', 'number' => 'integer', 'status_at' => 'datetime'];
+
+    public function reprovado(): bool
+    {
+        return $this->status === self::REPROVADO;
+    }
+
+    /** Como o status é dito para a IA — o rótulo carrega a instrução junto. */
+    public function statusParaIa(): string
+    {
+        return match ($this->status) {
+            self::VALIDADO => 'VALIDADO — deu resultado, prefira este',
+            self::REPROVADO => 'REPROVADO — deu ruim, NÃO usar em anúncio novo',
+            default => 'em teste — sem veredito ainda',
+        };
+    }
 
     /**
      * Próximo nome da sequência. Usa o maior `number` existente em vez de count()

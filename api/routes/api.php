@@ -119,6 +119,7 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
         Route::post('/marketing/credentials', [MarketingController::class, 'salvar']);
         Route::post('/marketing/test', [MarketingController::class, 'testar']);
         Route::get('/marketing/creatives', [MarketingController::class, 'criativos']);
+        Route::get('/marketing/creatives-desempenho', [MarketingController::class, 'desempenhoCriativos']);
         Route::post('/marketing/creatives', [MarketingController::class, 'subirCriativo']);
         Route::patch('/marketing/creatives/{creative}', [MarketingController::class, 'atualizarCriativo']);
         Route::delete('/marketing/creatives/{creative}', [MarketingController::class, 'apagarCriativo']);

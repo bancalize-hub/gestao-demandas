@@ -13,6 +13,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\Rule;
 
 /**
  * Módulo de marketing: credencial do Facebook Ads e biblioteca de criativos.
@@ -88,9 +89,89 @@ class MarketingController extends Controller
             'mime' => $c->mime,
             'size' => $c->size,
             'notes' => $c->notes,
+            'status' => $c->status ?: MarketingCreative::TESTANDO,
+            'status_note' => $c->status_note,
+            'status_at' => $c->status_at,
             'no_facebook' => (bool) $c->fb_image_hash,
             'url' => "/api/marketing/creatives/{$c->id}/arquivo",
             'created_at' => $c->created_at,
+        ]);
+    }
+
+    /**
+     * Desempenho real de cada criativo no período: gasto na Meta + funil do CRM.
+     *
+     * O caminho é criativo → image_hash → anúncios → (gasto por ad_id na Meta, leads por
+     * ad_id no CRM). O ad_id é a única chave que os dois lados conhecem: a Meta não sabe
+     * o que é "Criativo 3" e o CRM não vê hash de imagem.
+     *
+     * Endpoint separado do {@see criativos()} de propósito: a biblioteca tem que abrir
+     * na hora, e isto aqui depende de duas chamadas à Graph API que podem demorar ou
+     * falhar. A tela mostra os cards primeiro e preenche os números quando chegam.
+     */
+    public function desempenhoCriativos(Request $request)
+    {
+        [$desde, $ateData] = self::datasCustomizadas($request);
+        $periodo = (string) $request->query('periodo', 'last_30d');
+        [$de, $ate] = self::janela($periodo, $desde, $ateData);
+
+        // Mesma atribuição do painel de campanhas: o ad_id que veio no referral do
+        // WhatsApp. Criativo que rodou em anúncio sem esse referral fica sem leads.
+        $adId = "JSON_UNQUOTE(JSON_EXTRACT(conversations.custom_fields, '$.anuncio.id'))";
+        $statsPorAd = $this->statsPorChave($adId, $de, $ate);
+
+        $r = self::ultimoBom("criativos-desempenho:{$periodo}:{$desde}:{$ateData}", function () use ($periodo, $desde, $ateData) {
+            $fb = FacebookAds::make();
+
+            return [
+                'por_imagem' => $fb->anunciosPorImagem(),
+                'gastos' => $fb->gastoPorAnuncio($periodo, $desde, $ateData),
+            ];
+        });
+
+        $porImagem = $r['dados']['por_imagem'] ?? [];
+        $gastos = $r['dados']['gastos'] ?? [];
+
+        $linhas = [];
+        foreach (MarketingCreative::orderBy('number')->get() as $c) {
+            // Sem hash o criativo nunca subiu para a Meta — nunca rodou, então não é
+            // "gastou zero", é "não tem o que medir". A tela diz uma coisa e não a outra.
+            $anuncios = filled($c->fb_image_hash) ? ($porImagem[$c->fb_image_hash] ?? []) : [];
+
+            $linha = ['id' => $c->id, 'anuncios' => count($anuncios), 'ativos' => 0,
+                'gasto' => 0.0, 'impressoes' => 0, 'cliques' => 0] + self::ZERADO;
+
+            foreach ($anuncios as $ad) {
+                if ($ad['ativo']) {
+                    $linha['ativos']++;
+                }
+                if ($g = $gastos[$ad['id']] ?? null) {
+                    $linha['gasto'] += $g['gasto'];
+                    $linha['impressoes'] += $g['impressoes'];
+                    $linha['cliques'] += $g['cliques'];
+                }
+                if ($s = $statsPorAd[$ad['id']] ?? null) {
+                    foreach (self::ZERADO as $campo => $_) {
+                        $linha[$campo] += $s[$campo];
+                    }
+                }
+            }
+
+            $linha['gasto'] = round($linha['gasto'], 2);
+            // Custo só existe quando houve gasto E resultado. Dividir por zero devolveria
+            // "R$ 0,00 por lead" no criativo que não trouxe lead nenhum — o pior número
+            // possível parecendo o melhor da tela.
+            $linha['cpl'] = $linha['leads'] > 0 && $linha['gasto'] > 0 ? round($linha['gasto'] / $linha['leads'], 2) : null;
+            $linha['cpq'] = $linha['qualificados'] > 0 && $linha['gasto'] > 0 ? round($linha['gasto'] / $linha['qualificados'], 2) : null;
+
+            $linhas[] = $linha;
+        }
+
+        return response()->json([
+            'desempenho' => $linhas,
+            'erro' => $r['erro'],
+            'de' => $r['de'],
+            'periodo' => ['de' => $de->toDateTimeString(), 'ate' => $ate->toDateTimeString()],
         ]);
     }
 
@@ -128,8 +209,27 @@ class MarketingController extends Controller
 
     public function atualizarCriativo(Request $request, MarketingCreative $creative)
     {
-        $data = $request->validate(['notes' => 'nullable|string|max:500']);
-        $creative->update(['notes' => $data['notes'] ?? null]);
+        $data = $request->validate([
+            'notes' => 'nullable|string|max:500',
+            'status' => ['nullable', 'string', Rule::in(MarketingCreative::STATUS)],
+            'status_note' => 'nullable|string|max:500',
+        ]);
+
+        // Campo ausente é campo NÃO MEXIDO. Antes o `notes` era sempre reescrito com o
+        // que viesse (ou null): salvar só o veredito apagaria a descrição que a IA lê.
+        foreach (['notes', 'status_note'] as $campo) {
+            if ($request->has($campo)) {
+                $creative->$campo = $data[$campo] ?: null;
+            }
+        }
+
+        if (filled($data['status'] ?? null) && $data['status'] !== $creative->status) {
+            $creative->status = $data['status'];
+            $creative->status_at = now();
+            $creative->status_by = $request->user()?->getKey();
+        }
+
+        $creative->save();
 
         return response()->json($creative);
     }

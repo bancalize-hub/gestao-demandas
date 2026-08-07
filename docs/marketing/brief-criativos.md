@@ -8,17 +8,28 @@
 
 ## LEIA ISTO ANTES DE TUDO: o que a Bancalize é e o que ela NÃO é
 
-**A Bancalize é a camada de tecnologia.** É o sistema que conecta e orquestra — com a marca do
-cliente — o BaaS e as adquirentes que **o próprio cliente contrata**.
+**A Bancalize é a camada de tecnologia — mais a consultoria que ensina o caminho.** É o sistema
+que conecta e orquestra, com a marca do cliente, o BaaS e as adquirentes que **o próprio cliente
+contrata**. E é quem **orienta o cliente a contratar** essas peças, que ele dificilmente montaria
+sozinho.
 
 **A Bancalize NÃO é instituição financeira. NÃO tem licença. NÃO abre conta. NÃO emite. NÃO
 liquida. NÃO fornece o BaaS.**
 
-O cliente precisa contratar por conta dele:
+O cliente contrata por conta dele — com orientação da Bancalize:
 - um **BaaS** (instituição licenciada) — e isso **custa caro**
 - as **contas nas adquirentes**
 
-A Bancalize entra depois, ligando tudo num produto com a marca dele.
+A Bancalize entra ligando tudo num produto com a marca dele.
+
+### A consultoria é o diferencial e ninguém está usando
+
+Nenhum dos 9 criativos no ar menciona que a Bancalize **orienta o cliente a montar a estrutura**.
+Isso é o que separa "aqui está um software, se vire" de "a gente te mostra o caminho e entrega a
+tecnologia por cima" — e é o que torna o cliente sem operação prévia atendível.
+
+A linha honesta é: **"a gente te orienta na contratação do BaaS e das adquirentes, e entrega a
+plataforma com a sua marca"**. Orientar é verdade. Fornecer não é.
 
 ### Por que isso é regra dura, não preferência
 
@@ -71,23 +82,31 @@ como bancar um BaaS se elimina antes do clique.
 
 ### Atrair — em ordem de valor
 
-**1. Quem JÁ OPERA (prioridade máxima).** Tem operação de pagamentos rodando, volume e — o que
-mais importa agora — **já tem BaaS e adquirentes contratados**, ou orçamento para contratar. São
-32 dos 79 leads qualificados e produziram **3 das 4 vendas**.
+**1. Quem JÁ OPERA pagamentos (prioridade máxima).** Tem operação rodando, volume, base de
+lojistas ou tecnologia própria. São 32 dos 79 leads qualificados e produziram **3 das 4 vendas**.
+Fecha mais rápido porque já entende o custo e já tem parte das peças.
 
-**2. Quem já tem BaaS e está insatisfeito com a tecnologia atual.** Perfil de troca. Não precisa
-ser convencido do custo — já paga.
+**2. Quem tem BASE DE CLIENTES e CAPITAL, mesmo sem operação financeira ainda.** Marca reunião e
+comparece (3 de 4), mas ainda não fechou. **Não descarte este grupo** — ele é grande, e é
+exatamente para ele que a consultoria existe. O que falta na comunicação atual é dizer que a
+Bancalize orienta o caminho; hoje o lead descobre o custo do BaaS sozinho, no meio da conversa,
+e trava.
 
-**3. Quem tem base de clientes e capital**, mesmo sem operação financeira ainda. Marca reunião e
-comparece, mas **nenhuma venda até hoje** — provavelmente porque descobre o custo do BaaS depois.
+**3. Quem já tem BaaS contratado.** O melhor lead que existe — e o mais raro. **Não vale montar
+campanha só para ele: são pouquíssimas empresas.** Trate como bônus quando aparecer, não como
+segmento.
 
 ### Afastar — ativamente
 
 - Quem quer **empréstimo ou crédito para si**
 - Quem quer **conta digital para uso pessoal**
 - Quem quer só uma **maquininha para o próprio caixa**
-- **Quem quer "montar um banco" sem saber que precisa contratar um BaaS** — é o perfil que mais
-  consome reunião e nunca fecha
+- Quem **não tem capital nenhum** para uma estrutura financeira — não é sobre não ter operação
+  hoje, é sobre não ter como bancar BaaS, adquirente e tecnologia
+
+> A distinção acima é fina e importante: **"não tem operação" não desqualifica; "não tem como
+> pagar" desqualifica.** Dizer que existe custo de BaaS à parte, na própria peça, separa os dois
+> antes do clique — sem excluir o grupo 2, que é o maior.
 
 ---
 
@@ -144,13 +163,16 @@ Cruze **6 registros visuais × 5 gatilhos**. Não faça variações da mesma ide
 
 1. **O volume que ele já move** — R$ 300 mil, R$ 3 milhões, R$ 50 milhões
 2. **O tempo e o custo de construir a tecnologia por conta própria** — time, meses, manutenção
-3. **A marca dele no app**, sobre a infraestrutura que ele já contratou
+3. **A marca dele no app**, sobre a infraestrutura que ele contratou
 4. **A quem ele atende** — lojistas, sellers, vendedores, parceiros, organizadores
-5. **O que já está integrado** — BaaS, adquirentes, split, conciliação, antifraude
+5. **O caminho, não só a ferramenta** — quem nunca montou não sabe qual BaaS procurar, o que
+   negociar com adquirente, em que ordem fazer. A Bancalize orienta e entrega a tecnologia.
+   *Este é o gatilho que fala com o grupo 2, o maior, e nenhum criativo no ar usa.*
 
-> Note que o gatilho "preço e prazo" da versão anterior virou **custo de construir por conta
-> própria**. É mais honesto e mira melhor: a Bancalize compete com o time de desenvolvimento
-> interno do cliente, não com o BaaS dele.
+> Dois gatilhos mudaram em relação à v1. "Preço e prazo" virou **custo de construir por conta
+> própria** — a Bancalize compete com o time de dev interno do cliente, não com o BaaS dele. E
+> "o que já está integrado" virou **o caminho**, porque a consultoria é o diferencial real e
+> estava fora de toda a comunicação.
 
 ---
 

@@ -138,6 +138,15 @@ class FacebookAds
         return $this->call('POST', '/'.$this->conta().'/campaigns', $params);
     }
 
+    /**
+     * @param  ?string  $destino  destination_type — WHATSAPP no clique-para-mensagem.
+     *                            SEM ELE O CONJUNTO NÃO ENTREGA no WhatsApp: a Meta cria
+     *                            o objeto sem reclamar e manda o tráfego para o destino
+     *                            padrão, então o anúncio "existe" e não gera conversa
+     *                            nenhuma. É o par obrigatório do `promoted_object` com a
+     *                            página — é assim que os conjuntos que rodam nesta conta
+     *                            estão montados.
+     */
     public function criarConjunto(
         string $campanhaId,
         string $nome,
@@ -145,6 +154,8 @@ class FacebookAds
         string $otimizacao,
         array $segmentacao,
         ?string $billingEvent = null,
+        ?string $destino = null,
+        ?array $promotedObject = null,
     ): array {
         $params = [
             'name' => $nome,
@@ -156,6 +167,12 @@ class FacebookAds
         ];
         if ($orcamentoDiarioReais !== null) {
             $params['daily_budget'] = (int) round($orcamentoDiarioReais * 100);
+        }
+        if ($destino) {
+            $params['destination_type'] = $destino;
+        }
+        if ($promotedObject) {
+            $params['promoted_object'] = json_encode($promotedObject);
         }
 
         return $this->call('POST', '/'.$this->conta().'/adsets', $params);

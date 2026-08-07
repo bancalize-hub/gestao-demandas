@@ -179,12 +179,18 @@ class GoogleCalendarService
 
     /**
      * Apura a presença real numa reunião do Meet pelo código do link (ex.: "abc-defg-hij").
-     * Casa o conference record cujo início está mais próximo de $start e devolve os participantes
-     * com o tempo (min) em sala. Separa o bot de anotação dos humanos.
+     * Devolve os participantes com o tempo (min) em sala, separando o bot de anotação dos humanos.
+     *
+     * UMA reunião gera VÁRIOS conference records: cada vez que a sala esvazia e alguém entra de
+     * novo, o Google abre outro registro — e os primeiros costumam ser tentativas de 2 segundos,
+     * com ZERO participantes (o cliente batendo na porta antes de ser admitido). Ler só o registro
+     * mais próximo do horário marcado era exatamente pegar essas tentativas vazias e concluir
+     * "ninguém veio" numa reunião de 1 hora que aconteceu (foi o que marcou reunião realizada como
+     * falta). Por isso somamos TODOS os registros que caem na janela da reunião.
      *
      * @return array{found:bool, participants:array<int,array{name:string,minutes:int,bot:bool}>}
      */
-    public function conferenceAttendance(User $user, string $meetingCode, Carbon $start): array
+    public function conferenceAttendance(User $user, string $meetingCode, Carbon $start, ?Carbon $end = null): array
     {
         $meet = $this->meet($user);
         $resp = $meet->conferenceRecords->listConferenceRecords([
@@ -196,35 +202,64 @@ class GoogleCalendarService
             return ['found' => false, 'participants' => []];
         }
 
-        // Várias reuniões podem ter usado o mesmo link; pega a do horário combinado.
-        $best = null;
-        $bestDiff = PHP_INT_MAX;
+        // Janela da reunião, com folga para quem entra adiantado ou o encontro furar o horário.
+        // Serve também para separar reuniões DIFERENTES que reusaram o mesmo link no mesmo dia.
+        $janelaIni = $start->copy()->subMinutes(20);
+        $janelaFim = ($end ? $end->copy() : $start->copy()->addHour())->addMinutes(90);
+
+        $selecionados = [];
         foreach ($records as $rec) {
             $rs = $rec->getStartTime() ? Carbon::parse($rec->getStartTime()) : null;
-            $diff = $rs ? abs($rs->diffInSeconds($start)) : PHP_INT_MAX;
-            if ($diff < $bestDiff) {
-                $bestDiff = $diff;
-                $best = $rec;
+            if (! $rs) {
+                continue;
+            }
+            $re = $rec->getEndTime() ? Carbon::parse($rec->getEndTime()) : Carbon::now();
+            if ($rs->lt($janelaFim) && $re->gt($janelaIni)) {
+                $selecionados[] = $rec;
             }
         }
-        // Mais de 6h de diferença do horário marcado: provavelmente não é esta reunião.
-        if (! $best || $bestDiff > 6 * 3600) {
-            return ['found' => false, 'participants' => []];
+
+        // Nenhum registro na janela: cai no comportamento antigo (o mais próximo em até 6h),
+        // para reunião que começou muito fora do horário ainda ser apurada.
+        if (! $selecionados) {
+            $best = null;
+            $bestDiff = PHP_INT_MAX;
+            foreach ($records as $rec) {
+                $rs = $rec->getStartTime() ? Carbon::parse($rec->getStartTime()) : null;
+                $diff = $rs ? abs($rs->diffInSeconds($start)) : PHP_INT_MAX;
+                if ($diff < $bestDiff) {
+                    $bestDiff = $diff;
+                    $best = $rec;
+                }
+            }
+            if (! $best || $bestDiff > 6 * 3600) {
+                return ['found' => false, 'participants' => []];
+            }
+            $selecionados = [$best];
         }
 
-        $parts = $meet->conferenceRecords_participants
-            ->listConferenceRecordsParticipants($best->getName(), ['pageSize' => 100])
-            ->getParticipants() ?? [];
+        // Mesmo participante em registros diferentes = ele saiu e voltou: soma o tempo das sessões.
+        $porNome = [];
+        foreach ($selecionados as $rec) {
+            $parts = $meet->conferenceRecords_participants
+                ->listConferenceRecordsParticipants($rec->getName(), ['pageSize' => 100])
+                ->getParticipants() ?? [];
+
+            foreach ($parts as $p) {
+                $name = $p->getSignedinUser()?->getDisplayName()
+                    ?: $p->getAnonymousUser()?->getDisplayName()
+                    ?: ($p->getPhoneUser() ? 'Telefone' : 'Desconhecido');
+                $in = $p->getEarliestStartTime() ? Carbon::parse($p->getEarliestStartTime()) : null;
+                $out = $p->getLatestEndTime() ? Carbon::parse($p->getLatestEndTime()) : Carbon::now();
+                $minutes = ($in && $out) ? (int) round($in->diffInSeconds($out) / 60) : 0;
+
+                $porNome[$name] = ($porNome[$name] ?? 0) + max(0, $minutes);
+            }
+        }
 
         $out = [];
-        foreach ($parts as $p) {
-            $name = $p->getSignedinUser()?->getDisplayName()
-                ?: $p->getAnonymousUser()?->getDisplayName()
-                ?: ($p->getPhoneUser() ? 'Telefone' : 'Desconhecido');
-            $in = $p->getEarliestStartTime() ? Carbon::parse($p->getEarliestStartTime()) : null;
-            $end = $p->getLatestEndTime() ? Carbon::parse($p->getLatestEndTime()) : Carbon::now();
-            $minutes = ($in && $end) ? (int) round($in->diffInSeconds($end) / 60) : 0;
-            $out[] = ['name' => $name, 'minutes' => max(0, $minutes), 'bot' => $this->isNotetakerBot($name)];
+        foreach ($porNome as $name => $minutes) {
+            $out[] = ['name' => $name, 'minutes' => $minutes, 'bot' => $this->isNotetakerBot($name)];
         }
 
         return ['found' => true, 'participants' => $out];
@@ -261,8 +296,12 @@ class GoogleCalendarService
             foreach ($out as &$ev) {
                 $m = $meetings->get($ev['id']);
                 $ev['attended'] = (bool) ($m?->attended);
-                // No-show: presença JÁ apurada e o cliente NÃO compareceu → vermelho na agenda.
-                $ev['no_show'] = (bool) ($m && $m->attendance_checked_at !== null && ! $m->attended);
+                // No-show: presença JÁ apurada, com MEDIÇÃO de verdade (attended_minutes não nulo),
+                // e o cliente não ficou o mínimo → vermelho na agenda. Sem medição não há acusação:
+                // o card fica neutro em vez de dizer "não compareceu" sobre uma reunião que
+                // aconteceu e o Google simplesmente não relatou.
+                $ev['no_show'] = (bool) ($m && $m->attendance_checked_at !== null
+                    && $m->attended_minutes !== null && ! $m->attended);
                 $ev['checked'] = (bool) ($m?->attendance_checked_at);            // presença apurada?
                 $ev['summary'] = $m?->summary;                                    // resumo read.ai (se houver)
                 $ev['reminder_sent'] = (bool) ($m && $m->reminder_sent_at && $m->phone); // lembrete WhatsApp enviado?

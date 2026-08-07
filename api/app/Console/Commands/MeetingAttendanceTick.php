@@ -23,7 +23,7 @@ use Illuminate\Console\Command;
  */
 class MeetingAttendanceTick extends Command
 {
-    protected $signature = 'meetings:attendance-tick';
+    protected $signature = 'meetings:attendance-tick {--reapurar=0 : Refaz a presença das reuniões dos últimos N dias que deram "não compareceu" ou ficaram sem medição}';
 
     protected $description = 'Apura presença no Meet e anexa o resumo do read.ai após a reunião';
 
@@ -31,6 +31,21 @@ class MeetingAttendanceTick extends Command
     {
         $minMinutes = (int) config('services.crm.attendance_min_minutes', 10);
         $doneStage = (string) config('services.crm.stage_meeting_done', 'reuniao-realizada');
+
+        // Reapuração: quando a leitura do Meet estava errada (ex.: só o registro vazio de
+        // "batendo na porta" era lido), a reunião fica travada como apurada. Limpar a trava
+        // é o que permite medir de novo — sem isso a correção não alcança o que já passou.
+        if ($dias = (int) $this->option('reapurar')) {
+            $alvo = Meeting::query()
+                ->whereNull('cancelled_at')
+                ->where('ends_at', '<', now())
+                ->where('ends_at', '>', now()->subDays($dias))
+                ->where('attended', false)   // quem já constou como presente não se mexe
+                ->whereNotNull('attendance_checked_at')
+                ->update(['attendance_checked_at' => null, 'attendance_attempts' => 0]);
+
+            $this->info("reapuração: {$alvo} reuniões dos últimos {$dias} dias voltaram para a fila.");
+        }
 
         // Reuniões já encerradas, dos últimos 14 dias, que ainda têm presença a apurar
         // OU resumo a buscar. O resumo NÃO depende mais da presença confirmada: em conta
@@ -90,7 +105,12 @@ class MeetingAttendanceTick extends Command
                 return;
             }
 
-            $res = $google->conferenceAttendance($user, $code, Carbon::parse($meeting->starts_at));
+            $res = $google->conferenceAttendance(
+                $user,
+                $code,
+                Carbon::parse($meeting->starts_at),
+                $meeting->ends_at ? Carbon::parse($meeting->ends_at) : null,
+            );
 
             if (! $res['found']) {
                 // Ainda não há registro (reunião recém-acabou) → tenta de novo no próximo tick.
@@ -104,17 +124,30 @@ class MeetingAttendanceTick extends Command
                 return;
             }
 
-            // Tempo do cliente na sala, ignorando bot e equipe (ver Meeting::clientMinutes).
-            $clientMinutes = Meeting::clientMinutes($res['participants']);
-            $attended = $clientMinutes >= $minMinutes;
+            // Conferência existe mas o Google não devolveu NINGUÉM (acontece: só registros de
+            // tentativa de entrada, conta pessoal sem os dados). Isso não é falta — é ausência de
+            // medição. Marcar "não compareceu" aqui era acusar o cliente com base em nada: fecha a
+            // apuração com attended_minutes NULL (o front trata como "sem informação") e deixa o
+            // resumo do read.ai, logo abaixo, decidir se a reunião aconteceu.
+            $attended = false;
+            if (! $res['participants']) {
+                $meeting->attendees = [];
+                $meeting->attended_minutes = null;
+                $meeting->attendance_checked_at = now();
+                $meeting->save();
+            } else {
+                // Tempo do cliente na sala, ignorando bot e equipe (ver Meeting::clientMinutes).
+                $clientMinutes = Meeting::clientMinutes($res['participants']);
+                $attended = $clientMinutes >= $minMinutes;
 
-            $meeting->attended = $attended;
-            $meeting->attended_minutes = $clientMinutes;
-            $meeting->attendees = $res['participants'];
-            $meeting->attendance_checked_at = now();
-            $meeting->save();
+                $meeting->attended = $attended;
+                $meeting->attended_minutes = $clientMinutes;
+                $meeting->attendees = $res['participants'];
+                $meeting->attendance_checked_at = now();
+                $meeting->save();
+            }
 
-            if ($meeting->conversation) {
+            if ($meeting->conversation && $res['participants']) {
                 $when = Carbon::parse($meeting->starts_at)->setTimezone(config('app.timezone'))->format('d/m H:i');
                 $lista = collect($res['participants'])
                     ->map(fn ($p) => '• '.$p['name'].' ('.$p['minutes'].' min'.($p['bot'] ? ', bot' : '').')')
@@ -122,24 +155,27 @@ class MeetingAttendanceTick extends Command
 
                 if ($attended) {
                     StageMover::move($meeting->conversation, $doneStage, $user->id, "Reunião realizada em {$when}");
-                    LeadActivity::log($meeting->conversation->id, 'reuniao', "✅ Cliente compareceu à reunião ({$when})", $lista);
+                    $this->logUmaVez($meeting->conversation->id, "✅ Cliente compareceu à reunião ({$when})", $lista);
                     // Presença CONFIRMADA no Meet — o evento mais valioso do funil para a
                     // Meta otimizar, porque separa quem apareceu de quem só marcou.
                     MetaConversions::enviarUmaVez($meeting->conversation, MetaConversions::REUNIAO_REALIZADA);
                 } else {
-                    LeadActivity::log($meeting->conversation->id, 'reuniao', "⚠️ Cliente não compareceu à reunião ({$when})", $lista ?: null);
-                    // No-show → cria um follow-up (Task) p/ remarcar. Roda uma vez só (este bloco
-                    // de apuração só executa enquanto attendance_checked_at era null).
-                    Task::create([
-                        'conversation_id' => $meeting->conversation->id,
-                        'title' => "Remarcar reunião — {$meeting->conversation->name} não compareceu ({$when})",
-                        'client' => $meeting->conversation->name,
-                        'type' => 'followup',
-                        'priority' => 'alta',
-                        'column' => 'todo',
-                        'position' => (Task::where('column', 'todo')->min('position') ?? 0) - 1,
-                        'starts_at' => now()->addHour(),
-                    ]);
+                    $this->logUmaVez($meeting->conversation->id, "⚠️ Cliente não compareceu à reunião ({$when})", $lista ?: null);
+                    // No-show → cria um follow-up (Task) p/ remarcar. O título é fixo por reunião,
+                    // então a reapuração (--reapurar) não empilha uma segunda tarefa igual.
+                    $titulo = "Remarcar reunião — {$meeting->conversation->name} não compareceu ({$when})";
+                    if (! Task::where('conversation_id', $meeting->conversation->id)->where('title', $titulo)->exists()) {
+                        Task::create([
+                            'conversation_id' => $meeting->conversation->id,
+                            'title' => $titulo,
+                            'client' => $meeting->conversation->name,
+                            'type' => 'followup',
+                            'priority' => 'alta',
+                            'column' => 'todo',
+                            'position' => (Task::where('column', 'todo')->min('position') ?? 0) - 1,
+                            'starts_at' => now()->addHour(),
+                        ]);
+                    }
                 }
             }
         }
@@ -173,6 +209,22 @@ class MeetingAttendanceTick extends Command
                 $meeting->summarized_at = now();
                 $meeting->save();
             }
+        }
+    }
+
+    /**
+     * Registra na linha do tempo sem repetir: a reapuração passa de novo pelas mesmas reuniões,
+     * e duas linhas iguais ("compareceu"/"não compareceu") só confundem quem lê a ficha.
+     */
+    private function logUmaVez(int $conversationId, string $title, ?string $body = null): void
+    {
+        $jaTem = LeadActivity::where('conversation_id', $conversationId)
+            ->where('type', 'reuniao')
+            ->where('title', $title)
+            ->exists();
+
+        if (! $jaTem) {
+            LeadActivity::log($conversationId, 'reuniao', $title, $body);
         }
     }
 

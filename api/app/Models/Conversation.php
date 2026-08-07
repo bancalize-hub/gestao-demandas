@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Events\CrmUpdated;
 use App\Models\Concerns\BelongsToCompany;
 use App\Services\StageAutomationEnqueuer;
+use App\Support\MetaConversions;
 use App\Support\Wa;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -123,6 +124,21 @@ class Conversation extends Model
             }
             try {
                 StageAutomationEnqueuer::onEnterStage($c);
+            } catch (\Throwable $e) {
+            }
+        });
+
+        // Lead APROVADO na triagem vira conversão para a Meta. Fica aqui, e não em quem
+        // qualifica, porque são dois caminhos — a IA (QualificarTick) e o chip na tela —
+        // e um evento que depende de alguém lembrar de chamá-lo é um evento que uma hora
+        // para de sair. Só na SUBIDA para qualificado: desqualificar não desfaz conversão,
+        // e requalificar não conta de novo (enviarQualificado é uma vez por conversa).
+        static::updated(function (Conversation $c) {
+            if (self::$muteBroadcast || ! $c->wasChanged('qualified') || $c->qualified !== true) {
+                return;
+            }
+            try {
+                MetaConversions::enviarQualificado($c);
             } catch (\Throwable $e) {
             }
         });

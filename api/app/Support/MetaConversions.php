@@ -4,6 +4,7 @@ namespace App\Support;
 
 use App\Models\Conversation;
 use App\Models\MarketingCredential;
+use App\Models\WaAccount;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -43,9 +44,23 @@ class MetaConversions
      * campanha, com o rótulo "CRM · Reunião marcada".
      */
     public const LEAD = 'LeadSubmitted';
+
     public const REUNIAO_MARCADA = 'InitiateCheckout';
+
     public const REUNIAO_REALIZADA = 'ViewContent';
+
     public const VENDA = 'Purchase';
+
+    /**
+     * A ETAPA vai no custom_data porque `business_messaging` só aceita os quatro nomes de
+     * evento acima — não existe "LeadQualificado" para inventar. Quem separa lead de lead
+     * QUALIFICADO é a conversão personalizada, filtrando por este campo sobre o mesmo
+     * evento. Sem ele, "CRM · Lead no CRM" contaria as duas coisas e a otimização voltaria
+     * a perseguir volume, que é justamente o que já se mediu não trazer cliente.
+     */
+    public const ETAPA_LEAD = 'lead';
+
+    public const ETAPA_QUALIFICADO = 'qualificado';
 
     /** Rótulo humano de cada evento, para log e para a tela. */
     public const ROTULOS = [
@@ -62,10 +77,10 @@ class MetaConversions
      * @param  array<string, mixed>  $custom  custom_data (valor da venda, moeda…)
      * @return bool true se a Meta confirmou o recebimento
      */
-    public static function enviar(Conversation $conversation, string $evento, array $custom = []): bool
+    public static function enviar(Conversation $conversation, string $evento, array $custom = [], string $variante = ''): bool
     {
         try {
-            return self::despachar($conversation, $evento, $custom);
+            return self::despachar($conversation, $evento, $custom, $variante);
         } catch (\Throwable $e) {
             Log::warning('capi: falha ao enviar evento', [
                 'conversa' => $conversation->id,
@@ -77,7 +92,7 @@ class MetaConversions
         }
     }
 
-    private static function despachar(Conversation $conversation, string $evento, array $custom): bool
+    private static function despachar(Conversation $conversation, string $evento, array $custom, string $variante = ''): bool
     {
         $cred = MarketingCredential::atual();
         $dataset = trim((string) $cred->dataset_id);
@@ -94,14 +109,14 @@ class MetaConversions
 
         // Obrigatório junto com o clid: sem `whatsapp_business_account_id` (ou `page_id`)
         // a Graph API recusa o evento inteiro — subcode 2804116.
-        $waba = \App\Models\WaAccount::where('provider', 'cloud')->whereNotNull('waba_id')->value('waba_id');
+        $waba = WaAccount::where('provider', 'cloud')->whereNotNull('waba_id')->value('waba_id');
         if (! $waba) {
             return false;
         }
 
         // event_id estável: se o mesmo evento for reenviado (retry, reprocessamento de
         // webhook), a Meta deduplica em vez de contar a conversão duas vezes.
-        $eventId = "{$evento}:{$conversation->id}";
+        $eventId = self::chave($evento, $variante).":{$conversation->id}";
 
         $payload = [
             'data' => [array_filter([
@@ -142,7 +157,7 @@ class MetaConversions
         ], $ok ? 'info' : 'error');
 
         if ($ok) {
-            self::marcar($conversation, $evento);
+            self::marcar($conversation, self::chave($evento, $variante));
         }
 
         return $ok;
@@ -175,12 +190,33 @@ class MetaConversions
      * Envia uma única vez por conversa. É o que os pontos do funil chamam: o tick de
      * presença roda de 5 em 5 minutos e não pode contar a mesma reunião várias vezes.
      */
-    public static function enviarUmaVez(Conversation $conversation, string $evento, array $custom = []): bool
+    public static function enviarUmaVez(Conversation $conversation, string $evento, array $custom = [], string $variante = ''): bool
     {
-        if (self::jaEnviado($conversation, $evento)) {
+        if (self::jaEnviado($conversation, self::chave($evento, $variante))) {
             return false;
         }
 
-        return self::enviar($conversation, $evento, $custom);
+        return self::enviar($conversation, $evento, $custom, $variante);
+    }
+
+    /**
+     * Lead qualificado. Mesmo evento do lead, etapa diferente — é o par do
+     * {@see ETAPA_QUALIFICADO}. Uma vez por conversa: a triagem pode ser refeita à mão
+     * e o otimizador não pode contar o mesmo lead bom duas vezes.
+     */
+    public static function enviarQualificado(Conversation $conversation): bool
+    {
+        return self::enviarUmaVez(
+            $conversation,
+            self::LEAD,
+            ['etapa' => self::ETAPA_QUALIFICADO],
+            self::ETAPA_QUALIFICADO,
+        );
+    }
+
+    /** A chave que identifica evento+variante no carimbo e no event_id. */
+    private static function chave(string $evento, string $variante): string
+    {
+        return $variante === '' ? $evento : "{$evento}:{$variante}";
     }
 }

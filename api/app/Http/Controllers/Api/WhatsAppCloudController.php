@@ -453,7 +453,9 @@ class WhatsAppCloudController extends Controller
             // Primeiro contato de um lead de anúncio = conversão "Lead" para a Meta.
             // Vai depois do save() porque é o save que grava o ctwa_clid que o evento usa.
             if ($temReferral) {
-                MetaConversions::enviarUmaVez($conv, MetaConversions::LEAD);
+                // A etapa separa este lead do MESMO evento disparado na qualificação —
+                // sem ela a conversão "Lead no CRM" contaria os dois.
+                MetaConversions::enviarUmaVez($conv, MetaConversions::LEAD, ['etapa' => MetaConversions::ETAPA_LEAD]);
             }
         }
 

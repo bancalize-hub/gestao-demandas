@@ -31,10 +31,13 @@ class CapiConversoes extends Command
      * MetaConversions), a categoria vem junto — não há escolha a fazer aqui.
      */
     private const CONVERSOES = [
-        [MetaConversions::LEAD, 'CRM · Lead no CRM', 'LEAD'],
-        [MetaConversions::REUNIAO_MARCADA, 'CRM · Reunião marcada', 'INITIATED_CHECKOUT'],
-        [MetaConversions::REUNIAO_REALIZADA, 'CRM · Reunião realizada', 'CONTENT_VIEW'],
-        [MetaConversions::VENDA, 'CRM · Venda fechada', 'PURCHASE'],
+        [MetaConversions::LEAD, 'CRM · Lead no CRM', 'LEAD', MetaConversions::ETAPA_LEAD],
+        // O alvo que realmente interessa otimizar: lead que a triagem aprovou. Mesmo
+        // evento do lead — o que separa é a etapa (ver MetaConversions::ETAPA_QUALIFICADO).
+        [MetaConversions::LEAD, 'CRM · Lead qualificado', 'LEAD', MetaConversions::ETAPA_QUALIFICADO],
+        [MetaConversions::REUNIAO_MARCADA, 'CRM · Reunião marcada', 'INITIATED_CHECKOUT', null],
+        [MetaConversions::REUNIAO_REALIZADA, 'CRM · Reunião realizada', 'CONTENT_VIEW', null],
+        [MetaConversions::VENDA, 'CRM · Venda fechada', 'PURCHASE', null],
     ];
 
     public function handle(Tenancy $tenancy): int
@@ -81,7 +84,7 @@ class CapiConversoes extends Command
             return self::SUCCESS;
         }
 
-        foreach (self::CONVERSOES as [$evento, $nome, $tipo]) {
+        foreach (self::CONVERSOES as [$evento, $nome, $tipo, $etapa]) {
             if ($existentes->has($nome)) {
                 $this->line("· {$nome} — já existe ({$existentes[$nome]})");
 
@@ -91,12 +94,16 @@ class CapiConversoes extends Command
             // A regra casa pelo nome do evento E pela marca de origem. As DUAS condições
             // são obrigatórias: com só a do evento a Graph API responde "A conversion rule
             // is required at creation time" e não cria nada (testado contra a API real).
-            $regra = json_encode([
-                'and' => [
-                    ['event' => ['eq' => $evento]],
-                    ['or' => [['origem' => ['eq' => MetaConversions::ORIGEM]]]],
-                ],
-            ]);
+            $condicoes = [
+                ['event' => ['eq' => $evento]],
+                ['or' => [['origem' => ['eq' => MetaConversions::ORIGEM]]]],
+            ];
+            // Dois eventos com o MESMO nome (lead e lead qualificado) só se distinguem
+            // por esta condição — sem ela a conversão de lead engoliria a de qualificado.
+            if ($etapa !== null) {
+                $condicoes[] = ['or' => [['etapa' => ['eq' => $etapa]]]];
+            }
+            $regra = json_encode(['and' => $condicoes]);
 
             $res = Http::timeout(30)->asForm()->post("{$base}/{$conta}/customconversions", [
                 'access_token' => $token,

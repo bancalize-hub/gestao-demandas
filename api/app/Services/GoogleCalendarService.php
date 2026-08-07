@@ -569,6 +569,19 @@ class GoogleCalendarService
         return $this->normalize($created);
     }
 
+    /** Um evento específico, normalizado (null se não existe mais na agenda). */
+    public function event(User $user, string $eventId): ?array
+    {
+        try {
+            return $this->normalize($this->calendar($user)->events->get($this->calendarId($user), $eventId));
+        } catch (\Google\Service\Exception $e) {
+            if (in_array($e->getCode(), [404, 410], true)) {
+                return null;
+            }
+            throw $e;
+        }
+    }
+
     public function updateEvent(User $user, string $eventId, array $data): array
     {
         $cal = $this->calendar($user);

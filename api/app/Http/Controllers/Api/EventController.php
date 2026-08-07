@@ -187,12 +187,40 @@ class EventController extends Controller
      */
     public function attendance(Request $request, string $event)
     {
-        $data = $request->validate(['attended' => 'required|boolean']);
+        $data = $request->validate([
+            'attended' => 'required|boolean',
+            'owner_id' => 'nullable|integer',
+            'conversation_slug' => 'nullable|string',
+        ]);
         $attended = (bool) $data['attended'];
 
         $meeting = \App\Models\Meeting::where('google_event_id', $event)->first();
+
+        // Compromisso criado direto no Google Agenda SEM link do Meet nunca entra em `meetings`
+        // (o calendar-sync só importa reunião com Meet). Sem esta linha o botão daria 404
+        // justamente no caso que mais precisa dele: a reunião que o Meet não tem como medir.
         if (! $meeting) {
-            return response()->json(['message' => 'Esta reunião não está no CRM ainda — aguarde a sincronização da agenda.'], 404);
+            $dono = $this->ownerFor($request, $data['owner_id'] ?? null);
+            $evento = $this->google->event($dono, $event);
+            if (! $evento || empty($evento['starts_at'])) {
+                return response()->json(['message' => 'Este evento não existe mais na agenda.'], 404);
+            }
+
+            $conv = ! empty($data['conversation_slug'])
+                ? \App\Models\Conversation::where('slug', $data['conversation_slug'])->first()
+                : null;
+
+            $meeting = \App\Models\Meeting::create([
+                'conversation_id' => $conv?->id,
+                'user_id' => $dono->id,
+                'phone' => $conv?->phone,
+                'title' => $evento['title'] ?? 'Reunião',
+                'starts_at' => Carbon::parse($evento['starts_at']),
+                'ends_at' => ! empty($evento['ends_at']) ? Carbon::parse($evento['ends_at']) : null,
+                'meet_link' => $evento['hangout_link'] ?? null,
+                'google_event_id' => $event,
+                'reminder_sent_at' => now(), // passada: não faz sentido lembrar
+            ]);
         }
 
         $meeting->attended = $attended;

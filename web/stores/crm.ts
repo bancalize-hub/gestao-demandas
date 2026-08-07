@@ -1311,9 +1311,12 @@ export const useCrmStore = defineStore('crm', {
      * sala do Meet — reunião por telefone, presencial ou em outro link precisa disto.
      */
     async markAttendance(id: string, attended: boolean) {
+      const ev = this.events.find(e => e.id === id)
       const r = await api()<{ attended: boolean, no_show: boolean }>(`/api/google/events/${id}/attendance`, {
         method: 'POST',
-        body: { attended },
+        // owner_id/slug: o evento pode nem existir em `meetings` ainda (compromisso criado no
+        // Google sem Meet) — o servidor cria a linha usando a agenda certa e já vincula o lead.
+        body: { attended, owner_id: ev?.owner_id, conversation_slug: ev?.conversation_slug },
       })
       const i = this.events.findIndex(e => e.id === id)
       if (i >= 0) this.events[i] = { ...this.events[i], attended: r.attended, no_show: r.no_show }

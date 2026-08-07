@@ -42,7 +42,11 @@ const carregando = ref(true)
 const carregandoDesempenho = ref(false)
 const erroUpload = ref('')
 const fileInput = ref<HTMLInputElement | null>(null)
-const filtro = ref<Status | 'todos'>('todos')
+// A biblioteca é o que ainda pode ir para anúncio. Reprovado sai da grade e vai para
+// "Arquivados": ele não é para ser escolhido, e deixá-lo no meio dos outros faz olhar
+// de novo, toda vez, para a peça que já foi decidida.
+const filtro = ref<Status | 'biblioteca'>('biblioteca')
+const arquivadoAgora = ref('')
 const periodo = ref('last_30d')
 
 const periodos = [
@@ -90,7 +94,9 @@ const contagem = computed(() => {
 })
 
 const visiveis = computed(() =>
-  filtro.value === 'todos' ? criativos.value : criativos.value.filter(c => c.status === filtro.value),
+  filtro.value === 'biblioteca'
+    ? criativos.value.filter(c => c.status !== 'reprovado')
+    : criativos.value.filter(c => c.status === filtro.value),
 )
 
 async function subir(files: FileList | File[] | null) {
@@ -140,9 +146,13 @@ async function definirStatus(c: Criativo, status: Status) {
   const antes = c.status
   if (antes === status) return
   c.status = status // otimista: o clique tem que responder na hora
+  // Reprovar some com o card da grade (ele foi para os arquivados). Sem dizer isso, a
+  // peça simplesmente desaparece embaixo do cursor e parece que foi apagada.
+  arquivadoAgora.value = status === 'reprovado' && filtro.value === 'biblioteca' ? c.name : ''
   try { await api(`/api/marketing/creatives/${c.id}`, { method: 'PATCH', body: { status } }) }
   catch (e: any) {
     c.status = antes
+    arquivadoAgora.value = ''
     alert(e?.response?._data?.message || e?.message || 'Não consegui mudar o status.')
   }
 }
@@ -191,22 +201,34 @@ function estiloCard(c: Criativo) {
 
     <div style="padding:20px 24px;max-width:1100px;">
       <!-- Contadores: também são o filtro. O número e o recorte são a mesma pergunta
-           ("quantos validados eu tenho?" / "me mostra os validados"). -->
-      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;">
+           ("quantos validados eu tenho?" / "me mostra os validados"). O arquivo fica
+           depois de um respiro, porque não é lugar de onde se escolhe peça. -->
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:6px;">
         <button
-          :style="{ background: filtro === 'todos' ? 'var(--c-surface-2)' : 'var(--c-bg-deepest)', border: '1px solid ' + (filtro === 'todos' ? 'var(--c-surface-3)' : 'var(--c-surface-1)'), borderRadius: '10px', padding: '8px 14px', cursor: 'pointer', fontFamily: 'inherit', color: 'var(--c-text)', display: 'flex', alignItems: 'baseline', gap: '7px' }"
-          @click="filtro = 'todos'"
+          :style="{ background: filtro === 'biblioteca' ? 'var(--c-surface-2)' : 'var(--c-bg-deepest)', border: '1px solid ' + (filtro === 'biblioteca' ? 'var(--c-surface-3)' : 'var(--c-surface-1)'), borderRadius: '10px', padding: '8px 14px', cursor: 'pointer', fontFamily: 'inherit', color: 'var(--c-text)', display: 'flex', alignItems: 'baseline', gap: '7px' }"
+          @click="filtro = 'biblioteca'"
         >
-          <strong style="font-size:16px;">{{ criativos.length }}</strong>
-          <span style="font-size:11.5px;color:var(--c-text-muted);font-weight:700;">no total</span>
+          <strong style="font-size:16px;">{{ contagem.validado + contagem.testando }}</strong>
+          <span style="font-size:11.5px;color:var(--c-text-muted);font-weight:700;">na biblioteca</span>
         </button>
         <button
-          v-for="s in ORDEM_SELOS" :key="s"
+          v-for="s in (['validado', 'testando'] as Status[])" :key="s"
           :style="{ background: filtro === s ? 'var(--c-surface-2)' : 'var(--c-bg-deepest)', border: '1px solid ' + (filtro === s ? SELOS[s].cor : 'var(--c-surface-1)'), borderRadius: '10px', padding: '8px 14px', cursor: 'pointer', fontFamily: 'inherit', color: 'var(--c-text)', display: 'flex', alignItems: 'baseline', gap: '7px' }"
-          @click="filtro = filtro === s ? 'todos' : s"
+          @click="filtro = filtro === s ? 'biblioteca' : s"
         >
           <strong :style="{ fontSize: '16px', color: SELOS[s].cor }">{{ contagem[s] }}</strong>
           <span style="font-size:11.5px;color:var(--c-text-muted);font-weight:700;">{{ SELOS[s].icone }} {{ SELOS[s].curto }}</span>
+        </button>
+
+        <div style="width:1px;height:26px;background:var(--c-surface-1);margin:0 3px;" />
+
+        <button
+          title="Reprovados — ficam fora da biblioteca e são recusados na criação de anúncio"
+          :style="{ background: filtro === 'reprovado' ? 'var(--c-surface-2)' : 'transparent', border: '1px solid ' + (filtro === 'reprovado' ? SELOS.reprovado.cor : 'var(--c-surface-1)'), borderRadius: '10px', padding: '8px 14px', cursor: 'pointer', fontFamily: 'inherit', color: 'var(--c-text-faint)', display: 'flex', alignItems: 'baseline', gap: '7px' }"
+          @click="filtro = filtro === 'reprovado' ? 'biblioteca' : 'reprovado'"
+        >
+          <strong style="font-size:16px;">{{ contagem.reprovado }}</strong>
+          <span style="font-size:11.5px;font-weight:700;">🗄️ Arquivados</span>
         </button>
 
         <div style="flex:1;" />
@@ -220,13 +242,27 @@ function estiloCard(c: Criativo) {
         </div>
       </div>
 
-      <div style="font-size:12px;color:var(--c-text-muted);margin-bottom:16px;line-height:1.5;">
+      <div style="font-size:11px;color:var(--c-text-faint);margin-bottom:16px;">{{ criativos.length }} criativo{{ criativos.length === 1 ? '' : 's' }} no total</div>
+
+      <div v-if="arquivadoAgora" style="background:var(--c-surface-1);border:1px solid var(--c-surface-3);border-radius:10px;padding:9px 12px;font-size:12px;margin-bottom:14px;display:flex;align-items:center;gap:10px;">
+        <span>🗄️ <strong>{{ arquivadoAgora }}</strong> foi arquivado e saiu da biblioteca.</span>
+        <button style="background:none;border:none;color:var(--c-text-secondary);font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;text-decoration:underline;" @click="filtro = 'reprovado'; arquivadoAgora = ''">Ver arquivados</button>
+        <button style="margin-left:auto;background:none;border:none;color:var(--c-text-faint);cursor:pointer;font-size:15px;" @click="arquivadoAgora = ''">×</button>
+      </div>
+
+      <div v-if="filtro === 'reprovado'" style="background:rgba(255,77,77,.06);border:1px solid rgba(255,77,77,.25);border-radius:10px;padding:10px 12px;font-size:12px;color:var(--c-text-secondary);margin-bottom:16px;line-height:1.5;">
+        <strong>Arquivados.</strong> Estas peças deram ruim e ficam fora da biblioteca — a criação de anúncio recusa cada uma delas, inclusive quando quem pede é a IA.
+        Para trazer uma de volta, mude o selo dela para <strong>Em teste</strong> ou <strong>Validado</strong>.
+      </div>
+
+      <div v-else style="font-size:12px;color:var(--c-text-muted);margin-bottom:16px;line-height:1.5;">
         Cada imagem enviada vira <strong>Criativo 1</strong>, <strong>Criativo 2</strong>… É por esse nome que a peça é identificada na criação do anúncio.
         A observação é lida pela IA — descreva o que a peça mostra e para quem serve.
         <strong>Criativo reprovado é recusado na criação de anúncio</strong>, inclusive quando quem pede é a IA.
       </div>
 
       <label
+        v-if="filtro !== 'reprovado'"
         :style="`display:block;border:1.5px dashed ${arrastando ? 'var(--accent)' : 'var(--c-surface-3)'};border-radius:12px;padding:22px;text-align:center;cursor:pointer;margin-bottom:18px;background:${arrastando ? 'var(--c-surface-1)' : 'var(--c-bg-deepest)'};transition:background .12s,border-color .12s;`"
         @dragenter.prevent="arrastando++"
         @dragover.prevent
@@ -250,7 +286,9 @@ function estiloCard(c: Criativo) {
 
       <div v-if="carregando" style="font-size:12.5px;color:var(--c-text-faint);">Carregando…</div>
       <div v-else-if="!criativos.length" style="font-size:12.5px;color:var(--c-text-faint);">Nenhum criativo ainda.</div>
-      <div v-else-if="!visiveis.length" style="font-size:12.5px;color:var(--c-text-faint);">Nenhum criativo {{ filtro === 'todos' ? '' : SELOS[filtro as Status].rotulo.toLowerCase() }}.</div>
+      <div v-else-if="!visiveis.length" style="font-size:12.5px;color:var(--c-text-faint);">
+        {{ filtro === 'biblioteca' ? 'Nenhum criativo na biblioteca — todos foram arquivados.' : filtro === 'reprovado' ? 'Nenhum criativo arquivado.' : `Nenhum criativo ${SELOS[filtro as Status].rotulo.toLowerCase()}.` }}
+      </div>
 
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px;">
         <div v-for="c in visiveis" :key="c.id" :style="estiloCard(c)">

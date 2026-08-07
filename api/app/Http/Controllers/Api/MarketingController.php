@@ -3,10 +3,12 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Conversation;
 use App\Models\MarketingCreative;
 use App\Models\MarketingCredential;
 use App\Support\FacebookAds;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -182,7 +184,34 @@ class MarketingController extends Controller
     public function campanhas(Request $request)
     {
         $limite = $request->integer('limite', 50);
-        $r = self::ultimoBom('campanhas', fn () => FacebookAds::make()->listarCampanhas($limite));
+
+        // Miniatura vem junto e DENTRO do mesmo ultimoBom: são duas chamadas à Graph API
+        // que a tabela usa na mesma linha. Separadas, um tropeço só na busca das imagens
+        // deixaria a tabela metade nova e metade do cache de horas atrás.
+        $r = self::ultimoBom('campanhas', function () use ($limite) {
+            $fb = FacebookAds::make();
+            $campanhas = $fb->listarCampanhas($limite);
+            $minis = $fb->miniaturasPorCampanha();
+            $orcs = $fb->orcamentosDeConjunto();
+
+            return array_map(function (array $c) use ($minis, $orcs) {
+                $id = (string) ($c['id'] ?? '');
+                $doConjunto = $orcs[$id] ?? null;
+
+                // O orçamento EFETIVO da campanha, venha de onde vier: a campanha (CBO) ou
+                // a soma dos conjuntos (ABO). O painel mostra um número só porque é um
+                // número só que sai da conta no fim do dia.
+                $naCampanha = (int) ($c['daily_budget'] ?? 0);
+
+                return $c + [
+                    'miniatura' => $minis[$id] ?? null,
+                    'orcamento_diario' => $naCampanha ?: ($doConjunto['diario'] ?? 0) ?: null,
+                    'orcamento_nivel' => $naCampanha ? 'campanha' : ($doConjunto ? 'conjunto' : null),
+                    // Quantos conjuntos disputam esse orçamento — 1 dá para editar daqui.
+                    'orcamento_conjuntos' => $doConjunto['conjuntos'] ?? 0,
+                ];
+            }, $campanhas);
+        });
 
         return response()->json(['campanhas' => $r['dados'], 'erro' => $r['erro'], 'de' => $r['de']]);
     }
@@ -347,7 +376,7 @@ class MarketingController extends Controller
      *
      * @return array<string, array{leads:int, responderam:int, qualificados:int, reunioes:int, realizadas:int, vendas:int}>
      */
-    private function statsPorChave(string $chave, \Illuminate\Support\Carbon $de, \Illuminate\Support\Carbon $ate): array
+    private function statsPorChave(string $chave, Carbon $de, Carbon $ate): array
     {
         // "Respondeu" = mandou 2+ mensagens. A primeira é automática (o clique no anúncio
         // já dispara o texto pré-preenchido do "Enviar mensagem"), então 1 mensagem não
@@ -361,7 +390,7 @@ class MarketingController extends Controller
 
         $linhas = [];
 
-        $rows = \App\Models\Conversation::selectRaw("
+        $rows = Conversation::selectRaw("
             {$chave} as chave,
             COUNT(*) as leads,
             SUM({$respondeu}) as responderam,
@@ -395,7 +424,7 @@ class MarketingController extends Controller
      * (America/Sao_Paulo dos dois lados). Verificado contra a Graph API: `last_7d` e
      * `last_30d` terminam ONTEM — não incluem hoje. `today` e `this_month` incluem.
      *
-     * @return array{0: \Illuminate\Support\Carbon, 1: \Illuminate\Support\Carbon}
+     * @return array{0: Carbon, 1: Carbon}
      */
     private static function janela(string $periodo, ?string $desde = null, ?string $ateData = null): array
     {
@@ -405,18 +434,29 @@ class MarketingController extends Controller
         // o +1 dia no fim — a janela é [de 00:00, ate+1 00:00). É o mesmo intervalo que o
         // `time_range` da Graph API cobre, lá com o `until` inclusivo.
         if ($desde && $ateData) {
-            return [\Illuminate\Support\Carbon::parse($desde)->startOfDay(), \Illuminate\Support\Carbon::parse($ateData)->startOfDay()->addDay()];
+            return [Carbon::parse($desde)->startOfDay(), Carbon::parse($ateData)->startOfDay()->addDay()];
         }
 
         return match ($periodo) {
-            'today'      => [$hoje, $hoje->copy()->addDay()],
-            'last_30d'   => [$hoje->copy()->subDays(30), $hoje],
+            'today' => [$hoje, $hoje->copy()->addDay()],
+            // Ontem é o único período FECHADO da lista: o dia acabou, o gasto parou de
+            // subir e todo lead que ia entrar já entrou. É a leitura que serve para
+            // decidir verba — em "Hoje" o gasto corre na frente dos leads e o custo por
+            // qualificado parece pior do que é até o dia virar.
+            'yesterday' => [$hoje->copy()->subDay(), $hoje],
+            'last_30d' => [$hoje->copy()->subDays(30), $hoje],
             'this_month' => [$hoje->copy()->startOfMonth(), $hoje->copy()->addDay()],
-            default      => [$hoje->copy()->subDays(7), $hoje], // last_7d
+            default => [$hoje->copy()->subDays(7), $hoje], // last_7d
         };
     }
 
-    /** Atualiza status (ACTIVE|PAUSED) e/ou orçamento de uma campanha existente. */
+    /**
+     * Atualiza status (ACTIVE|PAUSED) e/ou orçamento diário de uma campanha.
+     *
+     * Status e orçamento vão por caminhos diferentes de propósito: status é sempre da
+     * campanha, orçamento pode morar nela ou no conjunto — quem resolve isso é o
+     * {@see FacebookAds::atualizarOrcamentoDiario()}.
+     */
     public function atualizarCampanha(Request $request, string $id)
     {
         $data = $request->validate([
@@ -424,16 +464,43 @@ class MarketingController extends Controller
             'orcamento_diario_reais' => 'nullable|numeric|min:1',
         ]);
 
-        $params = array_filter([
-            'status' => $data['status'] ?? null,
-            'orcamento_diario_reais' => isset($data['orcamento_diario_reais']) ? (float) $data['orcamento_diario_reais'] : null,
-        ], fn ($v) => $v !== null);
+        $fb = FacebookAds::make();
+        $resultado = [];
 
         try {
-            $resultado = FacebookAds::make()->atualizarCampanha($id, $params);
+            if (isset($data['status'])) {
+                $resultado['status'] = $fb->atualizarCampanha($id, ['status' => $data['status']]);
+            }
+            if (isset($data['orcamento_diario_reais'])) {
+                $resultado['orcamento'] = $fb->atualizarOrcamentoDiario($id, (float) $data['orcamento_diario_reais']);
+            }
         } catch (\Throwable $e) {
             return response()->json(['ok' => false, 'erro' => $e->getMessage()], 422);
         }
+
+        if ($resultado === []) {
+            return response()->json(['ok' => false, 'erro' => 'Nenhum campo para atualizar.'], 422);
+        }
+
+        // A lista em cache tem o orçamento/status antigos; sem isto a tela recarregaria
+        // e mostraria o valor de antes, parecendo que o salvamento não pegou.
+        Cache::forget('fb_ok:campanhas:'.MarketingCredential::atual()->getKey());
+
+        return response()->json(['ok' => true, 'resultado' => $resultado]);
+    }
+
+    /** Duplica a campanha (conjuntos e anúncios juntos), pausada, como no Facebook. */
+    public function duplicarCampanha(Request $request, string $id)
+    {
+        $sufixo = trim((string) $request->input('sufixo', '')) ?: ' (cópia)';
+
+        try {
+            $resultado = FacebookAds::make()->duplicarCampanha($id, $sufixo);
+        } catch (\Throwable $e) {
+            return response()->json(['ok' => false, 'erro' => $e->getMessage()], 422);
+        }
+
+        Cache::forget('fb_ok:campanhas:'.MarketingCredential::atual()->getKey());
 
         return response()->json(['ok' => true, 'resultado' => $resultado]);
     }

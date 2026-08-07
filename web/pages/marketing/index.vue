@@ -8,6 +8,15 @@ interface Campanha {
   id: string; name: string; objective: string | null
   status: string; effective_status: string
   daily_budget: string | null; lifetime_budget: string | null; created_time: string
+  /** Arte do criativo (thumbnail_url da Graph API). Null quando o anúncio não tem imagem. */
+  miniatura: string | null
+  /**
+   * Orçamento diário EFETIVO em centavos, venha da campanha (CBO) ou da soma dos
+   * conjuntos (ABO). `daily_budget` sozinho não serve: nesta conta ele é sempre nulo.
+   */
+  orcamento_diario: number | null
+  orcamento_nivel: 'campanha' | 'conjunto' | null
+  orcamento_conjuntos: number
 }
 interface Metrica {
   campaign_id?: string; impressions?: string; clicks?: string
@@ -25,6 +34,11 @@ type CrmCampo = 'leads' | 'responderam' | 'qualificados' | 'reunioes' | 'realiza
 // ---------------------------------------------------------------- período ---
 const periodos = [
   { label: 'Hoje', value: 'today' },
+  // 'yesterday' é date_preset da Graph API e tem par no janela() do MarketingController.
+  // Os dois lados precisam conhecer a chave: o gasto vem do Facebook pelo preset, os
+  // leads vêm do banco pela janela, e um período que só um dos dois entende divide o
+  // gasto de um intervalo pelos leads de outro.
+  { label: 'Ontem', value: 'yesterday' },
   { label: '7 dias', value: 'last_7d' },
   { label: '30 dias', value: 'last_30d' },
   { label: 'Este mês', value: 'this_month' },
@@ -44,6 +58,16 @@ function qsPeriodo(): string {
 }
 
 const campanhas = ref<Campanha[]>([])
+
+/**
+ * Mostrar só o que está no ar.
+ *
+ * Campanha pausada acumula: a conta chegou a 14 com 3 rodando, e as 11 mortas empurravam
+ * as vivas para fora da tela justamente na hora de decidir verba. Fica DESLIGADO por
+ * padrão: o painel abre mostrando a conta inteira, e esconder é escolha de quem olha.
+ */
+const soAtivas = ref(false)
+const campanhasVisiveis = computed(() => soAtivas.value ? campanhas.value.filter(isAtiva) : campanhas.value)
 const metricasMap = ref<Record<string, Metrica>>({})
 const adStatsMap = ref<Record<string, AdStat>>({})
 const adStatsCampMap = ref<Record<string, AdStatCamp>>({})
@@ -54,6 +78,7 @@ const erroStats = ref('')
 const editandoOrc = ref<Record<string, string>>({})
 const salvandoOrc = ref<Record<string, boolean>>({})
 const salvandoSts = ref<Record<string, boolean>>({})
+const duplicando = ref<Record<string, boolean>>({})
 
 /** "há 12 min" — idade do dado servido do cache quando o Facebook falhou. */
 function desde(iso?: string | null): string {
@@ -118,22 +143,27 @@ function mNum(v: string | null | undefined) { return v ? parseInt(v, 10).toLocal
  * O Facebook devolve métrica de TODA campanha que gastou no período, inclusive as
  * arquivadas/excluídas — que não aparecem na lista. Somar o mapa inteiro dava um total
  * sem dono. O total é das campanhas LISTADAS; o resto vira o aviso `gastoForaDaLista()`.
+ *
+ * "Listada" é o que está NA TELA, então o filtro "só ativas" entra aqui também: rodapé
+ * que soma linha escondida é a reclamação clássica de número que não fecha. E o gasto
+ * das pausadas não some da conta — cai no `gastoForaDaLista()`, que já existe para isso
+ * e o mostra no aviso.
  */
 function somaListadas(campo: 'spend' | 'impressions' | 'clicks') {
-  return campanhas.value.reduce((s, c) => s + parseFloat(metricasMap.value[c.id]?.[campo] || '0'), 0)
+  return campanhasVisiveis.value.reduce((s, c) => s + parseFloat(metricasMap.value[c.id]?.[campo] || '0'), 0)
 }
 function gastoTotal() { return somaListadas('spend') }
 function gastoForaDaLista() {
-  const listadas = new Set(campanhas.value.map(c => c.id))
+  const listadas = new Set(campanhasVisiveis.value.map(c => c.id))
   return Object.entries(metricasMap.value)
     .filter(([id]) => !listadas.has(id))
     .reduce((s, [, m]) => s + parseFloat(m.spend || '0'), 0)
 }
 function totalCrm(campo: CrmCampo) {
-  return campanhas.value.reduce((s, c) => s + (adStat(c)?.[campo] ?? 0), 0)
+  return campanhasVisiveis.value.reduce((s, c) => s + (adStat(c)?.[campo] ?? 0), 0)
 }
 function totalConversas() {
-  return campanhas.value.reduce((s, c) => s + (conversas(c) ?? 0), 0)
+  return campanhasVisiveis.value.reduce((s, c) => s + (conversas(c) ?? 0), 0)
 }
 /**
  * Custos do rodapé: gasto total ÷ evento total, não a média dos custos das linhas —
@@ -169,7 +199,15 @@ function objTxt(o: string | null) {
   const m: Record<string, string> = { OUTCOME_TRAFFIC: 'Tráfego', OUTCOME_LEADS: 'Leads', OUTCOME_SALES: 'Vendas', OUTCOME_ENGAGEMENT: 'Engajamento', MESSAGES: 'Mensagens', LINK_CLICKS: 'Cliques', CONVERSIONS: 'Conversões' }
   return o ? (m[o] || o) : ''
 }
-function orcDiario(c: Campanha) { return c.daily_budget ? parseFloat(c.daily_budget) / 100 : null }
+function orcDiario(c: Campanha) { return c.orcamento_diario ? c.orcamento_diario / 100 : null }
+/**
+ * Dá para editar daqui? Só quando existe UM lugar óbvio para gravar. Campanha com dois
+ * conjuntos tem dois orçamentos, e o painel escolher um por conta própria seria decidir
+ * verba no lugar de quem cuida da conta — nesse caso a célula vira texto e manda pro FB.
+ */
+function orcEditavel(c: Campanha) {
+  return c.orcamento_nivel === 'campanha' || (c.orcamento_nivel === 'conjunto' && c.orcamento_conjuntos === 1)
+}
 function conversas(c: Campanha) {
   const ac = mFmt(c).actions
   if (!ac) return null
@@ -382,6 +420,24 @@ async function salvarOrc(c: Campanha) {
   finally { salvandoOrc.value[c.id] = false }
 }
 
+/**
+ * Duplica a campanha no Facebook (conjuntos e anúncios juntos).
+ *
+ * Confirma antes porque cria objeto de verdade na conta de anúncios — e uma cópia
+ * acidental que ninguém percebe vira campanha órfã na lista.
+ */
+async function duplicar(c: Campanha) {
+  if (!confirm(`Duplicar "${c.name}"?\n\nA cópia vem com os mesmos conjuntos e anúncios, e nasce PAUSADA.`)) return
+  duplicando.value[c.id] = true
+  try {
+    const r = await api<{ ok: boolean, erro?: string }>(`/api/marketing/campanhas/${c.id}/duplicar`, { method: 'POST', body: {} })
+    if (!r.ok) throw new Error(r.erro)
+    await carregarPainel()
+  }
+  catch (e: any) { alert(e?.response?._data?.erro || e?.message || 'Erro ao duplicar.') }
+  finally { duplicando.value[c.id] = false }
+}
+
 const ativas = computed(() => campanhas.value.filter(isAtiva).length)
 
 /**
@@ -391,7 +447,7 @@ const ativas = computed(() => campanhas.value.filter(isAtiva).length)
  * por célula, ~700 por render numa tabela de 9 campanhas. Aqui a conta é feita uma vez
  * por célula e o template só lê.
  */
-const grade = computed(() => campanhas.value.map(c => ({
+const grade = computed(() => campanhasVisiveis.value.map(c => ({
   campanha: c,
   cels: Object.fromEntries(colunas.value.map(col => [col.key, celula(c, col.key)])) as Record<string, Celula>,
 })))
@@ -428,6 +484,13 @@ const rodapeSemAtrib = computed(() => semAtribuicao.value
         title="Escolher as datas no calendário"
         @click="periodo = 'custom'"
       >📅 Datas</button>
+
+      <div style="width:1px;height:18px;background:var(--c-surface-2);margin:0 4px;" />
+      <button
+        :style="{ background: soAtivas ? 'var(--c-surface-0)' : 'transparent', border: '1px solid ' + (soAtivas ? 'var(--c-surface-3)' : 'transparent'), color: soAtivas ? 'var(--c-text)' : 'var(--c-text-faint)', fontFamily: 'inherit', fontSize: '11.5px', fontWeight: 700, padding: '5px 11px', borderRadius: '7px', cursor: 'pointer' }"
+        :title="soAtivas ? 'Mostrando só as campanhas no ar — clique para ver todas' : `Esconder as pausadas (${ativas} de ${campanhas.length} no ar)`"
+        @click="soAtivas = !soAtivas"
+      >🟢 Só ativas</button>
 
       <!-- calendário: as duas pontas entram no cálculo -->
       <div v-if="custom" style="display:flex;align-items:center;gap:6px;background:var(--c-surface-0);border:1px solid var(--c-surface-3);border-radius:8px;padding:3px 8px;">
@@ -531,8 +594,25 @@ const rodapeSemAtrib = computed(() => semAtribuicao.value
             <template v-for="col in colunas" :key="col.key">
               <!-- nome + objetivo -->
               <td v-if="col.key === 'campanha'" style="padding:11px 12px;vertical-align:middle;">
-                <div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:320px;">{{ c.name }}</div>
-                <div v-if="objTxt(c.objective)" style="font-size:10.5px;color:var(--c-text-faint);margin-top:2px;">{{ objTxt(c.objective) }}</div>
+                <div style="display:flex;align-items:center;gap:10px;">
+                  <img
+                    v-if="c.miniatura" :src="c.miniatura" alt="" loading="lazy"
+                    style="width:38px;height:38px;flex:0 0 38px;border-radius:6px;object-fit:cover;background:var(--c-surface-1);"
+                    @error="e => ((e.target as HTMLImageElement).style.display = 'none')"
+                  >
+                  <div style="min-width:0;">
+                    <div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px;">{{ c.name }}</div>
+                    <div style="display:flex;align-items:center;gap:7px;margin-top:2px;">
+                      <span v-if="objTxt(c.objective)" style="font-size:10.5px;color:var(--c-text-faint);">{{ objTxt(c.objective) }}</span>
+                      <button
+                        :disabled="duplicando[c.id]"
+                        title="Duplicar a campanha com os conjuntos e anúncios. A cópia nasce pausada."
+                        style="background:none;border:none;color:var(--c-text-faint);font-family:inherit;font-size:10.5px;font-weight:700;cursor:pointer;padding:0;text-decoration:underline;text-underline-offset:2px;"
+                        @click="duplicar(c)"
+                      >{{ duplicando[c.id] ? 'duplicando…' : '⧉ duplicar' }}</button>
+                    </div>
+                  </div>
+                </div>
               </td>
 
               <!-- status (clicável: liga/desliga) -->
@@ -558,8 +638,8 @@ const rodapeSemAtrib = computed(() => semAtribuicao.value
                   <button style="background:none;border:none;color:var(--c-text-faint);font-family:inherit;font-size:12px;cursor:pointer;padding:2px 4px;" @click="delete editandoOrc[c.id]">✕</button>
                 </div>
                 <div
-                  v-else-if="c.daily_budget"
-                  title="Clique para editar"
+                  v-else-if="orcDiario(c) && orcEditavel(c)"
+                  :title="c.orcamento_nivel === 'conjunto' ? 'Orçamento do conjunto — clique para editar' : 'Clique para editar'"
                   style="cursor:pointer;display:inline-flex;align-items:center;gap:5px;padding:3px 7px;border-radius:5px;border:1px solid transparent;"
                   @mouseenter="e => (e.currentTarget as HTMLElement).style.borderColor = 'var(--c-surface-3)'"
                   @mouseleave="e => (e.currentTarget as HTMLElement).style.borderColor = 'transparent'"
@@ -567,6 +647,9 @@ const rodapeSemAtrib = computed(() => semAtribuicao.value
                 >
                   {{ brl(orcDiario(c)) }}<span style="font-size:10px;color:var(--c-text-faint);">/dia</span>
                   <span style="font-size:10px;color:var(--c-text-faint);opacity:.6;">✏</span>
+                </div>
+                <div v-else-if="orcDiario(c)" :title="`${c.orcamento_conjuntos} conjuntos com orçamento próprio — ajuste pelo Facebook`" style="display:inline-flex;align-items:center;gap:4px;">
+                  {{ brl(orcDiario(c)) }}<span style="font-size:10px;color:var(--c-text-faint);">/dia · {{ c.orcamento_conjuntos }} conj.</span>
                 </div>
                 <span v-else-if="c.lifetime_budget" style="color:var(--c-text-faint);font-size:11px;">{{ brl(parseFloat(c.lifetime_budget) / 100) }} total</span>
                 <span v-else style="color:var(--c-text-faint);">—</span>

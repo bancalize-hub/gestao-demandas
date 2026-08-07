@@ -15,9 +15,9 @@ use App\Http\Controllers\Api\FollowUpController;
 use App\Http\Controllers\Api\GoogleAuthController;
 use App\Http\Controllers\Api\LabelController;
 use App\Http\Controllers\Api\LeadActivityController;
+use App\Http\Controllers\Api\MarketingController;
 use App\Http\Controllers\Api\MaterialController;
 use App\Http\Controllers\Api\MemoryController;
-use App\Http\Controllers\Api\MarketingController;
 use App\Http\Controllers\Api\MessageController;
 use App\Http\Controllers\Api\QuickReplyController;
 use App\Http\Controllers\Api\StageAutomationController;
@@ -128,6 +128,7 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
         Route::get('/marketing/metricas', [MarketingController::class, 'metricasFb']);
         Route::get('/marketing/ad-stats', [MarketingController::class, 'adStats']);
         Route::patch('/marketing/campanhas/{id}', [MarketingController::class, 'atualizarCampanha']);
+        Route::post('/marketing/campanhas/{id}/duplicar', [MarketingController::class, 'duplicarCampanha']);
 
         // Painel da PLATAFORMA (página /super): fala de todas as empresas ao mesmo tempo,
         // por isso vive aqui dentro e nunca no grupo comum. Ver PLANO-SUPER-ADMIN.md.

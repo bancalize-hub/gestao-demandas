@@ -254,6 +254,77 @@ class FacebookAds
     }
 
     /**
+     * Miniatura do criativo de cada campanha, para a tabela do painel.
+     *
+     * A imagem é o que identifica o anúncio para quem o criou — "Criativo 5" não diz nada
+     * três semanas depois, e é sobre ela que se decide o que pausar.
+     *
+     * Prefere o anúncio ATIVO da campanha: campanha antiga costuma acumular anúncios
+     * pausados, e mostrar a arte de um que não roda mais faria julgar o desempenho de
+     * hoje pela imagem errada.
+     *
+     * @return array<string, string> campaign_id => URL da miniatura
+     */
+    public function miniaturasPorCampanha(int $limite = 500): array
+    {
+        $r = $this->call('GET', '/'.$this->conta().'/ads', [
+            'fields' => 'campaign_id,effective_status,creative{thumbnail_url}',
+            'limit' => max(1, min($limite, 500)),
+        ]);
+
+        $ativas = [];
+        $pausadas = [];
+        foreach ($r['data'] ?? [] as $ad) {
+            $camp = (string) ($ad['campaign_id'] ?? '');
+            $url = (string) ($ad['creative']['thumbnail_url'] ?? '');
+            if ($camp === '' || $url === '') {
+                continue;
+            }
+            if (($ad['effective_status'] ?? '') === 'ACTIVE') {
+                $ativas[$camp] ??= $url;
+            } else {
+                $pausadas[$camp] ??= $url;
+            }
+        }
+
+        // Ativa ganha da pausada quando a campanha tem das duas.
+        return array_replace($pausadas, $ativas);
+    }
+
+    /**
+     * Onde mora o orçamento de cada campanha e quanto é, somando os conjuntos.
+     *
+     * Sem isto a coluna do painel ficava em "—" nesta conta inteira: o orçamento é por
+     * conjunto (ABO) e a campanha vem com `daily_budget` vazio, então a célula não tinha
+     * o que mostrar nem virava clicável — não dava para editar verba pelo painel.
+     *
+     * `conjuntos` viaja junto porque é o que decide se dá para editar daqui: com dois ou
+     * mais, escolher em qual mexer é decisão de quem cuida da conta, não do painel.
+     *
+     * @return array<string, array{diario: int, conjuntos: int}> campaign_id => centavos
+     */
+    public function orcamentosDeConjunto(int $limite = 500): array
+    {
+        $r = $this->call('GET', '/'.$this->conta().'/adsets', [
+            'fields' => 'campaign_id,daily_budget',
+            'limit' => max(1, min($limite, 500)),
+        ]);
+
+        $out = [];
+        foreach ($r['data'] ?? [] as $conj) {
+            $camp = (string) ($conj['campaign_id'] ?? '');
+            if ($camp === '') {
+                continue;
+            }
+            $out[$camp] ??= ['diario' => 0, 'conjuntos' => 0];
+            $out[$camp]['diario'] += (int) ($conj['daily_budget'] ?? 0);
+            $out[$camp]['conjuntos']++;
+        }
+
+        return $out;
+    }
+
+    /**
      * Métricas. `nivel` = account | campaign | adset | ad.
      *
      * Com `$de`/`$ate` (YYYY-MM-DD) usa `time_range` em vez de `date_preset` — é assim que
@@ -289,13 +360,64 @@ class FacebookAds
         if (isset($params['status'])) {
             $data['status'] = $params['status'];
         }
-        if (isset($params['orcamento_diario_reais'])) {
-            $data['daily_budget'] = (int) round($params['orcamento_diario_reais'] * 100);
-        }
         if (empty($data)) {
             throw new RuntimeException('Nenhum campo para atualizar.');
         }
 
         return $this->call('POST', "/{$campanhaId}", $data);
+    }
+
+    /**
+     * Orçamento diário — na campanha OU no conjunto, conforme onde ele mora.
+     *
+     * O Facebook guarda o orçamento em um dos dois níveis, nunca nos dois: CBO põe na
+     * campanha, ABO põe em cada conjunto. Escrever no nível errado não é "não faz nada":
+     * a Graph API recusa, e o painel mostrava "—" na coluna e engolia o erro ao salvar,
+     * porque esta conta é ABO e o código só sabia falar com a campanha.
+     *
+     * Com mais de um conjunto a resposta é recusar, não dividir: escolher sozinho em qual
+     * deles mexer é decidir verba no lugar de quem pediu.
+     */
+    public function atualizarOrcamentoDiario(string $campanhaId, float $reais): array
+    {
+        $centavos = (int) round($reais * 100);
+
+        $camp = $this->call('GET', "/{$campanhaId}", ['fields' => 'daily_budget,lifetime_budget']);
+        if (! empty($camp['daily_budget'])) {
+            return $this->call('POST', "/{$campanhaId}", ['daily_budget' => $centavos]);
+        }
+        if (! empty($camp['lifetime_budget'])) {
+            throw new RuntimeException('Esta campanha usa orçamento total (vitalício), não diário. Ajuste pelo Facebook.');
+        }
+
+        $conjuntos = $this->call('GET', "/{$campanhaId}/adsets", [
+            'fields' => 'id,name,daily_budget',
+            'limit' => 50,
+        ])['data'] ?? [];
+
+        if (count($conjuntos) === 0) {
+            throw new RuntimeException('Campanha sem conjunto de anúncios — não há onde gravar o orçamento.');
+        }
+        if (count($conjuntos) > 1) {
+            $nomes = implode(', ', array_map(fn ($c) => (string) ($c['name'] ?? $c['id']), $conjuntos));
+            throw new RuntimeException("Esta campanha tem {$nomes} — o orçamento é de cada conjunto. Ajuste pelo Facebook para escolher qual.");
+        }
+
+        return $this->call('POST', '/'.$conjuntos[0]['id'], ['daily_budget' => $centavos]);
+    }
+
+    /**
+     * Duplica a campanha inteira (conjuntos e anúncios), como o "Duplicar" do Facebook.
+     *
+     * Nasce PAUSADA de propósito: cópia é rascunho, e uma que já entra no ar começa a
+     * gastar antes de alguém revisar público, orçamento ou criativo.
+     */
+    public function duplicarCampanha(string $campanhaId, string $sufixo = ' (cópia)'): array
+    {
+        return $this->call('POST', "/{$campanhaId}/copies", [
+            'deep_copy' => 'true',
+            'status_option' => 'PAUSED',
+            'rename_options' => json_encode(['rename_suffix' => $sufixo]),
+        ]);
     }
 }

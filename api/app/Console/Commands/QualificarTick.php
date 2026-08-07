@@ -7,6 +7,7 @@ use App\Models\Conversation;
 use App\Support\Claude;
 use App\Support\Tenancy;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Pré-triagem dos leads pela IA: marca `qualified` com um palpite e o porquê.
@@ -38,6 +39,14 @@ class QualificarTick extends Command
 
     /** Mensagens do lead necessárias para haver o que julgar. */
     private const MIN_MENSAGENS = 1;
+
+    /**
+     * Repetições que fazem uma primeira-mensagem virar "texto de botão".
+     * 3 é baixo de propósito: falso positivo aqui só tira força de evidência que já era
+     * fraca ("bom dia"), enquanto o falso negativo deixa a IA qualificar quem não digitou
+     * nada — o erro que esta regra existe para impedir.
+     */
+    private const MIN_REPETICOES_BOTAO = 3;
 
     public function handle(Tenancy $tenancy): int
     {
@@ -101,9 +110,10 @@ class QualificarTick extends Command
             ->get();
 
         $marcados = 0;
+        $botoes = $this->textosDeBotao();
 
         foreach ($pendentes as $conv) {
-            $veredito = $this->julgar($conv, $criterio);
+            $veredito = $this->julgar($conv, $criterio, $botoes);
             if ($veredito === null) {
                 continue; // IA fora ou resposta ilegível — tenta de novo na próxima rodada
             }
@@ -127,21 +137,71 @@ class QualificarTick extends Command
     }
 
     /**
+     * As frases que o Facebook já deixa digitadas no botão do anúncio ou da página.
+     *
+     * POR QUE ISTO EXISTE: o texto do botão da página da Bancalize dizia "tenho interesse
+     * na solução de pagamentos white-label", e a IA leu isso como intenção declarada do
+     * lead — qualificou gente que não tinha digitado uma palavra (auditoria de 06/08/2026,
+     * conversa 2078). A frase é da empresa, não dele.
+     *
+     * DESCOBERTA POR DADOS, NÃO CHUMBADA: uma primeira-mensagem que se repete em muitas
+     * conversas diferentes só pode ser template — ninguém escreve a mesma frase 88 vezes.
+     * Assim isto continua valendo quando o anúncio mudar de texto, e vale para qualquer
+     * empresa do CRM sem alguém precisar cadastrar frase nenhuma.
+     *
+     * Saudação repetida ("bom dia") também cai aqui, e tudo bem: ela igualmente não é
+     * evidência de nada.
+     *
+     * @return list<string> textos normalizados
+     */
+    private function textosDeBotao(): array
+    {
+        $empresa = app(Tenancy::class)->id();
+        if ($empresa === null) {
+            return [];
+        }
+
+        return DB::table('messages as m')
+            ->join(DB::raw('(SELECT conversation_id, MIN(ts) mts FROM messages WHERE is_out = 0 GROUP BY conversation_id) f'),
+                function ($j) {
+                    $j->on('f.conversation_id', '=', 'm.conversation_id')->on('f.mts', '=', 'm.ts');
+                })
+            ->where('m.is_out', false)
+            ->where('m.company_id', $empresa)
+            ->where('m.text', '<>', '')
+            ->groupBy('m.text')
+            ->havingRaw('COUNT(*) >= ?', [self::MIN_REPETICOES_BOTAO])
+            ->pluck('m.text')
+            ->map(fn ($t) => mb_strtolower(trim((string) $t)))
+            ->all();
+    }
+
+    /**
      * Pergunta o veredito à IA.
      *
+     * @param  list<string>  $botoes  frases de botão, para não virarem evidência
      * @return array{0: ?bool, 1: string}|null [qualificado, motivo] — null quando a IA falhou
      */
-    private function julgar(Conversation $conv, string $criterio): ?array
+    private function julgar(Conversation $conv, string $criterio, array $botoes = []): ?array
     {
         $linhas = $conv->messages()
             ->reorder()
             ->orderBy('ts')
             ->limit(40)
             ->get(['is_out', 'text', 'transcript'])
-            ->map(function ($m) {
+            ->map(function ($m) use ($botoes) {
                 $t = trim((string) ($m->text ?: $m->transcript));
+                if ($t === '') {
+                    return null;
+                }
+                if ($m->is_out) {
+                    return 'ATENDENTE: '.mb_substr($t, 0, 400);
+                }
+                // Marcar em vez de esconder: a IA precisa ver que o lead clicou no
+                // anúncio (é o contexto da conversa) sabendo que ele não escreveu aquilo.
+                $rotulo = in_array(mb_strtolower($t), $botoes, true) ? 'LEAD [texto do botão]: ' : 'LEAD: ';
 
-                return $t === '' ? null : ($m->is_out ? 'ATENDENTE: ' : 'LEAD: ').mb_substr($t, 0, 400);
+                return $rotulo.mb_substr($t, 0, 400);
             })
             ->filter()
             ->implode("\n");
@@ -174,7 +234,14 @@ class QualificarTick extends Command
         adivinhe: null é a resposta certa quando falta informação, e é melhor que um
         palpite, porque alguém vai decidir orçamento com esse número.
 
-        O motivo deve citar o que o LEAD disse, não o que o atendente respondeu.
+        LINHA MARCADA "LEAD [texto do botão]" NÃO É EVIDÊNCIA DE NADA: é a frase que o
+        Facebook já deixa digitada no botão do anúncio ou da página, escrita pela própria
+        empresa. Algumas dessas frases citam o produto ("tenho interesse na solução de
+        pagamentos white-label") e parecem uma declaração de interesse — não são. O lead
+        só apertou um botão. Se tudo que ele tem é linha de botão, a resposta é null.
+
+        O motivo deve citar o que o LEAD digitou, não o texto do botão nem o que o
+        atendente respondeu.
         TXT;
 
         $json = Claude::json(Claude::run($prompt, 90));

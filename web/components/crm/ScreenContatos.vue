@@ -44,7 +44,7 @@ const kindDaLista = computed(() => listaAtivaObj.value?.kind || '')
 // amanhã entra sozinho. Dizer isso na tela evita a dúvida de "preciso puxar de novo?".
 function descricaoDaLista(kind: string, auto = false) {
   if (auto && kind === 'anuncio') return 'Se alimenta sozinha: todo lead que chega pelo anúncio entra aqui'
-  if (auto && kind === 'crm') return 'Se alimenta sozinha: todo lead novo que casa com o filtro entra aqui'
+  if (auto && kind === 'crm') return 'Se alimenta sozinha: entra quem casa com o filtro, sai quem deixa de casar'
   return ({
     google: 'Sincronizada com a sua agenda do Google',
     planilha: 'Importada de planilha',
@@ -359,8 +359,8 @@ function remove() {
 
             <div style="font-size:11.5px;color:var(--c-text-faint);margin-top:8px;line-height:1.5;">
               Cria a lista com quem já conversou com a gente no WhatsApp.
-              <template v-if="impQualificado === '1'"> Todo lead que for qualificado daqui pra frente entra nela sozinho, na hora.</template>
-              <template v-else-if="impQualificado === 'sem'"> Quem ainda não passou pela triagem. A lista só soma: quem entrar hoje continua nela depois de ser triado.</template>
+              <template v-if="impQualificado === '1'"> Todo lead qualificado daqui pra frente entra sozinho, na hora — e sai se for desqualificado ou mudar de etiqueta.</template>
+              <template v-else-if="impQualificado === 'sem'"> Quem ainda não passou pela triagem — e sai da lista assim que for triado.</template>
             </div>
           </template>
         </template>

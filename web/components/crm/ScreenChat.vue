@@ -90,6 +90,33 @@ async function doMemorize(id: string) {
   setTimeout(() => { memoToast.value = '' }, 3500)
 }
 
+// Excluir conversa (= esconder). Nada é apagado, então o certo aqui é sumir na hora e
+// oferecer Desfazer — pedir confirmação antes seria atrito num gesto reversível.
+const undoDelete = ref<{ id: string, name: string } | null>(null)
+let undoTimer: ReturnType<typeof setTimeout> | null = null
+async function doDelete(id: string) {
+  menuFor.value = ''
+  const r = await crm.deleteConversation(id)
+  if (!r.ok) {
+    memoToast.value = 'Falha ao excluir a conversa'
+    setTimeout(() => { memoToast.value = '' }, 2500)
+    return
+  }
+  undoDelete.value = { id, name: r.name }
+  if (undoTimer) clearTimeout(undoTimer)
+  undoTimer = setTimeout(() => { undoDelete.value = null }, 8000)
+}
+async function doUndoDelete() {
+  const u = undoDelete.value
+  if (!u) return
+  undoDelete.value = null
+  if (undoTimer) clearTimeout(undoTimer)
+  if (!await crm.restoreConversation(u.id)) {
+    memoToast.value = 'Falha ao restaurar a conversa'
+    setTimeout(() => { memoToast.value = '' }, 2500)
+  }
+}
+
 // Ajustar a sugestão da IA por comando + salvar a correção como regra
 const adjust = ref('')
 const lastInstruction = ref('')
@@ -769,20 +796,86 @@ const pendingFile = ref<File | null>(null)
 const pendingPreview = ref<string | null>(null)
 const sendingMedia = ref(false)
 function pickFile() { fileInput.value?.click() }
+/**
+ * Ponto único por onde todo anexo entra — botão de clipe, arrastar e Ctrl+V.
+ * Revoga o preview anterior antes de trocar: sem isso, trocar de arquivo várias vezes
+ * vaza um object URL por troca.
+ */
+function attachFile(f: File | null | undefined) {
+  if (!f) return
+  if (pendingPreview.value) URL.revokeObjectURL(pendingPreview.value)
+  pendingFile.value = f
+  pendingPreview.value = f.type.startsWith('image/') ? URL.createObjectURL(f) : null
+  inputRef.value?.focus()
+}
 function onFileChosen(e: Event) {
   const input = e.target as HTMLInputElement
   const f = input.files?.[0]
   input.value = ''
-  if (!f) return
-  pendingFile.value = f
-  pendingPreview.value = f.type.startsWith('image/') ? URL.createObjectURL(f) : null
-  inputRef.value?.focus()
+  attachFile(f)
 }
 function cancelAttach() {
   if (pendingPreview.value) URL.revokeObjectURL(pendingPreview.value)
   pendingFile.value = null
   pendingPreview.value = null
 }
+
+// ---- Arrastar arquivo para o chat ----
+// dragDepth (e não um booleano): dragleave dispara ao passar por CADA filho do painel,
+// então um booleano apagaria a moldura no primeiro filho que o cursor cruzasse. Contar
+// enter/leave é o que faz a moldura sobreviver ao caminho do mouse até o meio da tela.
+const dragOver = ref(false)
+let dragDepth = 0
+function temArquivo(e: DragEvent) {
+  return Array.from(e.dataTransfer?.types ?? []).includes('Files')
+}
+function onDragEnter(e: DragEvent) {
+  if (!temArquivo(e)) return
+  dragDepth++
+  dragOver.value = !!active.value
+}
+function onDragOver(e: DragEvent) {
+  if (!temArquivo(e)) return
+  // preventDefault SEMPRE, mesmo sem conversa aberta: é ele que impede o navegador de
+  // abrir o arquivo largado e trocar a página, o que derrubaria a tela inteira.
+  e.preventDefault()
+  if (e.dataTransfer) e.dataTransfer.dropEffect = active.value ? 'copy' : 'none'
+}
+function onDragLeave() {
+  dragDepth = Math.max(0, dragDepth - 1)
+  if (!dragDepth) dragOver.value = false
+}
+function onDrop(e: DragEvent) {
+  dragDepth = 0
+  dragOver.value = false
+  if (!temArquivo(e)) return
+  e.preventDefault()
+  if (!active.value) return
+  // Um por vez: o compositor mostra e envia um anexo só.
+  attachFile(e.dataTransfer?.files?.[0])
+}
+
+/**
+ * Ctrl+V com arquivo (print da tela, imagem copiada, arquivo do explorador).
+ * Só intercepta quando há arquivo no clipboard — colar TEXTO continua caindo no
+ * textarea normalmente, que é o uso de longe mais comum.
+ */
+function onPaste(e: ClipboardEvent) {
+  if (!active.value) return
+  const item = Array.from(e.clipboardData?.items ?? []).find(i => i.kind === 'file')
+  if (!item) return
+  const f = item.getAsFile()
+  if (!f) return
+  e.preventDefault()
+  // Print da tela vem sem nome ("image.png" genérico ou vazio) — carimba a hora para
+  // o arquivo não chegar no cliente como "blob" ou colidir com outro print.
+  const nomeOk = f.name && f.name !== 'image.png' && f.name !== 'blob'
+  attachFile(nomeOk ? f : new File([f], `captura-${Date.now()}.${(f.type.split('/')[1] || 'png')}`, { type: f.type }))
+}
+// No window, não no painel: o evento de colar só nasce em quem está focado, e depois de
+// um print da tela normalmente não há foco nenhum dentro do chat.
+onMounted(() => window.addEventListener('paste', onPaste))
+onUnmounted(() => window.removeEventListener('paste', onPaste))
 function fmtSize(n: number) {
   return n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`
 }
@@ -988,6 +1081,8 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
               <button class="mitem" style="width:100%;text-align:left;background:none;border:none;color:var(--c-text);font-family:inherit;font-size:13px;padding:8px 11px;border-radius:7px;cursor:pointer;" @click="crm.markUnread(c.id); menuFor = ''">Marcar como não lida</button>
               <button class="mitem" style="width:100%;text-align:left;background:none;border:none;color:var(--c-text);font-family:inherit;font-size:13px;padding:8px 11px;border-radius:7px;cursor:pointer;" @click="crm.toggleArchive(c.id); menuFor = ''">{{ c.archived ? 'Desarquivar' : 'Arquivar' }}</button>
               <button class="mitem" style="width:100%;text-align:left;background:none;border:none;color:var(--c-ai-soft);font-family:inherit;font-size:13px;padding:8px 11px;border-radius:7px;cursor:pointer;" @click="doMemorize(c.id)">{{ c.inMemory ? '✓ Na memória' : '🧠 Adicionar à memória' }}</button>
+              <div style="height:1px;background:var(--c-surface-3);margin:4px 6px;"></div>
+              <button class="mitem" style="width:100%;text-align:left;background:none;border:none;color:#f2686b;font-family:inherit;font-size:13px;padding:8px 11px;border-radius:7px;cursor:pointer;" @click="doDelete(c.id)">Excluir conversa</button>
             </div>
           </div>
         </template>
@@ -995,7 +1090,14 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
     </div>
 
     <!-- thread -->
-    <div :style="{ position:'relative', flex:1, flexDirection:'column', minWidth:0, background:'var(--c-bg-deep)', backgroundImage:'radial-gradient(circle at 20% 30%,rgba(var(--accent-rgb),.04),transparent 40%),radial-gradient(circle at 80% 70%,rgba(124,108,245,.04),transparent 40%)', display: (isMobile && !crm.chatOpen) ? 'none' : 'flex' }">
+    <div :style="{ position:'relative', flex:1, flexDirection:'column', minWidth:0, background:'var(--c-bg-deep)', backgroundImage:'radial-gradient(circle at 20% 30%,rgba(var(--accent-rgb),.04),transparent 40%),radial-gradient(circle at 80% 70%,rgba(124,108,245,.04),transparent 40%)', display: (isMobile && !crm.chatOpen) ? 'none' : 'flex' }" @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
+      <!-- Arrastando um arquivo por cima do chat: alvo de soltura -->
+      <div v-if="dragOver" style="position:absolute;inset:10px;z-index:70;border:2px dashed var(--accent);border-radius:14px;background:rgba(var(--accent-rgb),.10);backdrop-filter:blur(2px);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;pointer-events:none;">
+        <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8"><path d="M12 16V4m0 0 5 5m-5-5-5 5M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+        <div style="font-size:14.5px;font-weight:700;color:var(--c-text);">Solte para anexar</div>
+        <div style="font-size:12px;color:var(--c-text-muted);">a legenda você escreve antes de enviar</div>
+      </div>
+
       <div v-if="crm.isOffline" style="display:flex;align-items:center;gap:9px;background:rgba(255,180,67,.13);color:var(--c-warn-soft);font-size:12.5px;font-weight:600;padding:9px 22px;border-bottom:1px solid rgba(255,180,67,.22);">
         <span style="width:8px;height:8px;border-radius:50%;background:var(--c-warn);animation:recpulse 1.2s infinite;" />Sem conexão — tentando reconectar…
       </div>
@@ -1354,6 +1456,12 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
     </div>
 
     <div v-if="memoToast" style="position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:60;background:var(--c-surface-3);color:var(--c-text);font-size:13px;font-weight:600;padding:11px 20px;border-radius:11px;box-shadow:0 8px 24px rgba(0,0,0,.45);">{{ memoToast }}</div>
+
+    <!-- Excluiu uma conversa: aviso com Desfazer (a exclusão só esconde) -->
+    <div v-if="undoDelete" style="position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:61;display:flex;align-items:center;gap:14px;background:var(--c-surface-3);color:var(--c-text);font-size:13px;font-weight:600;padding:11px 14px 11px 20px;border-radius:11px;box-shadow:0 8px 24px rgba(0,0,0,.45);">
+      <span>Conversa de {{ undoDelete.name }} excluída</span>
+      <button style="background:none;border:none;color:var(--accent);font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;padding:2px 6px;" @click="doUndoDelete">Desfazer</button>
+    </div>
 
     <!-- Encaminhar: escolher conversa de destino -->
     <div v-if="forwardMsg" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:80;padding:20px;" @click.self="forwardMsg = null">

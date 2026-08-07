@@ -49,6 +49,7 @@ class ConversationController extends Controller
 
         $convs = Conversation::query()
             ->where('archived', false)
+            ->whereNull('hidden_at')
             ->whereHas('messages', fn ($q) => $q->where('is_out', false)->whereBetween('ts', [$start, $end]))
             ->whereDoesntHave('messages', fn ($q) => $q->where('ts', '<', $start)->orWhereNull('ts'))
             ->orderByDesc('last_message_at')
@@ -107,6 +108,30 @@ class ConversationController extends Controller
         }
 
         return $conversation->load('messages');
+    }
+
+    /**
+     * "Excluir" a conversa: some da tela, mas nada é apagado.
+     *
+     * O histórico continua no banco de propósito — é o que sustenta métrica de funil,
+     * custo por lead e a auditoria de quem falou o quê. Apagar de verdade jogaria fora
+     * dado que o /marketing conta, e não dá para desfazer.
+     *
+     * Ela reaparece sozinha se o contato mandar mensagem nova (ver a migration).
+     */
+    public function destroy(Conversation $conversation)
+    {
+        $conversation->update(['hidden_at' => now()]);
+
+        return response()->json(['ok' => true, 'hidden_at' => $conversation->hidden_at]);
+    }
+
+    /** Desfaz o "excluir" — usado pelo botão Desfazer do aviso na tela. */
+    public function restore(Conversation $conversation)
+    {
+        $conversation->update(['hidden_at' => null]);
+
+        return Conversation::listQuery()->whereKey($conversation->id)->firstOrFail();
     }
 
     /** Sugestão de próxima resposta — no seu estilo e usando a memória (Claude/assinatura). */

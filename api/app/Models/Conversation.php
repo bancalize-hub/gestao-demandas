@@ -42,10 +42,14 @@ class Conversation extends Model
     /**
      * Query padrão da lista: colunas enxutas + última mensagem (só o necessário
      * p/ preview/✓✓) + ts da 1ª mensagem (filtro de data do Funil).
+     *
+     * Conversa escondida (`hidden_at`) fica de fora aqui, e é o único lugar que precisa
+     * filtrar: a tela inteira — lista, funil, busca, encaminhar — deriva deste payload.
      */
     public static function listQuery(): Builder
     {
         return static::query()
+            ->whereNull('conversations.hidden_at')
             ->select(array_map(fn ($c) => "conversations.{$c}", self::LIST_COLUMNS))
             ->with(['lastMessage' => fn ($q) => $q->select('messages.id', 'messages.conversation_id', 'messages.is_out', 'messages.ts')])
             ->withMin('messages as started_ts', 'ts');
@@ -57,6 +61,7 @@ class Conversation extends Model
         'prob' => 'integer',
         'unread' => 'integer',
         'archived' => 'boolean',
+        'hidden_at' => 'datetime',
         'qualified' => 'boolean',
         'qualified_auto' => 'boolean',
         'qualified_at' => 'datetime',
@@ -142,12 +147,19 @@ class Conversation extends Model
                 MetaConversions::enviarQualificado($c);
             } catch (\Throwable $e) {
             }
-            // …e entra nas listas de qualificados na hora, pronto para o disparo. Fica no
-            // mesmo gancho pelo mesmo motivo: são dois caminhos (IA e chip) e o `lists:sync`
-            // só passaria daqui a 15 min — justo quando alguém acabou de qualificar e quer
-            // disparar. Best-effort: lista cheia nunca vale mais que a triagem gravada.
+        });
+
+        // Listas automáticas acompanham a conversa: mudou a TRIAGEM ou a ETIQUETA, o lead
+        // entra nas listas que passou a casar e SAI das que deixou de casar. Fica aqui pelo
+        // mesmo motivo do gancho acima — são vários caminhos (IA, chip, menu de etiqueta,
+        // arrastar no funil) e regra que depende de alguém lembrar de chamá-la uma hora
+        // para de valer. Best-effort: lista certa nunca vale mais que a conversa gravada.
+        static::updated(function (Conversation $c) {
+            if (self::$muteBroadcast || ! $c->wasChanged(['qualified', 'stage'])) {
+                return;
+            }
             try {
-                app(ContactListSync::class)->matricularQualificado($c);
+                app(ContactListSync::class)->reconciliar($c);
             } catch (\Throwable $e) {
             }
         });

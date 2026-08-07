@@ -368,6 +368,13 @@ class WhatsAppCloudController extends Controller
         $conv->phone = $conv->phone ?: '+'.$phone;
         $conv->wa_jid = $conv->wa_jid ?: $phone.'@s.whatsapp.net';
 
+        // Conversa "excluída" que recebe mensagem NOVA do contato volta para a lista —
+        // esconder não bloqueia ninguém, e lead que voltou a falar sozinho é o que menos
+        // se pode perder. Só na entrada: mensagem nossa não desfaz a decisão de esconder.
+        if (! $isOut) {
+            $conv->hidden_at = null;
+        }
+
         // O número que RECEBEU passa a ser o dono da conversa. Sem isto, conversa
         // antiga da Evolution que volta a falar no número oficial continuava carimbada
         // no número velho — e a resposta saía (ou nem saía) pelo canal errado: foi

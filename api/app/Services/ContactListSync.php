@@ -25,6 +25,7 @@ class ContactListSync
     public function sync(ContactList $lista): int
     {
         $criteria = (array) ($lista->criteria ?? []);
+        $this->removerQuemNaoCasaMais($lista, $criteria);
 
         // Lista de anúncio nasceu sem critério explícito — o critério dela é ser de anúncio.
         $soAnuncio = (bool) ($criteria['somente_anuncio'] ?? ($lista->kind === 'anuncio'));
@@ -114,39 +115,156 @@ class ContactListSync
     }
 
     /**
-     * Lead acabou de ser qualificado → entra NA HORA nas listas de qualificados.
+     * A conversa casa com o critério da lista?
      *
-     * O `lists:sync` roda a cada 15 min e sozinho já daria conta, mas quem qualifica
-     * costuma querer disparar em seguida — esperar o tick faz a lista parecer quebrada
-     * na única hora em que alguém olha para ela.
-     *
-     * Best-effort de propósito: nenhuma falha aqui pode derrubar a triagem (nem o clique
-     * no chip, nem a rodada da IA).
+     * Régua única do entra-e-sai: se a checagem do add divergir da do remove, o lead
+     * fica pingando entre dentro e fora a cada rodada.
      */
-    public function matricularQualificado(Conversation $conv): int
+    public function combina(ContactList $lista, Conversation $conv): bool
     {
-        $entraram = 0;
+        $criteria = (array) ($lista->criteria ?? []);
 
-        foreach (ContactList::where('auto', true)->get() as $lista) {
-            $criteria = (array) ($lista->criteria ?? []);
-            if (($criteria['qualified'] ?? null) !== '1') {
-                continue;
-            }
-            // A etapa do funil também vale aqui: "qualificados em negociação" não pode
-            // receber quem foi qualificado mas está em outra etapa.
-            if (! empty($criteria['stage']) && $conv->stage !== $criteria['stage']) {
-                continue;
-            }
-            if (($criteria['somente_anuncio'] ?? false) && ! LeadsDeAnuncio::daConversa($conv)) {
-                continue;
-            }
+        if (! empty($criteria['stage']) && $conv->stage !== $criteria['stage']) {
+            return false;
+        }
 
-            $r = $this->adicionar($lista, $conv);
-            if ($r && $r['entrou']) {
-                $entraram++;
+        $qual = $criteria['qualified'] ?? null;
+        if ($qual !== null && $qual !== '') {
+            if ($qual === 'sem') {
+                if ($conv->qualified !== null) {
+                    return false;
+                }
+            } else {
+                // Sem triagem NÃO é desqualificado: `null` não pode casar com o critério
+                // "0", senão a lista de leads ruins engoliria toda a base muda.
+                if ($conv->qualified === null || $conv->qualified !== in_array($qual, ['1', 1, true], true)) {
+                    return false;
+                }
             }
         }
 
-        return $entraram;
+        if (($criteria['somente_anuncio'] ?? false) && ! LeadsDeAnuncio::daConversa($conv)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * A triagem ou a etiqueta da conversa mudou → acerta a lista NA HORA: entra em quem
+     * passou a casar, sai de quem deixou de casar.
+     *
+     * O `lists:sync` roda a cada 15 min e sozinho já daria conta, mas quem move a etiqueta
+     * costuma querer disparar em seguida — esperar o tick faz a lista parecer quebrada na
+     * única hora em que alguém olha para ela.
+     *
+     * Best-effort de propósito: nenhuma falha aqui pode derrubar a triagem (nem o clique
+     * no chip, nem a rodada da IA, nem o arrastar do card no funil).
+     *
+     * @return array{entraram:int, sairam:int}
+     */
+    public function reconciliar(Conversation $conv): array
+    {
+        $entraram = 0;
+        $sairam = 0;
+
+        foreach (ContactList::where('auto', true)->get() as $lista) {
+            if (! $this->temRegraDeEntrada($lista)) {
+                continue;
+            }
+
+            if ($this->combina($lista, $conv)) {
+                $r = $this->adicionar($lista, $conv);
+                if ($r && $r['entrou']) {
+                    $entraram++;
+                }
+            } elseif ($this->remover($lista, $conv)) {
+                $sairam++;
+            }
+        }
+
+        return ['entraram' => $entraram, 'sairam' => $sairam];
+    }
+
+    /**
+     * Tira o contato da lista — a não ser que OUTRA conversa do mesmo telefone ainda
+     * case com o critério. Sem essa checagem, desqualificar uma conversa duplicada
+     * (@lid × telefone) derrubaria o lead da lista mesmo com a conversa boa qualificada.
+     */
+    private function remover(ContactList $lista, Conversation $conv): bool
+    {
+        $tel = Csv::telefone((string) $conv->phone);
+        if ($tel === '') {
+            return false;
+        }
+
+        $contato = Contact::where('phone', $tel)->first();
+        if (! $contato || ! $lista->contacts()->whereKey($contato->id)->exists()) {
+            return false;
+        }
+
+        $gemeas = Conversation::where('id', '!=', $conv->id)
+            ->whereNotNull('phone')
+            ->where('phone', 'like', '%'.substr($tel, -8))
+            ->get();
+
+        foreach ($gemeas as $outra) {
+            if (Csv::telefone((string) $outra->phone) === $tel && $this->combina($lista, $outra)) {
+                return false;
+            }
+        }
+
+        $lista->contacts()->detach($contato->id);
+
+        return true;
+    }
+
+    /**
+     * Varre a lista inteira e tira quem já não casa com o critério (etiqueta mudou,
+     * lead foi desqualificado).
+     *
+     * Só vale para lista com regra de ENTRADA declarada. Numa lista sem filtro — ou de
+     * anúncio, cujo critério é a origem e essa não muda nunca — "não casa" não quer dizer
+     * nada, e limpar ali apagaria quem foi posto na mão ou veio de planilha.
+     */
+    private function removerQuemNaoCasaMais(ContactList $lista, array $criteria): void
+    {
+        if (! $this->temRegraDeEntrada($lista)) {
+            return;
+        }
+
+        // Conjunto COMPLETO de quem casa hoje (sem o recorte incremental do add: aqui a
+        // pergunta é "quem sobra", e um recorte por data responderia errado).
+        $telefones = Conversation::query()
+            ->where('origin', 'WhatsApp')
+            ->whereNotNull('phone')
+            ->when($criteria['stage'] ?? null, fn ($q) => $q->where('stage', $criteria['stage']))
+            ->tap(fn ($q) => self::filtroQualificacao($q, $criteria))
+            ->pluck('phone')
+            ->map(fn ($p) => Csv::telefone((string) $p))
+            ->filter()
+            ->unique();
+
+        $sobrando = $lista->contacts()
+            ->whereNotIn('contacts.phone', $telefones)
+            ->pluck('contacts.id');
+
+        if ($sobrando->isNotEmpty()) {
+            $lista->contacts()->detach($sobrando->all());
+        }
+    }
+
+    /**
+     * A lista tem uma regra de entrada de verdade (etapa do funil ou triagem)?
+     *
+     * `somente_anuncio` de propósito NÃO conta: a origem do lead não muda com o tempo,
+     * então ali nunca há o que tirar — e varrer a lista de anúncio custaria uma consulta
+     * de mensagens por conversa (`LeadsDeAnuncio::daConversa`).
+     */
+    private function temRegraDeEntrada(ContactList $lista): bool
+    {
+        $criteria = (array) ($lista->criteria ?? []);
+
+        return ! empty($criteria['stage']) || ! in_array($criteria['qualified'] ?? null, [null, ''], true);
     }
 }

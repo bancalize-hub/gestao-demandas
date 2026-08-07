@@ -704,6 +704,38 @@ export const useCrmStore = defineStore('crm', {
       c.archived = !c.archived
       api()(`/api/conversations/${id}`, { method: 'PATCH', body: { archived: c.archived } }).catch(() => {})
     },
+
+    /**
+     * "Exclui" a conversa — some da lista, mas o histórico fica no banco e ela volta
+     * sozinha se o contato mandar mensagem nova. Devolve o que é preciso para o Desfazer.
+     * Some na hora (otimista) e é reposta no lugar se o servidor recusar.
+     */
+    async deleteConversation(id: string): Promise<{ ok: boolean, name: string }> {
+      const i = this.conversations.findIndex(x => x.id === id)
+      if (i < 0) return { ok: false, name: '' }
+      const [removed] = this.conversations.splice(i, 1)
+      if (this.activeId === id) this.activeId = this.conversations[0]?.id ?? ''
+      try {
+        await api()(`/api/conversations/${id}`, { method: 'DELETE' })
+        return { ok: true, name: removed.name }
+      }
+      catch {
+        this.conversations.splice(i, 0, removed)
+        return { ok: false, name: removed.name }
+      }
+    },
+
+    /** Desfaz o excluir. Recarrega a linha do servidor porque ela saiu da lista local. */
+    async restoreConversation(id: string): Promise<boolean> {
+      try {
+        const r = await api()<any>(`/api/conversations/${id}/restore`, { method: 'POST' })
+        if (!this.conversations.some(c => c.id === r.slug)) this.conversations.push(mapConv(r))
+        return true
+      }
+      catch {
+        return false
+      }
+    },
     // Liga/desliga o atendimento automático (a IA responde o lead sozinha).
     toggleAutoReply(id: string) {
       const c = this.conversations.find(x => x.id === id)

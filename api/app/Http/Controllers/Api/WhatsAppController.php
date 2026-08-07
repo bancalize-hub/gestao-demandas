@@ -661,6 +661,9 @@ class WhatsAppController extends Controller
         $conv->phone = '+'.$local;
         $conv->wa_jid = $jid;
         $conv->origin = 'WhatsApp';
+        // Abrir a conversa de novo pela tela desfaz o "excluir" — quem digitou o número
+        // está pedindo justamente para falar com esse contato.
+        $conv->hidden_at = null;
         $conv->save(); // hook define a 1ª etapa do funil
 
         $conv->load('messages');
@@ -972,6 +975,12 @@ class WhatsAppController extends Controller
         $conv->origin = 'WhatsApp';
         $conv->phone = $conv->phone ?: ($realNumber ? '+'.$realNumber : null);
         $conv->wa_jid = $conv->wa_jid ?: $remoteJid;
+        // Conversa "excluída" volta para a lista quando o contato fala de novo. Só na
+        // entrada — e só aqui, no webhook: as importações (importTxt/importConversation)
+        // gravam mensagem antiga e ressuscitariam tudo que já foi escondido.
+        if (! $isOut) {
+            $conv->hidden_at = null;
+        }
         // O número que RECEBEU passa a ser o dono da conversa (mesma regra do canal
         // oficial). Manter o carimbo antigo fazia a resposta sair pelo número errado
         // quando o cliente migrava de canal — inclusive por um número deslogado.

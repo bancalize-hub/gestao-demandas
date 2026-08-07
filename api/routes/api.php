@@ -74,6 +74,9 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
     Route::get('/conversations/{conversation}', [ConversationController::class, 'show']);
     Route::get('/conversations/{conversation}/avatar', [ConversationController::class, 'avatar']);
     Route::patch('/conversations/{conversation}', [ConversationController::class, 'update']);
+    // "Excluir" = esconder (nada é apagado); restore é o Desfazer do aviso na tela.
+    Route::delete('/conversations/{conversation}', [ConversationController::class, 'destroy']);
+    Route::post('/conversations/{conversation}/restore', [ConversationController::class, 'restore']);
     Route::get('/conversations/{conversation}/messages', [MessageController::class, 'index']);
     Route::post('/conversations/{conversation}/messages', [MessageController::class, 'store']);
     Route::post('/conversations/{conversation}/media', [MessageController::class, 'storeMedia']);

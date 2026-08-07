@@ -11,10 +11,13 @@ use App\Models\WaAccount;
 use App\Services\LeadsDeAnuncio;
 use App\Support\Channels\CloudChannel;
 use App\Support\Evolution;
+use App\Support\MetaConversions;
 use App\Support\Realtime;
 use App\Support\Tenancy;
 use App\Support\Wa;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -400,6 +403,25 @@ class WhatsAppCloudController extends Controller
             $conv->custom_fields = $custom;
         }
 
+        // Clique de anúncio que chegou SEM referral — o lead vira "orgânico" no /marketing
+        // e o gasto do anúncio fica órfão. Em 04–06/08/2026 foram 6 de 81 (7%).
+        //
+        // Não dá para consertar aqui: se a Meta não mandou o `ctwa_clid`, não existe chave
+        // para ligar este lead ao anúncio, e chutar o anúncio "mais provável" sujaria a
+        // única métrica que decide verba. O que dá é MEDIR — sem este log não havia como
+        // saber se a perda é da Meta ou nossa, porque webhook de entrada não era logado.
+        //
+        // O sinal é o texto do botão: quem clicou no anúncio chega com a frase pré-digitada
+        // pelo Facebook. Se veio essa frase e não veio referral, faltou atribuição.
+        if ($conversaNova && ! $isOut && ! $temReferral && $this->pareceCliqueDeAnuncio($preview)) {
+            Evolution::log('cloud.referral_ausente', [
+                'conversation_id' => $conv->id,
+                'slug' => $slug,
+                'primeira_msg' => mb_substr($preview, 0, 120),
+                'campos_recebidos' => array_keys($raw),
+            ], 'warning');
+        }
+
         // Só avança o resumo se esta mensagem for mais recente que a última conhecida
         // (o histórico da coexistência chega fora de ordem).
         if (! $conv->last_message_at || strtotime((string) $conv->last_message_at) <= $ts) {
@@ -431,7 +453,7 @@ class WhatsAppCloudController extends Controller
             // Primeiro contato de um lead de anúncio = conversão "Lead" para a Meta.
             // Vai depois do save() porque é o save que grava o ctwa_clid que o evento usa.
             if ($temReferral) {
-                \App\Support\MetaConversions::enviarUmaVez($conv, \App\Support\MetaConversions::LEAD);
+                MetaConversions::enviarUmaVez($conv, MetaConversions::LEAD);
             }
         }
 
@@ -561,6 +583,48 @@ class WhatsAppCloudController extends Controller
         if ($conv && preg_match('/^\+?\d+$/', (string) $conv->name)) {
             $conv->update(['name' => $name, 'initials' => $this->initialsOf($name)]);
         }
+    }
+
+    /**
+     * A frase é o texto pré-digitado que o Facebook põe no botão do anúncio/página?
+     *
+     * Descoberto por dados, não cadastrado: uma primeira-mensagem repetida em dezenas de
+     * conversas diferentes só pode ser template — ninguém escreve a mesma frase 88 vezes.
+     * Mesma lógica do textosDeBotao() da triagem (QualificarTick), aqui para saber se um
+     * lead sem referral veio mesmo de anúncio.
+     *
+     * Cache de 1h porque isto roda no webhook, no caminho de toda mensagem que entra.
+     */
+    private function pareceCliqueDeAnuncio(string $texto): bool
+    {
+        $texto = mb_strtolower(trim($texto));
+        if ($texto === '') {
+            return false;
+        }
+
+        $empresa = app(Tenancy::class)->id();
+        if ($empresa === null) {
+            return false;
+        }
+
+        $modelos = Cache::remember("botoes_anuncio:{$empresa}", 3600, function () use ($empresa) {
+            return DB::table('messages as m')
+                ->join(DB::raw('(SELECT conversation_id, MIN(ts) mts FROM messages WHERE is_out = 0 GROUP BY conversation_id) f'),
+                    fn ($j) => $j->on('f.conversation_id', '=', 'm.conversation_id')->on('f.mts', '=', 'm.ts'))
+                ->where('m.is_out', false)
+                ->where('m.company_id', $empresa)
+                ->where('m.text', '<>', '')
+                // 20, e não 3 como na triagem: lá um falso positivo só enfraquece evidência
+                // fraca; aqui ele viraria alarme falso de atribuição perdida em toda
+                // conversa que começa com "bom dia".
+                ->havingRaw('COUNT(*) >= 20')
+                ->groupBy('m.text')
+                ->pluck('m.text')
+                ->map(fn ($t) => mb_strtolower(trim((string) $t)))
+                ->all();
+        });
+
+        return in_array($texto, $modelos, true);
     }
 
     /** Trecho da mensagem citada, para o balão de resposta. */

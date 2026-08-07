@@ -58,10 +58,24 @@ return [
             'ignore_exceptions' => false,
         ],
 
+        /*
+         * `permission` 0664 em todo canal de arquivo — DOIS usuários escrevem aqui.
+         *
+         * O agendador roda como root (pm2) e o webhook roda como www-data (PHP-FPM). Quem
+         * criar o arquivo do dia primeiro vira dono dele; no padrão 0644 o outro perde a
+         * escrita pelo resto do dia. E como Evolution::log engole a exceção para nunca
+         * derrubar um envio, a perda é MUDA: em 04–06/08/2026 o agendador criou os
+         * arquivos, e três dias de webhook de entrada sumiram sem um erro sequer — foi o
+         * que impediu de apurar por que 7% dos leads de anúncio chegam sem atribuição.
+         *
+         * 0664 + o diretório com setgid (g+s, grupo www-data) faz os dois escreverem no
+         * mesmo arquivo, seja quem for que o criou.
+         */
         'single' => [
             'driver' => 'single',
             'path' => storage_path('logs/laravel.log'),
             'level' => env('LOG_LEVEL', 'debug'),
+            'permission' => 0664,
             'replace_placeholders' => true,
         ],
 
@@ -70,6 +84,7 @@ return [
             'path' => storage_path('logs/laravel.log'),
             'level' => env('LOG_LEVEL', 'debug'),
             'days' => env('LOG_DAILY_DAYS', 14),
+            'permission' => 0664,
             'replace_placeholders' => true,
         ],
 
@@ -81,6 +96,7 @@ return [
             'path' => storage_path('logs/whatsapp.log'),
             'level' => env('LOG_WHATSAPP_LEVEL', 'debug'),
             'days' => env('LOG_WHATSAPP_DAYS', 7),
+            'permission' => 0664,
             'replace_placeholders' => true,
         ],
 

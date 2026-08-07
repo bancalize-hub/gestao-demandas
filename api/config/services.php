@@ -115,6 +115,10 @@ return [
     'meeting_reminder' => [
         'enabled' => env('MEETING_REMINDER_ENABLED', true),
         'lead_minutes' => (int) env('MEETING_REMINDER_LEAD_MINUTES', 60), // quanto antes lembrar (padrão: 1h)
+        // 2º lembrete, "está começando". O de 1h chega cedo demais para reunião de manhã
+        // (às 08:00 para uma de 09:00) e a manhã é justamente onde o cliente não aparece:
+        // 1 comparecimento em 10 entre 28/07 e 07/08/2026. Zero desliga o segundo aviso.
+        'second_lead_minutes' => (int) env('MEETING_REMINDER_SECOND_LEAD_MINUTES', 15),
         // Número na API oficial: 1h antes da reunião a janela de 24h quase sempre está
         // fechada (o cliente marcou dias atrás), e aí a Meta só aceita TEMPLATE aprovado.
         // O template precisa de 3 variáveis: {{1}} nome, {{2}} quando, {{3}} link/recado.

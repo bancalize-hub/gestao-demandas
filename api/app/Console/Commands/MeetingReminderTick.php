@@ -39,14 +39,53 @@ class MeetingReminderTick extends Command
 
         $tenancy = app(Tenancy::class);
 
+        $this->enviar($due, $tenancy, 'reminder_sent_at', segundo: false);
+        $this->enviar($this->devidasSegundoAviso(), $tenancy, 'reminder2_sent_at', segundo: true);
+
+        return self::SUCCESS;
+    }
+
+    /**
+     * 2º lembrete: "está começando", `second_lead_minutes` antes (padrão 15).
+     *
+     * Exige o 1º já enviado — e enviado há pelo menos 5 min. Sem essa condição, reunião
+     * marcada em cima da hora cairia nas duas janelas no MESMO tick e o lead levaria duas
+     * mensagens seguidas.
+     */
+    private function devidasSegundoAviso()
+    {
+        $lead = (int) config('services.meeting_reminder.second_lead_minutes', 15);
+        if ($lead <= 0) {
+            return collect();   // segundo aviso desligado
+        }
+
+        return Meeting::query()
+            ->whereNull('cancelled_at')
+            ->whereNull('reminder2_sent_at')
+            ->whereNotNull('reminder_sent_at')
+            ->where('reminder_sent_at', '<=', now()->subMinutes(5))
+            ->whereNotNull('phone')
+            ->where('starts_at', '>', now())
+            ->where('starts_at', '<=', now()->addMinutes($lead))
+            ->with('conversation')
+            ->get();
+    }
+
+    /**
+     * Manda um lote e carimba a coluna de controle da rodada.
+     *
+     * @param  iterable<Meeting>  $due
+     */
+    private function enviar(iterable $due, Tenancy $tenancy, string $coluna, bool $segundo): void
+    {
         foreach ($due as $meeting) {
             // Contexto da empresa dona da reunião: o envio usa o WhatsApp dela e a
             // mensagem espelhada nasce carimbada.
             $tenancy->set((int) $meeting->company_id);
 
             try {
-                $parts = $this->messageParts($meeting);
-                $text = $this->buildMessage($parts);
+                $parts = $this->messageParts($meeting, $segundo);
+                $text = $this->buildMessage($parts, $segundo);
 
                 $channel = $meeting->conversation ? Wa::forConversation($meeting->conversation) : Wa::primary();
 
@@ -66,10 +105,10 @@ class MeetingReminderTick extends Command
                 if ($waId === null) {
                     $this->warn("lembrete: falha ao enviar reunião {$meeting->id} ({$meeting->phone})");
 
-                    continue; // tenta de novo no próximo tick (reminder_sent_at continua null)
+                    continue; // tenta de novo no próximo tick (a coluna de controle continua null)
                 }
 
-                $meeting->update(['reminder_sent_at' => now()]);
+                $meeting->update([$coluna => now()]);
 
                 // Espelha o lembrete na conversa (igual ao auto-reply), p/ aparecer no chat.
                 if ($conv = $meeting->conversation) {
@@ -94,13 +133,12 @@ class MeetingReminderTick extends Command
                     Realtime::messageCreated($msg);
                 }
 
-                $this->info("lembrete: enviado p/ reunião {$meeting->id} ({$meeting->phone})");
+                $rodada = $segundo ? '2º (começando)' : '1º';
+                $this->info("lembrete {$rodada}: enviado p/ reunião {$meeting->id} ({$meeting->phone})");
             } finally {
                 $tenancy->forget();
             }
         }
-
-        return self::SUCCESS;
     }
 
     /**
@@ -108,7 +146,7 @@ class MeetingReminderTick extends Command
      * São exatamente as 3 variáveis do template da Meta, para o cliente ler a mesma
      * coisa venha o aviso por texto livre ou por template.
      */
-    private function messageParts(Meeting $meeting): array
+    private function messageParts(Meeting $meeting, bool $segundo = false): array
     {
         $tz = config('app.timezone', 'America/Sao_Paulo');
         $start = Carbon::parse($meeting->starts_at)->setTimezone($tz);
@@ -129,6 +167,14 @@ class MeetingReminderTick extends Command
             $quando = 'na '.$start->locale('pt_BR')->isoFormat('dddd, DD/MM')." às {$hora}";
         }
 
+        // No 2º aviso o valor é a contagem, não a data: "em 12 minutos, às 14:00". Uso os
+        // minutos reais (o tick roda a cada minuto e pode pegar a reunião com 13 ou 14 de
+        // folga) — dizer "15" quando faltam 8 faria o cliente se atrasar de propósito.
+        if ($segundo) {
+            $faltam = max(1, (int) ceil(Carbon::now($tz)->diffInSeconds($start, false) / 60));
+            $quando = "em {$faltam} ".($faltam === 1 ? 'minuto' : 'minutos').", às {$hora}";
+        }
+
         return [
             // Variável de template não pode ir vazia: sem nome, vira uma saudação neutra.
             'nome' => $hasName ? $firstName : 'tudo bem',
@@ -140,8 +186,14 @@ class MeetingReminderTick extends Command
     }
 
     /** Texto livre (dentro da janela de 24h) — mesmo conteúdo do template. */
-    private function buildMessage(array $parts): string
+    private function buildMessage(array $parts, bool $segundo = false): string
     {
+        if ($segundo) {
+            return "Oi, {$parts['nome']}! ⏰ Nossa reunião começa {$parts['quando']}."
+                ."\n\n{$parts['link']}"
+                ."\n\nJá estou entrando — te espero lá! 😊";
+        }
+
         return "Oi, {$parts['nome']}! 👋 Passando pra lembrar da nossa reunião {$parts['quando']}."
             ."\n\n{$parts['link']}"
             ."\n\nAté logo! 😊";

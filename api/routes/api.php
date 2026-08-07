@@ -128,6 +128,7 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
         Route::get('/marketing/campanhas', [MarketingController::class, 'campanhas']);
         Route::get('/marketing/metricas', [MarketingController::class, 'metricasFb']);
         Route::get('/marketing/ad-stats', [MarketingController::class, 'adStats']);
+        Route::get('/marketing/otimizacao', [MarketingController::class, 'otimizacao']);
         Route::patch('/marketing/campanhas/{id}', [MarketingController::class, 'atualizarCampanha']);
         Route::post('/marketing/campanhas/{id}/duplicar', [MarketingController::class, 'duplicarCampanha']);
         // Memória de marketing: aprendizado sobre os anúncios, separado da memória da IA de vendas.

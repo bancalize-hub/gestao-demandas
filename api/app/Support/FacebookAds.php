@@ -426,6 +426,68 @@ class FacebookAds
     }
 
     /**
+     * Insights quebrados por um recorte da Meta (idade, gênero, posicionamento, região…).
+     *
+     * O QUE ISTO NÃO É: qualificação. No nível de conta o único "resultado" que a Meta
+     * conhece nesta operação é conversa iniciada por mensagem — quem qualificou está no
+     * CRM e não tem como voltar para cá. Quem ler estas linhas como qualidade de público
+     * repete a inversão já medida nesta conta, onde lead barato e lead bom andam em
+     * direções OPOSTAS.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function breakdown(string $breakdowns, string $periodo = 'last_30d', ?string $de = null, ?string $ate = null): array
+    {
+        $params = [
+            'level' => 'account',
+            'fields' => 'impressions,clicks,ctr,spend,cpm,cpc,actions',
+            'breakdowns' => $breakdowns,
+            'limit' => 200,
+        ];
+        if ($de && $ate) {
+            $params['time_range'] = json_encode(['since' => $de, 'until' => $ate]);
+        } else {
+            $params['date_preset'] = $periodo;
+        }
+
+        $r = $this->call('GET', '/'.$this->conta().'/insights', $params);
+
+        $chaves = explode(',', $breakdowns);
+        $linhas = [];
+        foreach ($r['data'] ?? [] as $l) {
+            $rotulo = implode(' · ', array_filter(array_map(fn ($k) => $l[$k] ?? null, $chaves)));
+            if ($rotulo === '') {
+                continue;
+            }
+
+            // "Conversa iniciada" tem nomes diferentes conforme a campanha; somar os dois
+            // evita a linha zerada que faria o recorte parecer não ter entregado nada.
+            $conversas = 0;
+            foreach ($l['actions'] ?? [] as $a) {
+                if (in_array($a['action_type'] ?? '', ['onsite_conversion.messaging_conversation_started_7d', 'onsite_conversion.total_messaging_connection'], true)) {
+                    $conversas += (int) ($a['value'] ?? 0);
+                }
+            }
+
+            $gasto = (float) ($l['spend'] ?? 0);
+            $linhas[] = [
+                'valor' => $rotulo,
+                'gasto' => round($gasto, 2),
+                'impressoes' => (int) ($l['impressions'] ?? 0),
+                'cliques' => (int) ($l['clicks'] ?? 0),
+                'ctr' => round((float) ($l['ctr'] ?? 0), 2),
+                'cpm' => round((float) ($l['cpm'] ?? 0), 2),
+                'conversas' => $conversas,
+                'custo_conversa' => $conversas > 0 && $gasto > 0 ? round($gasto / $conversas, 2) : null,
+            ];
+        }
+
+        usort($linhas, fn ($a, $b) => $b['gasto'] <=> $a['gasto']);
+
+        return $linhas;
+    }
+
+    /**
      * Atualiza uma campanha existente: status (ACTIVE|PAUSED) e/ou orçamento diário.
      * Não cria nada — é gestão do que já existe no Facebook.
      */

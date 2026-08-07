@@ -7,9 +7,12 @@ use App\Models\Conversation;
 use App\Models\MarketingCreative;
 use App\Models\MarketingCredential;
 use App\Models\MarketingMemory;
+use App\Support\Amostra;
+use App\Support\Ddd;
 use App\Support\FacebookAds;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -448,6 +451,242 @@ class MarketingController extends Controller
             'erro' => $erro,
             'periodo' => ['de' => $de->toDateTimeString(), 'ate' => $ate->toDateTimeString()],
         ]);
+    }
+
+    /**
+     * Página de otimização: onde estão os leads que QUALIFICAM, por recorte.
+     *
+     * Três regras que a tela inteira obedece, todas aprendidas errando nesta conta:
+     *
+     * 1. TODA taxa vem com intervalo de confiança e tamanho de amostra. "Sudeste 25% x
+     *    Nordeste 11%" parecia decisão de verba pronta e era ruído — os intervalos se
+     *    sobrepunham tanto que nem o sinal da diferença dava para afirmar.
+     *
+     * 2. LEAD SEM TRIAGEM não vira zero. Ele sai da taxa e vira faixa (limites de Manski):
+     *    com 43% da base sem triagem, a taxa "real" de uma linha pode estar em qualquer
+     *    ponto entre contar todos como ruins e contar todos como bons. Tratar não-triado
+     *    como não-qualificado inventa precisão que não existe.
+     *
+     * 3. O QUE VEM DO FACEBOOK É SEPARADO DO QUE VEM DO CRM. O breakdown demográfico da
+     *    Meta só sabe "conversa iniciada" — não existe qualificação nesse dado. Misturar
+     *    as duas fontes na mesma tabela faria ler custo por conversa como se fosse custo
+     *    por lead bom, que é exatamente a inversão que já se mediu nesta conta.
+     */
+    public function otimizacao(Request $request)
+    {
+        [$desde, $ateData] = self::datasCustomizadas($request);
+        $periodo = (string) $request->query('periodo', 'last_30d');
+        [$de, $ate] = self::janela($periodo, $desde, $ateData);
+
+        $reunioes = '(SELECT COUNT(*) FROM meetings mt WHERE mt.conversation_id = conversations.id)';
+        $realizadas = '(SELECT COUNT(*) FROM meetings mt WHERE mt.conversation_id = conversations.id AND mt.attended = 1)';
+        $adId = "JSON_UNQUOTE(JSON_EXTRACT(conversations.custom_fields, '$.anuncio.id'))";
+
+        $leads = Conversation::selectRaw("
+            conversations.id, conversations.phone, conversations.qualified,
+            conversations.created_at, conversations.stage,
+            {$reunioes} as reunioes, {$realizadas} as realizadas,
+            {$adId} as ad_id
+        ")
+            ->where('conversations.created_at', '>=', $de)
+            ->where('conversations.created_at', '<', $ate)
+            ->get();
+
+        $cortes = [
+            $this->corte($leads, fn ($l) => Ddd::regiao($l->phone), 'Região',
+                'Calculada pelo DDD do telefone — o Facebook não devolve qualificação por região, então esta é a única forma de cruzar origem com lead bom.'),
+            $this->corte($leads, fn ($l) => Ddd::uf($l->phone), 'Estado (UF)',
+                'Mesmo DDD, recorte mais fino. Quanto mais fino o corte, menor a amostra por linha — e mais fácil confundir ruído com sinal.'),
+            $this->corte($leads, fn ($l) => $l->created_at?->locale('pt_BR')->isoFormat('dddd'), 'Dia da semana em que o lead chegou',
+                'Serve para decidir em que dia o orçamento trabalha mais — este recorte é acionável no gerenciador, ao contrário do DDD.'),
+            $this->corte($leads, fn ($l) => self::faixaHoraria($l->created_at?->hour), 'Faixa horária em que o lead chegou',
+                'Também acionável: o Facebook permite programar a veiculação por horário.'),
+        ];
+
+        // Recortes da Meta. Vêm marcados como o que são: contam CONVERSA INICIADA, não
+        // lead qualificado, e por isso ficam em bloco separado na tela.
+        $r = self::ultimoBom("otimizacao-fb:{$periodo}:{$desde}:{$ateData}", function () use ($periodo, $desde, $ateData) {
+            $fb = FacebookAds::make();
+
+            return [
+                ['chave' => 'idade_genero', 'titulo' => 'Idade e gênero', 'linhas' => $fb->breakdown('age,gender', $periodo, $desde, $ateData)],
+                ['chave' => 'posicionamento', 'titulo' => 'Posicionamento', 'linhas' => $fb->breakdown('publisher_platform,platform_position', $periodo, $desde, $ateData)],
+                ['chave' => 'dispositivo', 'titulo' => 'Dispositivo', 'linhas' => $fb->breakdown('impression_device', $periodo, $desde, $ateData)],
+                ['chave' => 'regiao_fb', 'titulo' => 'Região (segundo o Facebook)', 'linhas' => $fb->breakdown('region', $periodo, $desde, $ateData)],
+            ];
+        });
+
+        $triados = $leads->whereNotNull('qualified')->count();
+
+        return response()->json([
+            'base' => [
+                'leads' => $leads->count(),
+                'de_anuncio' => $leads->whereNotNull('ad_id')->count(),
+                'triados' => $triados,
+                'sem_triagem' => $leads->count() - $triados,
+                'qualificados' => $leads->where('qualified', true)->count(),
+                'reunioes' => $leads->sum('reunioes'),
+                'realizadas' => $leads->sum('realizadas'),
+                'vendas' => $leads->where('stage', 'fechado')->count(),
+                'com_ddd' => $leads->filter(fn ($l) => Ddd::regiao($l->phone) !== null)->count(),
+            ],
+            'cortes' => $cortes,
+            'facebook' => $r['dados'],
+            'erro_facebook' => $r['erro'],
+            'facebook_de' => $r['de'],
+            'periodo' => ['de' => $de->toDateTimeString(), 'ate' => $ate->toDateTimeString()],
+        ]);
+    }
+
+    private static function faixaHoraria(?int $hora): ?string
+    {
+        if ($hora === null) {
+            return null;
+        }
+
+        return match (true) {
+            $hora < 6 => 'Madrugada (0h–5h)',
+            $hora < 12 => 'Manhã (6h–11h)',
+            $hora < 18 => 'Tarde (12h–17h)',
+            default => 'Noite (18h–23h)',
+        };
+    }
+
+    /**
+     * Um recorte da base: as linhas com taxa, intervalo e o veredito de se dá para
+     * concluir alguma coisa com o que existe.
+     *
+     * @param  Collection<int, Conversation>  $leads
+     * @param  callable(Conversation): ?string  $chave
+     */
+    private function corte($leads, callable $chave, string $titulo, string $nota): array
+    {
+        $grupos = [];
+        $semChave = 0;
+
+        foreach ($leads as $l) {
+            $k = $chave($l);
+            if ($k === null || $k === '') {
+                $semChave++;
+
+                continue;
+            }
+            $grupos[$k] ??= ['valor' => $k, 'leads' => 0, 'triados' => 0, 'qualificados' => 0, 'reunioes' => 0, 'realizadas' => 0, 'vendas' => 0];
+            $grupos[$k]['leads']++;
+            if ($l->qualified !== null) {
+                $grupos[$k]['triados']++;
+                if ($l->qualified) {
+                    $grupos[$k]['qualificados']++;
+                }
+            }
+            $grupos[$k]['reunioes'] += (int) $l->reunioes;
+            $grupos[$k]['realizadas'] += (int) $l->realizadas;
+            if ($l->stage === 'fechado') {
+                $grupos[$k]['vendas']++;
+            }
+        }
+
+        $linhas = [];
+        foreach ($grupos as $g) {
+            $g['sem_triagem'] = $g['leads'] - $g['triados'];
+            $g['taxa'] = $g['triados'] > 0 ? round($g['qualificados'] / $g['triados'], 4) : null;
+            $ic = Amostra::wilson($g['qualificados'], $g['triados']);
+            $g['ic'] = [round($ic[0], 4), round($ic[1], 4)];
+            // Limites de Manski: o pior e o melhor caso possíveis para o lead sem triagem.
+            // Quando essa faixa é larga, ela — e não o intervalo estatístico — é o que
+            // manda na conclusão.
+            $g['manski'] = $g['leads'] > 0
+                ? [round($g['qualificados'] / $g['leads'], 4), round(($g['qualificados'] + $g['sem_triagem']) / $g['leads'], 4)]
+                : [0, 1];
+            $linhas[] = $g;
+        }
+
+        // Ordena pela taxa, mas a ordem é só de leitura — a conclusão é do veredito.
+        usort($linhas, fn ($a, $b) => ($b['taxa'] ?? -1) <=> ($a['taxa'] ?? -1));
+
+        return [
+            'titulo' => $titulo,
+            'nota' => $nota,
+            'sem_chave' => $semChave,
+            'linhas' => $linhas,
+        ] + $this->veredito($linhas);
+    }
+
+    /** Abaixo disto a linha não entra em comparação nenhuma — é anedota, não amostra. */
+    private const MIN_TRIADOS = 12;
+
+    private static function plural(int $n, string $um, string $varios): string
+    {
+        return $n === 1 ? $um : sprintf($varios, $n);
+    }
+
+    /**
+     * Dá ou não dá para concluir alguma coisa deste recorte.
+     *
+     * TRÊS GUARDAS, e a conclusão precisa passar pelas três. Cada uma existe porque a
+     * ausência dela já produziu uma conclusão falsa nesta conta:
+     *
+     * 1. AMOSTRA MÍNIMA por linha. Sem isso, "ES: 100% de qualificação" (1 lead triado)
+     *    lidera a tabela e vira decisão de verba.
+     *
+     * 2. CORREÇÃO PARA MÚLTIPLAS COMPARAÇÕES. Numa tabela de 27 estados há 351 pares;
+     *    varrer todos atrás do mais distante encontra "diferença real" em dado aleatório
+     *    quase sempre. O z sobe com o número de pares.
+     *
+     * 3. LIMITES DE MANSKI. Com 61% da base sem triagem, a taxa observada é de quem foi
+     *    triado, não da linha. Se o pior caso de uma linha alcança o melhor caso da outra,
+     *    a diferença pode ser inteiramente efeito de QUEM foi triado — e aí o que decide
+     *    não é mais dado, é o viés de quem escolheu triar.
+     *
+     * @param  list<array<string, mixed>>  $linhas
+     * @return array{conclusivo: bool, explicacao: string, faltam: ?int}
+     */
+    private function veredito(array $linhas): array
+    {
+        $comparaveis = array_values(array_filter($linhas, fn ($l) => $l['triados'] >= self::MIN_TRIADOS));
+
+        if (count($comparaveis) < 2) {
+            $faltam = self::MIN_TRIADOS;
+
+            return [
+                'conclusivo' => false,
+                'explicacao' => 'Menos de duas linhas com pelo menos '.self::MIN_TRIADOS.' leads triados — não há o que comparar ainda. '
+                    .'Linha com 2 ou 3 leads não vira porcentagem: 100% de 2 leads e 50% de 2 leads são o mesmo nada.',
+                'faltam' => $faltam,
+            ];
+        }
+
+        $pares = count($comparaveis) * (count($comparaveis) - 1) / 2;
+        $z = Amostra::zCorrigido((int) $pares);
+
+        foreach ($comparaveis as $i => $a) {
+            foreach (array_slice($comparaveis, $i + 1) as $b) {
+                $icA = Amostra::wilson($a['qualificados'], $a['triados'], $z);
+                $icB = Amostra::wilson($b['qualificados'], $b['triados'], $z);
+
+                if (Amostra::distinguiveis($icA, $icB) && Amostra::distinguiveis($a['manski'], $b['manski'])) {
+                    return [
+                        'conclusivo' => true,
+                        'explicacao' => "{$a['valor']} e {$b['valor']} se separam mesmo depois de corrigir para ".self::plural((int) $pares, 'a comparação', 'as %d comparações').' da tabela '
+                            .'E mesmo no pior cenário dos leads sem triagem. Essa diferença é real.',
+                        'faltam' => null,
+                    ];
+                }
+            }
+        }
+
+        $melhor = $comparaveis[0];
+        $pior = end($comparaveis);
+        $faltam = Amostra::amostraNecessaria((float) $melhor['taxa'], (float) $pior['taxa']);
+
+        return [
+            'conclusivo' => false,
+            'explicacao' => 'A ordem desta tabela ainda é ruído: nenhuma dupla se separa depois de corrigir para '
+                .self::plural((int) $pares, 'a comparação', 'as %d comparações').' e para os leads sem triagem. '
+                .($faltam ? "Para uma diferença do tamanho da que aparece aqui ({$melhor['valor']} × {$pior['valor']}) seriam necessários ~{$faltam} leads TRIADOS por linha."
+                    : 'As taxas são praticamente iguais — não há diferença para enxergar.'),
+            'faltam' => $faltam,
+        ];
     }
 
     /** Formato de uma linha de stats — também serve de acumulador zerado. */

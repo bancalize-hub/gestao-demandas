@@ -471,6 +471,7 @@ const rodapeSemAtrib = computed(() => semAtribuicao.value
       <div style="flex:1;" />
       <NuxtLink to="/marketing/memoria" style="text-decoration:none;background:var(--c-surface-2);color:var(--c-text-secondary);font-size:12.5px;font-weight:700;padding:8px 13px;border-radius:9px;">🧠 Memória</NuxtLink>
       <NuxtLink to="/marketing/criativos" style="text-decoration:none;background:var(--c-surface-2);color:var(--c-text-secondary);font-size:12.5px;font-weight:700;padding:8px 13px;border-radius:9px;">🖼️ Criativos</NuxtLink>
+      <NuxtLink to="/marketing/otimizacao" style="text-decoration:none;background:var(--c-surface-2);color:var(--c-text-secondary);font-size:12.5px;font-weight:700;padding:8px 13px;border-radius:9px;">🎯 Otimização</NuxtLink>
     </div>
 
     <!-- controles: período, calendário e editor de colunas -->

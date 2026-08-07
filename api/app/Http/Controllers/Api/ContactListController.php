@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Contact;
 use App\Models\ContactList;
 use App\Models\Conversation;
+use App\Services\ContactListSync;
 use App\Services\LeadsDeAnuncio;
 use App\Support\Csv;
 use Illuminate\Http\Request;
@@ -143,13 +144,15 @@ class ContactListController extends Controller
     /**
      * Cria uma lista com quem já conversou com a gente no WhatsApp — é assim que
      * "leads de anúncio" vira lista, já que eles entram no CRM como conversa.
-     * `stage` limita a uma etapa do funil (ex.: só os que ainda são lead novo).
+     * `stage` limita a uma etapa do funil (ex.: só os que ainda são lead novo) e
+     * `qualified` limita pela triagem (1 = qualificado, 0 = desqualificado, sem = sem triagem).
      */
-    public function doCrm(Request $request)
+    public function doCrm(Request $request, ContactListSync $sync)
     {
         $data = $request->validate([
             'name' => 'required|string|max:120',
             'stage' => 'nullable|string|max:64',
+            'qualified' => 'nullable|in:1,0,sem',
             'somente_anuncio' => 'boolean',
         ]);
 
@@ -165,10 +168,17 @@ class ContactListController extends Controller
             ], 201);
         }
 
+        $criteria = [
+            'stage' => $data['stage'] ?? null,
+            'qualified' => $data['qualified'] ?? null,
+            'somente_anuncio' => false,
+        ];
+
         $conversas = Conversation::query()
             ->where('origin', 'WhatsApp')
             ->whereNotNull('phone')
             ->when(! empty($data['stage']), fn ($q) => $q->where('stage', $data['stage']))
+            ->tap(fn ($q) => ContactListSync::filtroQualificacao($q, $criteria))
             ->get(['id', 'name', 'phone']);
 
         if ($conversas->isEmpty()) {
@@ -182,22 +192,16 @@ class ContactListController extends Controller
             'name' => trim($data['name']),
             'kind' => 'crm',
             'auto' => true,
-            'criteria' => ['stage' => $data['stage'] ?? null, 'somente_anuncio' => false],
+            'criteria' => $criteria,
             'synced_at' => now(),
         ]);
 
         $novos = 0;
         foreach ($conversas as $c) {
-            $tel = Csv::telefone((string) $c->phone);
-            if ($tel === '') {
-                continue;
-            }
-            $contato = Contact::where('phone', $tel)->first();
-            if (! $contato) {
-                $contato = Contact::create(['name' => $c->name ?: '+'.$tel, 'phone' => $tel]);
+            $r = $sync->adicionar($lista, $c);
+            if ($r && $r['contato_novo']) {
                 $novos++;
             }
-            $lista->contacts()->syncWithoutDetaching([$contato->id]);
         }
 
         return response()->json(['list' => $lista->loadCount('contacts'), 'novos' => $novos], 201);

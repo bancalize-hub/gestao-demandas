@@ -63,6 +63,10 @@ const importTab = ref<'planilha' | 'crm'>('planilha')
 const impNome = ref('')
 const impArquivo = ref<File | null>(null)
 const impStage = ref('')
+// Triagem: '' = todas, '1' qualificados, '0' desqualificados, 'sem' ainda sem triagem.
+// "Sem triagem" não é o mesmo que desqualificado — metade dos leads de anúncio nunca
+// disse nada, e jogar esses no balaio dos ruins estragaria a lista de disparo.
+const impQualificado = ref('')
 const impSoAnuncio = ref(false)
 const impSalvando = ref(false)
 const impErro = ref('')
@@ -74,6 +78,7 @@ function abrirImport() {
   impNome.value = ''
   impArquivo.value = null
   impStage.value = ''
+  impQualificado.value = ''
   impSoAnuncio.value = false
   impErro.value = ''
 }
@@ -102,6 +107,7 @@ async function importar() {
         body: {
           name: impSoAnuncio.value ? 'Leads de anúncio' : impNome.value.trim(),
           stage: impSoAnuncio.value ? undefined : (impStage.value || undefined),
+          qualified: impSoAnuncio.value ? undefined : (impQualificado.value || undefined),
           somente_anuncio: impSoAnuncio.value,
         },
       })
@@ -342,8 +348,19 @@ function remove() {
               <option value="">Todas as etapas</option>
               <option v-for="s in crm.stages" :key="s.key" :value="s.key">{{ s.name }}</option>
             </select>
+
+            <label class="lbl">Triagem (opcional)</label>
+            <select v-model="impQualificado" class="inp" style="cursor:pointer;">
+              <option value="">Qualquer triagem</option>
+              <option value="1">✓ Só leads qualificados</option>
+              <option value="0">✗ Só desqualificados</option>
+              <option value="sem">◌ Ainda sem triagem</option>
+            </select>
+
             <div style="font-size:11.5px;color:var(--c-text-faint);margin-top:8px;line-height:1.5;">
               Cria a lista com quem já conversou com a gente no WhatsApp.
+              <template v-if="impQualificado === '1'"> Todo lead que for qualificado daqui pra frente entra nela sozinho, na hora.</template>
+              <template v-else-if="impQualificado === 'sem'"> Quem ainda não passou pela triagem. A lista só soma: quem entrar hoje continua nela depois de ser triado.</template>
             </div>
           </template>
         </template>

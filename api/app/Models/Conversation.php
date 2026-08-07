@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Events\CrmUpdated;
 use App\Models\Concerns\BelongsToCompany;
+use App\Services\ContactListSync;
 use App\Services\StageAutomationEnqueuer;
 use App\Support\MetaConversions;
 use App\Support\Wa;
@@ -139,6 +140,14 @@ class Conversation extends Model
             }
             try {
                 MetaConversions::enviarQualificado($c);
+            } catch (\Throwable $e) {
+            }
+            // …e entra nas listas de qualificados na hora, pronto para o disparo. Fica no
+            // mesmo gancho pelo mesmo motivo: são dois caminhos (IA e chip) e o `lists:sync`
+            // só passaria daqui a 15 min — justo quando alguém acabou de qualificar e quer
+            // disparar. Best-effort: lista cheia nunca vale mais que a triagem gravada.
+            try {
+                app(ContactListSync::class)->matricularQualificado($c);
             } catch (\Throwable $e) {
             }
         });

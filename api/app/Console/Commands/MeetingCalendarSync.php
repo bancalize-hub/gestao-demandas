@@ -28,11 +28,14 @@ class MeetingCalendarSync extends Command
     {
         $tenancy = app(Tenancy::class);
 
-        // Uma conta Google por empresa (a primeira conectada). Cada empresa importa as
-        // reuniões da SUA agenda, casando com os SEUS leads — isolado das demais.
+        // TODAS as agendas conectadas de cada empresa — a agenda do CRM é a da empresa, e
+        // uma reunião marcada na agenda do segundo usuário também precisa do pós-reunião
+        // (presença/resumo). Idempotente por google_event_id, então ver o mesmo evento em
+        // duas agendas não duplica nada. Cada empresa casa só com os SEUS leads.
         $users = User::whereNotNull('google_access_token')
             ->whereNotNull('company_id')
-            ->get()->unique('company_id');
+            ->orderBy('id')
+            ->get();
 
         if ($users->isEmpty()) {
             $this->warn('Nenhuma conta Google conectada — nada a sincronizar.');

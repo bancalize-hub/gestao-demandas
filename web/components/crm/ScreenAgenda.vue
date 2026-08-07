@@ -88,11 +88,14 @@ onMounted(async () => {
     banner.value = { type: 'erro', text: 'Não foi possível conectar o Google. Tente de novo.' }
   }
   if (g) router.replace({ query: {} })
-  if (crm.googleConnected) await loadWeek()
+  if (crm.hasCalendars) await loadWeek()
 })
 
 // ----- Posicionamento dos eventos na grade -----
-interface Positioned { ev: CalEvent, top: number, height: number, color: typeof PALETTE[number], label: string }
+// left/width em % da coluna do dia: eventos que se sobrepõem dividem a largura em vez de
+// ficarem um em cima do outro (com as agendas de vários usuários juntas, sobreposição é
+// a regra, não a exceção — e o card de baixo sumia por completo).
+interface Positioned { ev: CalEvent, top: number, height: number, color: typeof PALETTE[number], label: string, left: number, width: number }
 
 // Reunião com presença confirmada do cliente: verde forte, bem destacado.
 const ATTENDED = { bar: 'var(--accent-hi)', bg: 'rgba(var(--accent-rgb),.38)', fg: 'var(--accent-soft)' }
@@ -100,9 +103,12 @@ const ATTENDED = { bar: 'var(--accent-hi)', bg: 'rgba(var(--accent-rgb),.38)', f
 const NOSHOW = { bar: 'var(--c-orange-strong)', bg: 'rgba(255,90,60,.20)', fg: 'var(--c-orange-soft)' }
 
 function colorFor(ev: CalEvent) {
+  // Presença apurada fala mais alto que a agenda de origem: verde/vermelho continuam
+  // sendo a leitura mais importante do card.
   if (ev.attended) return ATTENDED
   if (ev.no_show) return NOSHOW
-  // Eventos vindos de tarefas do CRM ganham o verde; resto, hash pela id.
+  // Fora isso, a cor diz DE QUEM é a agenda — como no Google Agenda.
+  if (ev.owner_color) return { bar: ev.owner_color, bg: `${ev.owner_color}2b`, fg: ev.owner_color }
   if (ev.task_id) return PALETTE[3]
   let h = 0
   for (const c of ev.id) h = (h + c.charCodeAt(0)) % PALETTE.length
@@ -115,8 +121,9 @@ function hm(iso: string | null) {
 }
 
 function eventsForDay(day: Date): Positioned[] {
-  const out: Positioned[] = []
-  for (const ev of crm.events) {
+  // 1) Os eventos do dia, já com a posição vertical.
+  const doDia: (Positioned & { ini: number, fim: number })[] = []
+  for (const ev of crm.visibleEvents) {
     if (!ev.starts_at) continue
     const s = new Date(ev.starts_at)
     if (!sameDay(s, day) || ev.all_day) continue
@@ -125,15 +132,46 @@ function eventsForDay(day: Date): Positioned[] {
     const endH = e.getHours() + e.getMinutes() / 60
     const top = Math.max(0, (startH - START_HOUR) * HOUR_H)
     const height = Math.max(26, (Math.min(endH, END_HOUR) - Math.max(startH, START_HOUR)) * HOUR_H - 3)
-    out.push({ ev, top, height, color: colorFor(ev), label: `${hm(ev.starts_at)} – ${hm(ev.ends_at)}` })
+    doDia.push({
+      ev, top, height, color: colorFor(ev), label: `${hm(ev.starts_at)} – ${hm(ev.ends_at)}`,
+      left: 0, width: 100, ini: s.getTime(), fim: Math.max(e.getTime(), s.getTime() + 15 * 60_000),
+    })
   }
-  return out
+  doDia.sort((a, b) => a.ini - b.ini || a.fim - b.fim)
+
+  // 2) Divide a largura entre os que se sobrepõem. Um "grupo" é uma sequência encadeada de
+  //    eventos que se tocam; dentro dele cada um pega a primeira coluna livre.
+  let grupo: typeof doDia = []
+  let fimDoGrupo = -Infinity
+  const fechaGrupo = () => {
+    if (!grupo.length) return
+    const colunas: number[] = [] // fim do último evento de cada coluna
+    const daColuna: number[] = []
+    for (const p of grupo) {
+      let c = colunas.findIndex(fim => fim <= p.ini)
+      if (c === -1) { c = colunas.length; colunas.push(0) }
+      colunas[c] = p.fim
+      daColuna.push(c)
+    }
+    const total = colunas.length
+    grupo.forEach((p, i) => { p.width = 100 / total; p.left = (daColuna[i] * 100) / total })
+    grupo = []
+    fimDoGrupo = -Infinity
+  }
+  for (const p of doDia) {
+    if (p.ini >= fimDoGrupo) fechaGrupo()
+    grupo.push(p)
+    fimDoGrupo = Math.max(fimDoGrupo, p.fim)
+  }
+  fechaGrupo()
+
+  return doDia
 }
 
-const allDayFor = (day: Date) => crm.events.filter(ev => ev.starts_at && ev.all_day && sameDay(new Date(ev.starts_at), day))
+const allDayFor = (day: Date) => crm.visibleEvents.filter(ev => ev.starts_at && ev.all_day && sameDay(new Date(ev.starts_at), day))
 
 // Lista lateral: eventos de hoje, ordenados por horário.
-const todayEvents = computed(() => crm.events
+const todayEvents = computed(() => crm.visibleEvents
   .filter(ev => ev.starts_at && isToday(new Date(ev.starts_at)))
   .sort((a, b) => new Date(a.starts_at!).getTime() - new Date(b.starts_at!).getTime()))
 const today = new Date()
@@ -142,7 +180,13 @@ const today = new Date()
 const modalOpen = ref(false)
 const saving = ref(false)
 const editingId = ref<string | null>(null)
-const form = reactive({ title: '', date: '', start: '09:00', end: '10:00', location: '', description: '', deal_id: '' as string | number, conversation_slug: '', guests: '', add_meet: false })
+const form = reactive({ title: '', date: '', start: '09:00', end: '10:00', location: '', description: '', deal_id: '' as string | number, conversation_slug: '', guests: '', add_meet: false, owner_id: 0 })
+
+/** Agenda padrão ao criar um evento: a minha, se eu tiver Google; senão a 1ª da empresa. */
+function defaultOwner(): number {
+  return (crm.calendars.find(c => c.is_me) ?? crm.calendars[0])?.user_id ?? 0
+}
+const ownerName = (id?: number) => crm.calendars.find(c => c.user_id === id)?.name ?? ''
 // Link do Meet do evento em edição (se já existir).
 const editingMeet = ref<string | null>(null)
 
@@ -158,7 +202,7 @@ function openNew(day?: Date) {
   editingId.value = null
   editingMeet.value = null
   const base = day ?? new Date()
-  Object.assign(form, { title: '', date: ymd(base), start: '09:00', end: '10:00', location: '', description: '', deal_id: '', conversation_slug: '', guests: '', add_meet: false })
+  Object.assign(form, { title: '', date: ymd(base), start: '09:00', end: '10:00', location: '', description: '', deal_id: '', conversation_slug: '', guests: '', add_meet: false, owner_id: defaultOwner() })
   modalOpen.value = true
 }
 function openEdit(ev: CalEvent) {
@@ -174,6 +218,8 @@ function openEdit(ev: CalEvent) {
     // Convidados existentes (sem o organizador) viram texto editável.
     guests: (ev.attendees ?? []).filter(a => !a.organizer).map(a => a.email).join(', '),
     add_meet: !!ev.hangout_link,
+    // O evento vive na agenda de quem o criou; o Google não move evento entre agendas.
+    owner_id: ev.owner_id ?? defaultOwner(),
   })
   modalOpen.value = true
 }
@@ -204,6 +250,7 @@ async function save() {
     conversation_slug: form.conversation_slug || null,
     attendees: parseGuests(form.guests),
     add_meet: form.add_meet,
+    owner_id: form.owner_id || undefined,
   }
   try {
     if (editingId.value) await crm.updateEvent(editingId.value, payload)
@@ -330,7 +377,7 @@ function shiftMonth(delta: number) {
   crm.fetchEvents(from.toISOString(), to.toISOString())
 }
 function eventsOfDay(day: Date) {
-  return crm.events.filter(ev => ev.starts_at && sameDay(new Date(ev.starts_at), day) && !ev.all_day)
+  return crm.visibleEvents.filter(ev => ev.starts_at && sameDay(new Date(ev.starts_at), day) && !ev.all_day)
     .sort((a, b) => new Date(a.starts_at!).getTime() - new Date(b.starts_at!).getTime())
 }
 // Dias mostrados na grade conforme a visão (semana=7, dia=1).
@@ -358,6 +405,14 @@ function nav(delta: number) {
     return
   }
   shiftWeek(delta)
+}
+/** Abre um dia específico na visão "Dia" — saída do "+N mais" da visão Mês. */
+function abrirDia(d: Date) {
+  focusedDay.value = new Date(d)
+  viewMode.value = 'dia'
+  const from = new Date(d); from.setHours(0, 0, 0, 0)
+  const to = new Date(d); to.setHours(23, 59, 59, 999)
+  crm.fetchEvents(from.toISOString(), to.toISOString())
 }
 function setView(v: 'dia' | 'semana' | 'mes') {
   viewMode.value = v
@@ -397,7 +452,7 @@ onMounted(() => {
 /** A próxima reunião: a que está acontecendo agora ou, na falta, a primeira que ainda vem. */
 const proxima = computed(() => {
   const t = agora.value.getTime()
-  return crm.events
+  return crm.visibleEvents
     .filter(ev => ev.starts_at && !ev.all_day)
     .filter(ev => (ev.ends_at ? new Date(ev.ends_at).getTime() : new Date(ev.starts_at!).getTime() + 3600_000) >= t)
     .sort((a, b) => new Date(a.starts_at!).getTime() - new Date(b.starts_at!).getTime())[0] ?? null
@@ -478,7 +533,7 @@ async function excluirDoDetalhe(ev: CalEvent) {
           </div>
           <div style="font-size:13.5px;color:var(--c-text-muted);margin-top:3px;">{{ periodLabel }}</div>
         </div>
-        <div v-if="crm.googleConnected" style="display:flex;gap:10px;align-items:center;">
+        <div v-if="crm.hasCalendars" style="display:flex;gap:10px;align-items:center;">
           <!-- Seletor de visão -->
           <div style="display:flex;background:var(--c-surface-2);border-radius:10px;overflow:hidden;">
             <button v-for="v in (['dia','semana','mes'] as const)" :key="v" class="seg" :style="`border:none;font-family:inherit;font-size:12.5px;font-weight:600;padding:8px 13px;cursor:pointer;${viewMode === v ? 'background:var(--accent);color:var(--accent-ink);' : 'background:transparent;color:var(--c-text-muted);'}`" @click="setView(v)">{{ v === 'dia' ? 'Dia' : v === 'semana' ? 'Semana' : 'Mês' }}</button>
@@ -488,13 +543,12 @@ async function excluirDoDetalhe(ev: CalEvent) {
             <button class="seg" style="border:none;background:transparent;color:var(--c-text-muted);padding:8px 11px;cursor:pointer;" @click="nav(1)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 6 6-6 6" /></svg></button>
           </div>
           <button class="seg" style="border:none;background:var(--c-surface-2);border-radius:10px;color:var(--c-text-muted);font-family:inherit;font-size:12.5px;font-weight:600;padding:8px 13px;cursor:pointer;" @click="setView('semana'); goToday()">Hoje</button>
-          <span v-if="crm.googleEmail" title="Conta Google conectada" style="font-size:12px;color:var(--accent-deep);background:var(--c-accent-surf);border:1px solid rgba(var(--accent-rgb),.25);padding:6px 11px;border-radius:9px;">{{ crm.googleEmail }}</span>
           <button class="wabtn" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:13px;font-weight:700;padding:9px 15px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:6px;" @click="openNew()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>Evento</button>
         </div>
       </div>
 
       <!-- Legenda das cores -->
-      <div v-if="crm.googleConnected" style="display:flex;flex-wrap:wrap;gap:14px;padding:10px 30px;border-bottom:1px solid var(--c-surface-1);">
+      <div v-if="crm.hasCalendars" style="display:flex;flex-wrap:wrap;gap:14px;padding:10px 30px;border-bottom:1px solid var(--c-surface-1);">
         <span v-for="l in LEGEND" :key="l.label" style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--c-text-muted);font-weight:600;"><span :style="{ width: '9px', height: '9px', borderRadius: '3px', background: l.color }" />{{ l.label }}</span>
       </div>
 
@@ -502,14 +556,14 @@ async function excluirDoDetalhe(ev: CalEvent) {
         {{ banner.text }}
       </div>
 
-      <!-- Não conectado: CTA -->
-      <div v-if="!crm.googleConnected" style="flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:18px;padding:40px;">
+      <!-- Nenhuma agenda na EMPRESA ainda: CTA. Basta um usuário conectar para todos verem. -->
+      <div v-if="!crm.hasCalendars" style="flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:18px;padding:40px;">
         <div style="width:64px;height:64px;border-radius:18px;background:var(--c-surface-2);display:flex;align-items:center;justify-content:center;">
           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></svg>
         </div>
-        <div style="text-align:center;max-width:360px;">
-          <div style="font-size:18px;font-weight:700;">Conecte seu Google Agenda</div>
-          <div style="font-size:13.5px;color:var(--c-text-muted);margin-top:6px;line-height:1.5;">Veja e gerencie seus eventos aqui, e sincronize automaticamente as tarefas agendadas do CRM.</div>
+        <div style="text-align:center;max-width:380px;">
+          <div style="font-size:18px;font-weight:700;">Conecte o Google Agenda da empresa</div>
+          <div style="font-size:13.5px;color:var(--c-text-muted);margin-top:6px;line-height:1.5;">Basta uma conta conectada: a agenda passa a valer para toda a equipe, com as reuniões que a IA marcar já aparecendo aqui.</div>
         </div>
         <button class="wabtn" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:14px;font-weight:700;padding:11px 20px;border-radius:11px;cursor:pointer;" @click="crm.connectGoogle()">Conectar com Google</button>
       </div>
@@ -555,9 +609,9 @@ async function excluirDoDetalhe(ev: CalEvent) {
               <div
                 v-for="p in eventsForDay(d)" :key="p.ev.id" :class="['evcard', { attended: p.ev.attended, live: evStatus(p.ev) === 'aovivo' }]"
                 draggable="true"
-                :style="p.ev.attended
-                  ? `pointer-events:auto;position:absolute;left:3px;right:3px;top:${p.top}px;height:${p.height}px;background:linear-gradient(135deg,var(--accent-hi),var(--accent-deep));border-left:5px solid var(--accent-hi);border-radius:7px;padding:5px 8px;overflow:hidden;cursor:grab;box-shadow:0 2px 14px rgba(var(--accent-rgb),.55);`
-                  : `pointer-events:auto;position:absolute;left:3px;right:3px;top:${p.top}px;height:${p.height}px;background:${p.color.bg};border-left:3px solid ${p.color.bar};border-radius:7px;padding:5px 8px;overflow:hidden;cursor:grab;${evStatus(p.ev) === 'aovivo' ? 'box-shadow:0 0 0 2px var(--c-info);' : ''}`"
+                :style="`pointer-events:auto;position:absolute;left:calc(${p.left}% + 3px);width:calc(${p.width}% - 6px);top:${p.top}px;height:${p.height}px;border-radius:7px;padding:5px 8px;overflow:hidden;cursor:grab;` + (p.ev.attended
+                  ? 'background:linear-gradient(135deg,var(--accent-hi),var(--accent-deep));border-left:5px solid var(--accent-hi);box-shadow:0 2px 14px rgba(var(--accent-rgb),.55);'
+                  : `background:${p.color.bg};border-left:3px solid ${p.color.bar};${evStatus(p.ev) === 'aovivo' ? 'box-shadow:0 0 0 2px var(--c-info);' : ''}`)"
                 :title="p.ev.conversation_name ? `Abrir ficha de ${p.ev.conversation_name}` : 'Abrir evento'"
                 @click="openDetails(p.ev)"
                 @dragstart="onEventDragStart(p.ev, $event)"
@@ -589,15 +643,49 @@ async function excluirDoDetalhe(ev: CalEvent) {
               :title="ev.title"
               @click.stop="openDetails(ev)"
             >{{ ev.attended ? '✓ ' : (ev.no_show ? '✗ ' : '') }}{{ hm(ev.starts_at) }} {{ ev.title }}</div>
-            <div v-if="eventsOfDay(d).length > 4" style="font-size:10px;color:var(--c-text-muted);">+{{ eventsOfDay(d).length - 4 }} mais</div>
+            <div
+              v-if="eventsOfDay(d).length > 4"
+              style="font-size:10px;color:var(--accent);font-weight:700;cursor:pointer;"
+              title="Ver o dia inteiro"
+              @click.stop="abrirDia(d)"
+            >+{{ eventsOfDay(d).length - 4 }} mais</div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Painel lateral: hoje -->
-    <div v-if="crm.googleConnected" style="width:300px;flex-shrink:0;background:var(--c-bg);border-left:1px solid var(--c-surface-1);display:flex;flex-direction:column;">
-      <div style="padding:20px 20px 14px;border-bottom:1px solid var(--c-surface-1);">
+    <!-- Painel lateral: agendas da empresa + hoje -->
+    <div v-if="crm.hasCalendars" style="width:300px;flex-shrink:0;background:var(--c-bg);border-left:1px solid var(--c-surface-1);display:flex;flex-direction:column;">
+      <!-- Seletor de agendas: cada usuário é uma camada que liga/desliga, como no Google Agenda -->
+      <div style="padding:16px 20px 14px;border-bottom:1px solid var(--c-surface-1);">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <div style="font-weight:700;font-size:13px;">Agendas da empresa</div>
+          <button
+            v-if="crm.hiddenCalendars.length"
+            style="background:none;border:none;color:var(--accent);font-family:inherit;font-size:11.5px;font-weight:700;cursor:pointer;padding:0;"
+            @click="crm.hiddenCalendars = []"
+          >Mostrar todas</button>
+        </div>
+        <label
+          v-for="c in crm.calendars" :key="c.user_id"
+          style="display:flex;align-items:center;gap:9px;margin-top:9px;cursor:pointer;font-size:13px;"
+          :title="c.email ?? ''"
+        >
+          <input
+            type="checkbox" :checked="!crm.hiddenCalendars.includes(c.user_id)"
+            :style="`width:15px;height:15px;cursor:pointer;accent-color:${c.color};flex-shrink:0;`"
+            @change="crm.toggleCalendar(c.user_id)"
+          >
+          <span :style="`width:10px;height:10px;border-radius:3px;background:${c.color};flex-shrink:0;`" />
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ c.name }}<span v-if="c.is_me" style="color:var(--c-text-muted);"> (você)</span></span>
+        </label>
+        <button
+          v-if="!crm.googleConnected"
+          style="width:100%;margin-top:12px;background:transparent;border:1px dashed var(--c-surface-3);color:var(--accent);font-family:inherit;font-size:12px;font-weight:600;padding:8px;border-radius:9px;cursor:pointer;"
+          @click="crm.connectGoogle()"
+        >+ Adicionar minha agenda</button>
+      </div>
+      <div style="padding:16px 20px 14px;border-bottom:1px solid var(--c-surface-1);">
         <div style="font-weight:700;font-size:16px;">Hoje · {{ todayEvents.length }} {{ todayEvents.length === 1 ? 'evento' : 'eventos' }}</div>
         <div style="font-size:12.5px;color:var(--c-text-muted);margin-top:2px;">{{ DAY_NAMES[today.getDay()] }}, {{ today.getDate() }} de {{ MONTHS[today.getMonth()] }}</div>
         <div v-if="dayCounts.total" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;">
@@ -633,8 +721,9 @@ async function excluirDoDetalhe(ev: CalEvent) {
           </div>
         </div>
       </div>
-      <div style="padding:14px 16px;border-top:1px solid var(--c-surface-1);">
-        <button style="width:100%;background:transparent;border:1px solid var(--c-surface-3);color:var(--c-text-muted);font-family:inherit;font-size:12.5px;padding:9px;border-radius:9px;cursor:pointer;" @click="crm.disconnectGoogle()">Desconectar Google</button>
+      <div v-if="crm.googleConnected" style="padding:14px 16px;border-top:1px solid var(--c-surface-1);">
+        <div style="font-size:11.5px;color:var(--c-text-muted);margin-bottom:8px;text-align:center;">Minha conta: {{ crm.googleEmail }}</div>
+        <button style="width:100%;background:transparent;border:1px solid var(--c-surface-3);color:var(--c-text-muted);font-family:inherit;font-size:12.5px;padding:9px;border-radius:9px;cursor:pointer;" @click="crm.disconnectGoogle()">Desconectar minha agenda</button>
       </div>
     </div>
 
@@ -642,6 +731,18 @@ async function excluirDoDetalhe(ev: CalEvent) {
     <div v-if="modalOpen" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:50;" @click.self="closeModal">
       <div style="width:420px;max-width:92vw;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:16px;padding:22px;">
         <div style="font-size:17px;font-weight:800;margin-bottom:16px;">{{ editingId ? 'Editar evento' : 'Novo evento' }}</div>
+        <!-- Em qual agenda da empresa o evento entra. Ao editar é só informativo: o Google
+             não move um evento de uma agenda para outra. -->
+        <template v-if="crm.calendars.length > 1">
+          <label class="lbl">Agenda</label>
+          <div v-if="editingId" style="display:flex;align-items:center;gap:8px;font-size:13px;padding:9px 0 2px;">
+            <span :style="`width:10px;height:10px;border-radius:3px;background:${crm.calendars.find(c => c.user_id === form.owner_id)?.color ?? 'var(--c-text-muted)'};`" />
+            {{ ownerName(form.owner_id) || '—' }}
+          </div>
+          <select v-else v-model.number="form.owner_id" class="inp">
+            <option v-for="c in crm.calendars" :key="c.user_id" :value="c.user_id">{{ c.name }}{{ c.is_me ? ' (você)' : '' }}</option>
+          </select>
+        </template>
         <label class="lbl">Título</label>
         <input v-model="form.title" class="inp" placeholder="Ex.: Demo com cliente" >
         <div style="display:flex;gap:10px;">
@@ -712,8 +813,12 @@ async function excluirDoDetalhe(ev: CalEvent) {
             <button style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:24px;line-height:1;padding:0 2px;" title="Fechar" @click="closeDetails">×</button>
           </div>
 
-          <div v-if="STATUS_TXT[evStatus(detalheAtual)]" style="margin-top:12px;">
-            <span :style="`display:inline-block;font-size:11.5px;font-weight:700;padding:4px 10px;border-radius:7px;color:${STATUS_TXT[evStatus(detalheAtual)]!.color};background:var(--c-surface-1);`">{{ STATUS_TXT[evStatus(detalheAtual)]!.label }}</span>
+          <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:7px;align-items:center;">
+            <span v-if="STATUS_TXT[evStatus(detalheAtual)]" :style="`display:inline-block;font-size:11.5px;font-weight:700;padding:4px 10px;border-radius:7px;color:${STATUS_TXT[evStatus(detalheAtual)]!.color};background:var(--c-surface-1);`">{{ STATUS_TXT[evStatus(detalheAtual)]!.label }}</span>
+            <!-- De qual agenda da empresa este evento veio -->
+            <span v-if="detalheAtual.owner_name" style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;padding:4px 10px;border-radius:7px;background:var(--c-surface-1);color:var(--c-text-secondary);">
+              <span :style="`width:8px;height:8px;border-radius:2px;background:${detalheAtual.owner_color};`" />{{ detalheAtual.owner_name }}
+            </span>
           </div>
 
           <div style="margin-top:14px;display:flex;flex-direction:column;gap:9px;font-size:13px;">

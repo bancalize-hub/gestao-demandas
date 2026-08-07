@@ -13,15 +13,33 @@ class GoogleAuthController extends Controller
 {
     public function __construct(private GoogleCalendarService $google) {}
 
-    /** Status da vinculação do usuário atual. */
+    /**
+     * Status da vinculação: a do usuário atual (para o botão "Conectar") e a lista de
+     * agendas da EMPRESA — as camadas que a tela liga/desliga. Basta uma conta conectada
+     * na empresa para a Agenda funcionar para todo mundo.
+     */
     public function status(Request $request)
     {
         $user = $request->user();
+
+        $agendas = User::where('company_id', $user->company_id)
+            ->whereNotNull('google_refresh_token')
+            ->orderBy('id')
+            ->get(['id', 'name', 'google_email'])
+            ->map(fn (User $u) => [
+                'user_id' => $u->id,
+                'name' => $u->name,
+                'email' => $u->google_email,
+                'color' => GoogleCalendarService::corDaAgenda($u->id),
+                'is_me' => $u->id === $user->id,
+            ])
+            ->values();
 
         return response()->json([
             'connected' => $user->hasGoogle(),
             'email' => $user->google_email,
             'calendar_id' => $user->google_calendar_id,
+            'calendars' => $agendas,
         ]);
     }
 

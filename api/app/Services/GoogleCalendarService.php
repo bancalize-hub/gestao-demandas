@@ -147,6 +147,18 @@ class GoogleCalendarService
         return $user->google_calendar_id ?: 'primary';
     }
 
+    /**
+     * Cor fixa da agenda de um usuário na tela — a mesma no seletor de agendas, na legenda
+     * e no card do evento. Vem do id (não da posição na lista) para não trocar de cor quando
+     * alguém entra ou sai da empresa.
+     */
+    public static function corDaAgenda(int $userId): string
+    {
+        $cores = ['#7C6CF5', '#53BDEB', '#FFB443', '#2FC98A', '#F06AA0', '#8FD14F', '#FF8A5B', '#4FD1C5'];
+
+        return $cores[$userId % count($cores)];
+    }
+
     /** Serviço da Meet REST API autenticado para o usuário. */
     public function meet(User $user): \Google\Service\Meet
     {

@@ -110,6 +110,20 @@ export interface CalEvent {
   conversation_name?: string | null
   deal_id?: number | null
   task_id?: number | null
+  // De qual agenda da empresa o evento veio — define a cor do card e em qual conta Google
+  // ele é editado/excluído (mandar o owner_id errado dá 404 no Google).
+  owner_id?: number
+  owner_name?: string
+  owner_email?: string | null
+  owner_color?: string
+}
+/** Uma agenda da empresa = o Google Agenda de um usuário. */
+export interface CalendarLayer {
+  user_id: number
+  name: string
+  email: string | null
+  color: string
+  is_me: boolean
 }
 export interface Column<T> { id: string, title: string, dot: string, money?: boolean, cards: T[] }
 
@@ -372,8 +386,11 @@ export const useCrmStore = defineStore('crm', {
     templatesLoading: false,
     templateError: '',
     // ----- Google Agenda -----
-    googleConnected: false,
+    googleConnected: false, // a conta Google DO USUÁRIO logado (só controla o botão "Conectar")
     googleEmail: null as string | null,
+    // Agendas da empresa: uma camada por usuário com Google conectado (estilo Google Agenda).
+    calendars: [] as CalendarLayer[],
+    hiddenCalendars: [] as number[], // agendas desmarcadas no seletor (só na tela)
     events: [] as CalEvent[],
     eventsLoading: false,
     lastEventsRange: null as { from: string, to: string } | null, // p/ recarregar a agenda em tempo real
@@ -404,6 +421,15 @@ export const useCrmStore = defineStore('crm', {
         ...col,
         cards: s.taskList.filter(t => t.column === col.id).slice().sort(sortByPos),
       }))
+    },
+    // A Agenda funciona quando a EMPRESA tem pelo menos uma conta Google conectada —
+    // não é preciso cada usuário conectar a sua para ver as reuniões marcadas.
+    hasCalendars: s => s.calendars.length > 0,
+    // Eventos das agendas marcadas no seletor. Filtra na tela (sem ida ao servidor) para
+    // ligar/desligar uma agenda ser instantâneo.
+    visibleEvents(s): CalEvent[] {
+      if (!s.hiddenCalendars.length) return s.events
+      return s.events.filter(e => e.owner_id == null || !s.hiddenCalendars.includes(e.owner_id))
     },
     listReady: s => !s.loading,
     threadReady: s => !s.loading && !s.threadError,
@@ -1223,11 +1249,19 @@ export const useCrmStore = defineStore('crm', {
     // ----- Google Agenda -----
     async loadGoogleStatus() {
       try {
-        const s = await api()<{ connected: boolean, email: string | null }>('/api/google/status')
+        const s = await api()<{ connected: boolean, email: string | null, calendars?: CalendarLayer[] }>('/api/google/status')
         this.googleConnected = s.connected
         this.googleEmail = s.email
+        this.calendars = s.calendars ?? []
+        // Agenda que deixou de existir (usuário saiu / desconectou) não fica escondida p/ sempre.
+        this.hiddenCalendars = this.hiddenCalendars.filter(id => this.calendars.some(c => c.user_id === id))
       }
-      catch { this.googleConnected = false }
+      catch { this.googleConnected = false; this.calendars = [] }
+    },
+    toggleCalendar(userId: number) {
+      this.hiddenCalendars = this.hiddenCalendars.includes(userId)
+        ? this.hiddenCalendars.filter(id => id !== userId)
+        : [...this.hiddenCalendars, userId]
     },
     // Pega a URL de consentimento e leva o navegador ao Google.
     async connectGoogle() {
@@ -1239,9 +1273,11 @@ export const useCrmStore = defineStore('crm', {
       this.googleConnected = false
       this.googleEmail = null
       this.events = []
+      // A empresa pode ter OUTRAS agendas conectadas: relê o status em vez de zerar tudo.
+      await this.loadGoogleStatus()
     },
     async fetchEvents(fromISO: string, toISO: string) {
-      if (!this.googleConnected) return
+      if (!this.hasCalendars) return
       this.lastEventsRange = { from: fromISO, to: toISO }
       this.eventsLoading = true
       try {
@@ -1253,7 +1289,7 @@ export const useCrmStore = defineStore('crm', {
     },
     // Recarrega a agenda no intervalo atual (tempo real: presença/resumo mudaram no servidor).
     async refreshEvents() {
-      if (!this.googleConnected || !this.lastEventsRange) return
+      if (!this.hasCalendars || !this.lastEventsRange) return
       const r = await api()<{ events: CalEvent[] }>(`/api/google/events?from=${encodeURIComponent(this.lastEventsRange.from)}&to=${encodeURIComponent(this.lastEventsRange.to)}`).catch(() => null)
       if (r) this.events = r.events
     },
@@ -1262,15 +1298,18 @@ export const useCrmStore = defineStore('crm', {
       this.events.push(created)
       return created
     },
+    // owner_id: em qual agenda da empresa o evento vive — sem ele o Google devolve 404.
     async updateEvent(id: string, patch: Partial<CalEvent>) {
-      const updated = await api()<CalEvent>(`/api/google/events/${id}`, { method: 'PATCH', body: patch })
+      const dono = patch.owner_id ?? this.events.find(e => e.id === id)?.owner_id
+      const updated = await api()<CalEvent>(`/api/google/events/${id}`, { method: 'PATCH', body: { ...patch, owner_id: dono } })
       const i = this.events.findIndex(e => e.id === id)
       if (i >= 0) this.events[i] = updated
       return updated
     },
     async deleteEvent(id: string) {
+      const dono = this.events.find(e => e.id === id)?.owner_id
       this.events = this.events.filter(e => e.id !== id)
-      await api()(`/api/google/events/${id}`, { method: 'DELETE' }).catch(() => {})
+      await api()(`/api/google/events/${id}${dono ? `?owner_id=${dono}` : ''}`, { method: 'DELETE' }).catch(() => {})
     },
   },
 })

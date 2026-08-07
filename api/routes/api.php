@@ -179,6 +179,8 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
     Route::post('/google/events', [EventController::class, 'store']);
     Route::patch('/google/events/{event}', [EventController::class, 'update']);
     Route::delete('/google/events/{event}', [EventController::class, 'destroy']);
+    // Marcação manual de "aconteceu / não aconteceu" (o Meet não mede reunião por telefone ou presencial).
+    Route::post('/google/events/{event}/attendance', [EventController::class, 'attendance']);
 
     Route::get('/quick-replies', [QuickReplyController::class, 'index']);
     Route::post('/quick-replies', [QuickReplyController::class, 'store']);

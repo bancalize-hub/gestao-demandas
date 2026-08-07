@@ -1306,6 +1306,19 @@ export const useCrmStore = defineStore('crm', {
       if (i >= 0) this.events[i] = updated
       return updated
     },
+    /**
+     * Marca à mão se a reunião aconteceu. A apuração automática só enxerga quem entrou na
+     * sala do Meet — reunião por telefone, presencial ou em outro link precisa disto.
+     */
+    async markAttendance(id: string, attended: boolean) {
+      const r = await api()<{ attended: boolean, no_show: boolean }>(`/api/google/events/${id}/attendance`, {
+        method: 'POST',
+        body: { attended },
+      })
+      const i = this.events.findIndex(e => e.id === id)
+      if (i >= 0) this.events[i] = { ...this.events[i], attended: r.attended, no_show: r.no_show }
+      return r
+    },
     async deleteEvent(id: string) {
       const dono = this.events.find(e => e.id === id)?.owner_id
       this.events = this.events.filter(e => e.id !== id)

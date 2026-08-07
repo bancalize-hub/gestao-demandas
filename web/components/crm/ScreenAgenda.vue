@@ -500,6 +500,20 @@ function dataLonga(ev: CalEvent): string {
   return ev.all_day ? `${dia} · dia inteiro` : `${dia} · ${hm(ev.starts_at)} – ${hm(ev.ends_at)}`
 }
 
+/** Reunião já terminou? Só aí faz sentido perguntar se aconteceu. */
+function jaPassou(ev: CalEvent): boolean {
+  const fim = ev.ends_at || ev.starts_at
+  return !!fim && new Date(fim).getTime() < Date.now()
+}
+
+const marcando = ref(false)
+async function marcarPresenca(ev: CalEvent, attended: boolean) {
+  marcando.value = true
+  try { await crm.markAttendance(ev.id, attended) }
+  catch { banner.value = { type: 'erro', text: 'Não consegui marcar a reunião. Tente de novo.' } }
+  finally { marcando.value = false }
+}
+
 function editarDoDetalhe(ev: CalEvent) { closeDetails(); openEdit(ev) }
 function fichaDoDetalhe(ev: CalEvent) { closeDetails(); openClient(ev) }
 function conversaDoDetalhe(ev: CalEvent) { closeDetails(); openWhatsApp(ev) }
@@ -851,6 +865,20 @@ async function excluirDoDetalhe(ev: CalEvent) {
             <button v-if="convOf(detalheAtual)" style="background:var(--c-surface-2);border:none;color:var(--c-text);font-family:inherit;font-size:13px;font-weight:700;padding:9px 14px;border-radius:9px;cursor:pointer;" @click="conversaDoDetalhe(detalheAtual!)">💬 Ir para a conversa</button>
             <button v-if="detalheAtual.conversation_slug" style="background:var(--c-surface-2);border:none;color:var(--c-text);font-family:inherit;font-size:13px;font-weight:700;padding:9px 14px;border-radius:9px;cursor:pointer;" @click="fichaDoDetalhe(detalheAtual!)">📇 Ficha do cliente</button>
           </div>
+          <!-- Marcação manual: o Meet só enxerga quem entrou na sala, então reunião por telefone,
+               presencial ou em outro link precisa ser marcada aqui. Só aparece depois do horário. -->
+          <div v-if="jaPassou(detalheAtual)" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:12px;">
+            <span style="font-size:12px;color:var(--c-text-muted);">Aconteceu?</span>
+            <button
+              :style="`background:${detalheAtual.attended ? 'var(--accent)' : 'var(--c-surface-2)'};color:${detalheAtual.attended ? 'var(--accent-ink)' : 'var(--c-text)'};border:none;font-family:inherit;font-size:12.5px;font-weight:700;padding:7px 12px;border-radius:9px;cursor:pointer;`"
+              :disabled="marcando" @click="marcarPresenca(detalheAtual!, true)"
+            >✓ Sim, foi realizada</button>
+            <button
+              :style="`background:${detalheAtual.no_show ? 'var(--c-orange-strong)' : 'var(--c-surface-2)'};color:${detalheAtual.no_show ? 'var(--accent-ink)' : 'var(--c-text)'};border:none;font-family:inherit;font-size:12.5px;font-weight:700;padding:7px 12px;border-radius:9px;cursor:pointer;`"
+              :disabled="marcando" @click="marcarPresenca(detalheAtual!, false)"
+            >✗ Não aconteceu</button>
+          </div>
+
           <div style="display:flex;align-items:center;gap:8px;margin-top:10px;">
             <button style="background:transparent;border:1px solid var(--c-surface-3);color:var(--c-text-muted);font-family:inherit;font-size:12.5px;font-weight:600;padding:8px 13px;border-radius:9px;cursor:pointer;" @click="editarDoDetalhe(detalheAtual!)">🕑 Editar / remarcar</button>
             <div style="flex:1;" />

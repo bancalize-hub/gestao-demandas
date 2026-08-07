@@ -177,6 +177,53 @@ class EventController extends Controller
     }
 
     /**
+     * Marca à mão se a reunião aconteceu.
+     *
+     * A apuração automática lê o Google Meet, e o Meet só sabe de quem ENTROU na sala: reunião
+     * feita por telefone, presencial ou em outro link fica sem medição para sempre — e era isso
+     * que deixava reunião realizada sem marca nenhuma na agenda. Aqui o atendente resolve, e a
+     * marcação vale o mesmo que a automática (move o lead para "Reunião Realizada" e conta a
+     * conversão para a Meta).
+     */
+    public function attendance(Request $request, string $event)
+    {
+        $data = $request->validate(['attended' => 'required|boolean']);
+        $attended = (bool) $data['attended'];
+
+        $meeting = \App\Models\Meeting::where('google_event_id', $event)->first();
+        if (! $meeting) {
+            return response()->json(['message' => 'Esta reunião não está no CRM ainda — aguarde a sincronização da agenda.'], 404);
+        }
+
+        $meeting->attended = $attended;
+        // Medição manual: minutos ficam nulos (não medimos nada), mas a apuração está encerrada.
+        // O 0 explícito no "não aconteceu" é o que faz o card ficar vermelho em vez de neutro.
+        $meeting->attended_minutes = $attended ? null : 0;
+        $meeting->attendance_checked_at = now();
+        $meeting->save();
+
+        $quando = $meeting->starts_at->setTimezone(config('app.timezone'))->format('d/m H:i');
+        $quem = $request->user();
+
+        if ($meeting->conversation) {
+            if ($attended) {
+                \App\Services\StageMover::move(
+                    $meeting->conversation,
+                    (string) config('services.crm.stage_meeting_done', 'reuniao-realizada'),
+                    $quem?->id,
+                    "Reunião realizada em {$quando}",
+                );
+                \App\Models\LeadActivity::log($meeting->conversation->id, 'reuniao', "✅ Reunião realizada ({$quando}) — marcada por {$quem?->name}", null, $quem?->id);
+                \App\Support\MetaConversions::enviarUmaVez($meeting->conversation, \App\Support\MetaConversions::REUNIAO_REALIZADA);
+            } else {
+                \App\Models\LeadActivity::log($meeting->conversation->id, 'reuniao', "⚠️ Reunião não aconteceu ({$quando}) — marcada por {$quem?->name}", null, $quem?->id);
+            }
+        }
+
+        return response()->json(['attended' => $attended, 'no_show' => ! $attended]);
+    }
+
+    /**
      * Liga (ou desliga) a reunião a um lead criando/atualizando a linha em `meetings`,
      * para o card da agenda abrir a ficha e o pós-reunião (presença/resumo) processar.
      */

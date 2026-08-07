@@ -15,7 +15,31 @@ class ChatTab extends Model
 
     protected $guarded = [];
 
-    protected $casts = ['stages' => 'array'];
+    protected $casts = ['stages' => 'array', 'qualified' => 'array'];
+
+    /**
+     * A conversa entra nesta tab? Etapa E triagem — as duas têm de bater.
+     *
+     * Régua única do filtro: a lista, os contadores do topo e o contador da própria tab
+     * chamam daqui. Quando cada um repetia a condição, bastava mexer numa para o número
+     * da bolinha discordar do que a lista mostrava.
+     */
+    public function combina(Conversation $conv): bool
+    {
+        if (! in_array($conv->stage, (array) $this->stages, true)) {
+            return false;
+        }
+
+        $tri = array_filter((array) $this->qualified, fn ($v) => $v !== '' && $v !== null);
+        if (! $tri) {
+            return true; // sem filtro de triagem = todos, que é como as tabs antigas eram
+        }
+
+        // NULL é "ainda não triado", um estado de verdade — nunca o mesmo que desqualificado.
+        $estado = $conv->qualified === null ? 'sem' : ($conv->qualified ? '1' : '0');
+
+        return in_array($estado, array_map('strval', $tri), true);
+    }
 
     /**
      * Time responsável por uma etapa do funil. A primeira tab que lista a etapa

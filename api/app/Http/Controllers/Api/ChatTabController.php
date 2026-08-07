@@ -19,6 +19,10 @@ class ChatTabController extends Controller
             'name' => 'required|string|max:40',
             'stages' => 'array',
             'stages.*' => 'string|max:64',
+            // Triagem: '1' qualificado, '0' desqualificado, 'sem' ainda não triado.
+            // Vazio = sem filtro (todos).
+            'qualified' => 'nullable|array',
+            'qualified.*' => 'string|in:1,0,sem',
             'objetivo' => 'nullable|string|max:2000',
         ]);
         $data['stages'] = $data['stages'] ?? [];
@@ -33,6 +37,8 @@ class ChatTabController extends Controller
             'name' => 'sometimes|string|max:40',
             'stages' => 'sometimes|array',
             'stages.*' => 'string|max:64',
+            'qualified' => 'sometimes|nullable|array',
+            'qualified.*' => 'string|in:1,0,sem',
             'position' => 'sometimes|integer',
             // Objetivo da IA com os leads deste time (SDR/Closer/CS).
             'objetivo' => 'sometimes|nullable|string|max:2000',

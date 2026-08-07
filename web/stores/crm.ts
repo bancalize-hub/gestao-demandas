@@ -35,7 +35,9 @@ export interface QuickReply { id: number, label: string, text: string }
 /** Template aprovado pela Meta — o único jeito de falar fora da janela de 24h. */
 export interface WaTemplate { name: string, language: string, category: string, body: string, params: number }
 export interface Stage { id?: number, key: string, name: string, color: string, goal?: string | null, wa_label_id?: string | null, position?: number }
-export interface ChatTab { id: number, name: string, stages: string[], position?: number }
+// qualified: '1' qualificado, '0' desqualificado, 'sem' ainda não triado. Vazio = todos.
+export type TabQual = '1' | '0' | 'sem'
+export interface ChatTab { id: number, name: string, stages: string[], qualified?: TabQual[], position?: number }
 
 export interface Conversation {
   id: string // slug
@@ -451,7 +453,7 @@ export const useCrmStore = defineStore('crm', {
         ])
         this.conversations = convs.map(mapConv)
         if (stages.length) this.stages = stages
-        this.chatTabs = (tabs || []).map(t => ({ ...t, stages: t.stages || [] }))
+        this.chatTabs = (tabs || []).map(t => ({ ...t, stages: t.stages || [], qualified: t.qualified || [] }))
         this.connection = 'online'
         if (!this.conversations.find(c => c.id === this.activeId))
           this.activeId = this.conversations[0]?.id ?? ''
@@ -1213,9 +1215,9 @@ export const useCrmStore = defineStore('crm', {
     },
 
     // ----- Tabs da lista de conversas (filtram por etiqueta/etapa) -----
-    async createChatTab(payload: { name: string, stages: string[] }) {
+    async createChatTab(payload: { name: string, stages: string[], qualified?: TabQual[] }) {
       const t = await api()<ChatTab>('/api/chat-tabs', { method: 'POST', body: payload })
-      this.chatTabs.push({ ...t, stages: t.stages || [] })
+      this.chatTabs.push({ ...t, stages: t.stages || [], qualified: t.qualified || [] })
       return t
     },
     updateChatTab(id: number, patch: Partial<ChatTab>) {

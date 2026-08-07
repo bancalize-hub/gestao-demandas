@@ -337,27 +337,62 @@ function visibleTags(tags: { label: string, color: string }[]) {
   if (!names) return tags || []
   return (tags || []).filter(t => names.has(t.label))
 }
-function tabCount(t: { stages: string[] }) {
-  return crm.conversations.filter(c => !c.archived && t.stages.includes(c.stage)).length
+/**
+ * A conversa entra nesta tab? Etapa E triagem — espelha `ChatTab::combina()` no servidor.
+ * Régua única: lista, contadores do topo e bolinha da tab passam por aqui, senão o número
+ * da tab discorda do que a lista mostra.
+ */
+function tabMatch(t: { stages: string[], qualified?: string[] }, c: { stage: string, qualified: boolean | null }) {
+  if (!t.stages.includes(c.stage)) return false
+  const tri = (t.qualified || []).filter(Boolean)
+  if (!tri.length) return true // sem filtro de triagem = todos
+  // null é "ainda não triado", um estado de verdade — nunca igual a desqualificado.
+  return tri.includes(c.qualified === null ? 'sem' : c.qualified ? '1' : '0')
+}
+function tabCount(t: { stages: string[], qualified?: string[] }) {
+  return crm.conversations.filter(c => !c.archived && tabMatch(t, c)).length
+}
+const QUAL_OPCOES = [
+  { key: '1', label: '✓ Qualificado' },
+  { key: '0', label: '✕ Desqualificado' },
+  { key: 'sem', label: '◌ Sem triagem' },
+] as const
+/** Resumo do que a tab filtra, para a linha da lista do modal. */
+function tabResumo(t: { stages: string[], qualified?: string[] }) {
+  const tri = (t.qualified || []).filter(Boolean)
+  const etiquetas = `${t.stages.length} etiqueta(s)`
+  return tri.length ? `${etiquetas} · ${tri.length} de 3 triagens` : etiquetas
 }
 
 // Editor de tabs
 const showTabs = ref(false)
 const tabName = ref('')
 const tabStages = ref<string[]>([])
+const tabQualified = ref<string[]>([])
 const editingTabId = ref<number | null>(null)
-function newTabForm() { editingTabId.value = null; tabName.value = ''; tabStages.value = [] }
-function editTabForm(t: { id: number, name: string, stages: string[] }) { editingTabId.value = t.id; tabName.value = t.name; tabStages.value = [...t.stages] }
+function newTabForm() { editingTabId.value = null; tabName.value = ''; tabStages.value = []; tabQualified.value = [] }
+function editTabForm(t: { id: number, name: string, stages: string[], qualified?: string[] }) {
+  editingTabId.value = t.id
+  tabName.value = t.name
+  tabStages.value = [...t.stages]
+  tabQualified.value = [...(t.qualified || [])]
+}
 function toggleTabStage(key: string) {
   const i = tabStages.value.indexOf(key)
   if (i >= 0) tabStages.value.splice(i, 1)
   else tabStages.value.push(key)
 }
+function toggleTabQual(key: string) {
+  const i = tabQualified.value.indexOf(key)
+  if (i >= 0) tabQualified.value.splice(i, 1)
+  else tabQualified.value.push(key)
+}
 async function saveTab() {
   const name = tabName.value.trim()
   if (!name) return
-  if (editingTabId.value) crm.updateChatTab(editingTabId.value, { name, stages: [...tabStages.value] })
-  else await crm.createChatTab({ name, stages: [...tabStages.value] })
+  const payload = { name, stages: [...tabStages.value], qualified: [...tabQualified.value] as any }
+  if (editingTabId.value) crm.updateChatTab(editingTabId.value, payload)
+  else await crm.createChatTab(payload)
   newTabForm()
 }
 function deleteTab(id: number) {
@@ -432,6 +467,8 @@ const list = computed(() => crm.conversations.map(c => ({
   id: c.id, name: c.name, initials: c.initials, avatar: c.avatar, preview: c.preview, time: fmtListTime(c.lastMessageAt, c.time),
   unread: c.unread, online: c.online, hot: !!c.hot, hasUnread: c.unread > 0, archived: c.archived, inMemory: c.inMemory, tags: c.tags || [], stage: c.stage,
   autoReply: c.autoReply, lastOut: c.lastOut, stageColor: c.stageColor,
+  // Cru, além do chip: é o que a tab filtra (o chip já virou texto e cor).
+  qualified: c.qualified,
   qual: qualChip(c.qualified, c.qualifiedReason, c.qualifiedAuto, true),
   stageName: (crm.stages.find(s => s.key === c.stage)?.name) || c.stage,
   rowStyle: ROW_STYLE,
@@ -443,7 +480,7 @@ const list = computed(() => crm.conversations.map(c => ({
 // lidas/Arquivadas) e a lista derivam daqui — assim ficam dinâmicos com a tab selecionada.
 const tabBase = computed(() => {
   const tab = activeTab.value ? crm.chatTabs.find(t => t.id === activeTab.value) : null
-  return tab ? list.value.filter(c => tab.stages.includes(c.stage)) : list.value
+  return tab ? list.value.filter(c => tabMatch(tab, c)) : list.value
 })
 
 const filteredList = computed(() => {
@@ -1564,13 +1601,13 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
           <div style="font-size:18px;font-weight:800;">Tabs por etiqueta</div>
           <button style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:20px;line-height:1;" @click="showTabs = false">×</button>
         </div>
-        <div style="font-size:12.5px;color:var(--c-text-muted);margin-bottom:16px;">Crie tabs que filtram as conversas por etiqueta (ex.: "SDR" = Lead + Contato feito).</div>
+        <div style="font-size:12.5px;color:var(--c-text-muted);margin-bottom:16px;">Crie tabs que filtram as conversas por etiqueta e, se quiser, pela triagem (ex.: "SDR" = Lead + Contato feito, só qualificados e sem triagem).</div>
 
         <!-- tabs existentes -->
         <div v-if="crm.chatTabs.length" style="display:flex;flex-direction:column;gap:7px;margin-bottom:16px;">
           <div v-for="t in crm.chatTabs" :key="t.id" style="display:flex;align-items:center;gap:8px;background:var(--c-surface-2);border-radius:10px;padding:8px 11px;">
             <span style="flex:1;font-size:13.5px;font-weight:600;">{{ t.name }}</span>
-            <span style="font-size:11.5px;color:var(--c-text-muted);">{{ t.stages.length }} etiqueta(s)</span>
+            <span style="font-size:11.5px;color:var(--c-text-muted);">{{ tabResumo(t) }}</span>
             <button title="Editar" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;padding:2px 4px;" @click="editTabForm(t)">✎</button>
             <button title="Excluir" style="background:none;border:none;color:var(--c-danger);cursor:pointer;padding:2px 4px;" @click="deleteTab(t.id)">✕</button>
           </div>
@@ -1586,6 +1623,16 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
               <span :style="{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '2px', background: s.color, marginRight: '6px' }" />{{ s.name }}
             </button>
           </div>
+
+          <div style="font-size:11.5px;color:var(--c-text-muted);margin:14px 0 7px;">
+            Triagem do lead <span style="opacity:.75;">(nenhuma marcada = mostra todos)</span>:
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:7px;">
+            <button v-for="o in QUAL_OPCOES" :key="o.key" :style="{ fontSize: '12px', fontWeight: 600, padding: '5px 11px', borderRadius: '8px', cursor: 'pointer', border: tabQualified.includes(o.key) ? '1px solid var(--accent)' : '1px solid var(--c-surface-3)', background: tabQualified.includes(o.key) ? 'rgba(var(--accent-rgb),.16)' : 'var(--c-surface-2)', color: tabQualified.includes(o.key) ? 'var(--c-text)' : 'var(--c-text-muted)' }" @click="toggleTabQual(o.key)">
+              {{ o.label }}
+            </button>
+          </div>
+
           <div style="display:flex;gap:10px;align-items:center;margin-top:16px;">
             <button v-if="editingTabId" style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);font-family:inherit;font-size:13px;padding:9px 14px;border-radius:10px;cursor:pointer;" @click="newTabForm">Cancelar edição</button>
             <div style="flex:1;" />

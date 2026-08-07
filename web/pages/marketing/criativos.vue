@@ -33,6 +33,23 @@ const SELOS: Record<Status, { rotulo: string; icone: string; cor: string; curto:
 }
 const ORDEM_SELOS: Status[] = ['validado', 'testando', 'reprovado']
 
+// Peça que nunca virou anúncio não está "em teste" — não está em lugar nenhum. Este
+// quarto estado NÃO existe no banco: ele é derivado de ter ou não anúncio, porque é um
+// fato sobre a conta de anúncios, não um julgamento de ninguém. Assim ele se corrige
+// sozinho no dia em que a peça sobe, sem precisar que alguém lembre de mudar o selo.
+const NAO_SUBIU = { rotulo: 'Não subiu', icone: '⏳', cor: 'var(--c-text-faint)', curto: 'Não subiram' }
+
+/** Já foi ao ar? Só dá para afirmar depois que o desempenho chega. */
+function subiu(c: Criativo): boolean | null {
+  const d = desempenho.value[c.id]
+  return d ? d.anuncios > 0 : null
+}
+
+/** O selo COMO A TELA MOSTRA — "em teste" vira "não subiu" quando nunca virou anúncio. */
+function selo(c: Criativo) {
+  return c.status === 'testando' && subiu(c) === false ? NAO_SUBIU : SELOS[c.status]
+}
+
 const criativos = ref<Criativo[]>([])
 const desempenho = ref<Record<number, Desempenho>>({})
 const erroDesempenho = ref('')
@@ -45,7 +62,7 @@ const fileInput = ref<HTMLInputElement | null>(null)
 // A biblioteca é o que ainda pode ir para anúncio. Reprovado sai da grade e vai para
 // "Arquivados": ele não é para ser escolhido, e deixá-lo no meio dos outros faz olhar
 // de novo, toda vez, para a peça que já foi decidida.
-const filtro = ref<Status | 'biblioteca'>('biblioteca')
+const filtro = ref<Status | 'biblioteca' | 'naosubiu'>('biblioteca')
 const arquivadoAgora = ref('')
 const periodo = ref('last_30d')
 
@@ -88,16 +105,20 @@ onMounted(async () => {
 watch(periodo, carregarDesempenho)
 
 const contagem = computed(() => {
-  const c: Record<Status, number> = { validado: 0, testando: 0, reprovado: 0 }
-  for (const x of criativos.value) c[x.status] = (c[x.status] || 0) + 1
+  const c = { validado: 0, testando: 0, naosubiu: 0, reprovado: 0 }
+  for (const x of criativos.value) {
+    if (x.status === 'testando' && subiu(x) === false) c.naosubiu++
+    else c[x.status]++
+  }
   return c
 })
 
-const visiveis = computed(() =>
-  filtro.value === 'biblioteca'
-    ? criativos.value.filter(c => c.status !== 'reprovado')
-    : criativos.value.filter(c => c.status === filtro.value),
-)
+const visiveis = computed(() => {
+  if (filtro.value === 'biblioteca') return criativos.value.filter(c => c.status !== 'reprovado')
+  if (filtro.value === 'naosubiu') return criativos.value.filter(c => c.status === 'testando' && subiu(c) === false)
+  if (filtro.value === 'testando') return criativos.value.filter(c => c.status === 'testando' && subiu(c) !== false)
+  return criativos.value.filter(c => c.status === filtro.value)
+})
 
 async function subir(files: FileList | File[] | null) {
   const imagens = Array.from(files || []).filter(f => f.type.startsWith('image/'))
@@ -212,12 +233,17 @@ function estiloCard(c: Criativo) {
           <span style="font-size:11.5px;color:var(--c-text-muted);font-weight:700;">na biblioteca</span>
         </button>
         <button
-          v-for="s in (['validado', 'testando'] as Status[])" :key="s"
-          :style="{ background: filtro === s ? 'var(--c-surface-2)' : 'var(--c-bg-deepest)', border: '1px solid ' + (filtro === s ? SELOS[s].cor : 'var(--c-surface-1)'), borderRadius: '10px', padding: '8px 14px', cursor: 'pointer', fontFamily: 'inherit', color: 'var(--c-text)', display: 'flex', alignItems: 'baseline', gap: '7px' }"
-          @click="filtro = filtro === s ? 'biblioteca' : s"
+          v-for="s in [
+            { k: 'validado', selo: SELOS.validado },
+            { k: 'testando', selo: SELOS.testando },
+            { k: 'naosubiu', selo: NAO_SUBIU },
+          ]" :key="s.k"
+          :title="s.k === 'naosubiu' ? 'Nunca viraram anúncio — não estão em teste, estão parados' : ''"
+          :style="{ background: filtro === s.k ? 'var(--c-surface-2)' : 'var(--c-bg-deepest)', border: '1px solid ' + (filtro === s.k ? s.selo.cor : 'var(--c-surface-1)'), borderRadius: '10px', padding: '8px 14px', cursor: 'pointer', fontFamily: 'inherit', color: 'var(--c-text)', display: 'flex', alignItems: 'baseline', gap: '7px' }"
+          @click="filtro = filtro === s.k ? 'biblioteca' : (s.k as any)"
         >
-          <strong :style="{ fontSize: '16px', color: SELOS[s].cor }">{{ contagem[s] }}</strong>
-          <span style="font-size:11.5px;color:var(--c-text-muted);font-weight:700;">{{ SELOS[s].icone }} {{ SELOS[s].curto }}</span>
+          <strong :style="{ fontSize: '16px', color: s.selo.cor }">{{ (contagem as any)[s.k] }}</strong>
+          <span style="font-size:11.5px;color:var(--c-text-muted);font-weight:700;">{{ s.selo.icone }} {{ s.selo.curto }}</span>
         </button>
 
         <div style="width:1px;height:26px;background:var(--c-surface-1);margin:0 3px;" />
@@ -287,7 +313,11 @@ function estiloCard(c: Criativo) {
       <div v-if="carregando" style="font-size:12.5px;color:var(--c-text-faint);">Carregando…</div>
       <div v-else-if="!criativos.length" style="font-size:12.5px;color:var(--c-text-faint);">Nenhum criativo ainda.</div>
       <div v-else-if="!visiveis.length" style="font-size:12.5px;color:var(--c-text-faint);">
-        {{ filtro === 'biblioteca' ? 'Nenhum criativo na biblioteca — todos foram arquivados.' : filtro === 'reprovado' ? 'Nenhum criativo arquivado.' : `Nenhum criativo ${SELOS[filtro as Status].rotulo.toLowerCase()}.` }}
+        {{ filtro === 'biblioteca' ? 'Nenhum criativo na biblioteca — todos foram arquivados.'
+          : filtro === 'reprovado' ? 'Nenhum criativo arquivado.'
+            : filtro === 'naosubiu' ? 'Todos os criativos da biblioteca já viraram anúncio.'
+              : filtro === 'testando' ? 'Nenhum criativo em teste — nenhum dos não-julgados está no ar.'
+                : 'Nenhum criativo validado.' }}
       </div>
 
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px;">
@@ -299,7 +329,7 @@ function estiloCard(c: Criativo) {
           <div style="padding:10px 12px;display:flex;flex-direction:column;gap:8px;">
             <div style="display:flex;align-items:center;gap:6px;">
               <strong style="font-size:13px;">{{ c.name }}</strong>
-              <span :style="{ fontSize: '10.5px', fontWeight: 800, color: SELOS[c.status].cor }">{{ SELOS[c.status].icone }} {{ SELOS[c.status].rotulo }}</span>
+              <span :style="{ fontSize: '10.5px', fontWeight: 800, color: selo(c).cor }">{{ selo(c).icone }} {{ selo(c).rotulo }}</span>
               <button title="Apagar" style="margin-left:auto;background:none;border:none;color:var(--c-text-faint);cursor:pointer;font-size:15px;" @click="apagar(c)">×</button>
             </div>
 
@@ -308,10 +338,10 @@ function estiloCard(c: Criativo) {
             <div style="display:flex;gap:4px;background:var(--c-bg-deep);border-radius:9px;padding:3px;">
               <button
                 v-for="s in ORDEM_SELOS" :key="s"
-                :title="s === 'reprovado' ? 'Não poderá ser usado em anúncio novo' : ''"
-                :style="{ flex: 1, background: c.status === s ? SELOS[s].cor : 'transparent', color: c.status === s ? 'var(--c-on-accent)' : 'var(--c-text-faint)', border: 'none', borderRadius: '7px', padding: '5px 4px', fontFamily: 'inherit', fontSize: '10.5px', fontWeight: 800, cursor: 'pointer' }"
+                :title="s === 'reprovado' ? 'Não poderá ser usado em anúncio novo' : s === 'testando' && subiu(c) === false ? 'Esta peça ainda não virou anúncio — só entra em teste quando subir' : ''"
+                :style="{ flex: 1, background: c.status === s ? selo(c).cor : 'transparent', color: c.status === s ? 'var(--c-on-accent)' : 'var(--c-text-faint)', border: 'none', borderRadius: '7px', padding: '5px 4px', fontFamily: 'inherit', fontSize: '10.5px', fontWeight: 800, cursor: 'pointer' }"
                 @click="definirStatus(c, s)"
-              >{{ SELOS[s].icone }} {{ SELOS[s].rotulo }}</button>
+              >{{ s === 'testando' && subiu(c) === false ? `${NAO_SUBIU.icone} ${NAO_SUBIU.rotulo}` : `${SELOS[s].icone} ${SELOS[s].rotulo}` }}</button>
             </div>
 
             <!-- Desempenho real: é o que sustenta o veredito. -->

@@ -478,6 +478,9 @@ class MarketingController extends Controller
         $periodo = (string) $request->query('periodo', 'last_30d');
         [$de, $ate] = self::janela($periodo, $desde, $ateData);
 
+        // "Respondeu" = 2+ mensagens de entrada. A primeira é automática (o clique no
+        // anúncio já dispara o texto pré-preenchido), então 1 mensagem não prova interesse.
+        $respondeu = '(SELECT COUNT(*) FROM messages m WHERE m.conversation_id = conversations.id AND m.is_out = 0) >= 2';
         $reunioes = '(SELECT COUNT(*) FROM meetings mt WHERE mt.conversation_id = conversations.id)';
         $realizadas = '(SELECT COUNT(*) FROM meetings mt WHERE mt.conversation_id = conversations.id AND mt.attended = 1)';
         $adId = "JSON_UNQUOTE(JSON_EXTRACT(conversations.custom_fields, '$.anuncio.id'))";
@@ -485,6 +488,7 @@ class MarketingController extends Controller
         $leads = Conversation::selectRaw("
             conversations.id, conversations.phone, conversations.qualified,
             conversations.created_at, conversations.stage,
+            {$respondeu} as respondeu,
             {$reunioes} as reunioes, {$realizadas} as realizadas,
             {$adId} as ad_id
         ")
@@ -492,7 +496,44 @@ class MarketingController extends Controller
             ->where('conversations.created_at', '<', $ate)
             ->get();
 
+        // Nomes de anúncio e campanha para os recortes de mídia. Ficam no mesmo cache dos
+        // breakdowns: são a mesma viagem à Graph API.
+        $r = self::ultimoBom("otimizacao-fb:{$periodo}:{$desde}:{$ateData}", function () use ($periodo, $desde, $ateData) {
+            $fb = FacebookAds::make();
+
+            $anuncios = [];
+            foreach ($fb->listarAnuncios() as $a) {
+                if (! empty($a['id'])) {
+                    $anuncios[(string) $a['id']] = ['nome' => (string) ($a['name'] ?? ''), 'campanha' => (string) ($a['campaign_id'] ?? '')];
+                }
+            }
+            $campanhas = [];
+            foreach ($fb->listarCampanhas(100) as $c) {
+                if (! empty($c['id'])) {
+                    $campanhas[(string) $c['id']] = (string) ($c['name'] ?? '');
+                }
+            }
+
+            return [
+                'anuncios' => $anuncios,
+                'campanhas' => $campanhas,
+                'breakdowns' => [
+                    ['chave' => 'idade_genero', 'titulo' => 'Idade e gênero', 'linhas' => $fb->breakdown('age,gender', $periodo, $desde, $ateData)],
+                    ['chave' => 'posicionamento', 'titulo' => 'Posicionamento', 'linhas' => $fb->breakdown('publisher_platform,platform_position', $periodo, $desde, $ateData)],
+                    ['chave' => 'dispositivo', 'titulo' => 'Dispositivo', 'linhas' => $fb->breakdown('impression_device', $periodo, $desde, $ateData)],
+                    ['chave' => 'regiao_fb', 'titulo' => 'Região (segundo o Facebook)', 'linhas' => $fb->breakdown('region', $periodo, $desde, $ateData)],
+                ],
+            ];
+        });
+
+        $anuncios = $r['dados']['anuncios'] ?? [];
+        $campanhas = $r['dados']['campanhas'] ?? [];
+
         $cortes = [
+            $this->corte($leads, fn ($l) => $l->ad_id ? ($campanhas[$anuncios[$l->ad_id]['campanha'] ?? ''] ?? null) : null, 'Campanha',
+                'O funil inteiro por campanha, do lead à venda. Vem do ad_id que o WhatsApp manda no referral do anúncio — lead orgânico não entra aqui.'),
+            $this->corte($leads, fn ($l) => $l->ad_id ? ($anuncios[$l->ad_id]['nome'] ?? null) : null, 'Anúncio',
+                'Recorte mais fino que campanha: mesma verba, peças diferentes. Amostra por linha cai na mesma proporção.'),
             $this->corte($leads, fn ($l) => Ddd::regiao($l->phone), 'Região',
                 'Calculada pelo DDD do telefone — o Facebook não devolve qualificação por região, então esta é a única forma de cruzar origem com lead bom.'),
             $this->corte($leads, fn ($l) => Ddd::uf($l->phone), 'Estado (UF)',
@@ -502,19 +543,6 @@ class MarketingController extends Controller
             $this->corte($leads, fn ($l) => self::faixaHoraria($l->created_at?->hour), 'Faixa horária em que o lead chegou',
                 'Também acionável: o Facebook permite programar a veiculação por horário.'),
         ];
-
-        // Recortes da Meta. Vêm marcados como o que são: contam CONVERSA INICIADA, não
-        // lead qualificado, e por isso ficam em bloco separado na tela.
-        $r = self::ultimoBom("otimizacao-fb:{$periodo}:{$desde}:{$ateData}", function () use ($periodo, $desde, $ateData) {
-            $fb = FacebookAds::make();
-
-            return [
-                ['chave' => 'idade_genero', 'titulo' => 'Idade e gênero', 'linhas' => $fb->breakdown('age,gender', $periodo, $desde, $ateData)],
-                ['chave' => 'posicionamento', 'titulo' => 'Posicionamento', 'linhas' => $fb->breakdown('publisher_platform,platform_position', $periodo, $desde, $ateData)],
-                ['chave' => 'dispositivo', 'titulo' => 'Dispositivo', 'linhas' => $fb->breakdown('impression_device', $periodo, $desde, $ateData)],
-                ['chave' => 'regiao_fb', 'titulo' => 'Região (segundo o Facebook)', 'linhas' => $fb->breakdown('region', $periodo, $desde, $ateData)],
-            ];
-        });
 
         $triados = $leads->whereNotNull('qualified')->count();
 
@@ -531,7 +559,7 @@ class MarketingController extends Controller
                 'com_ddd' => $leads->filter(fn ($l) => Ddd::regiao($l->phone) !== null)->count(),
             ],
             'cortes' => $cortes,
-            'facebook' => $r['dados'],
+            'facebook' => $r['dados']['breakdowns'] ?? [],
             'erro_facebook' => $r['erro'],
             'facebook_de' => $r['de'],
             'periodo' => ['de' => $de->toDateTimeString(), 'ate' => $ate->toDateTimeString()],
@@ -571,13 +599,26 @@ class MarketingController extends Controller
 
                 continue;
             }
-            $grupos[$k] ??= ['valor' => $k, 'leads' => 0, 'triados' => 0, 'qualificados' => 0, 'reunioes' => 0, 'realizadas' => 0, 'vendas' => 0];
+            $grupos[$k] ??= ['valor' => $k, 'leads' => 0, 'responderam' => 0, 'triados' => 0, 'qualificados' => 0,
+                'marcaram' => 0, 'compareceram' => 0, 'vendas' => 0, 'reunioes' => 0, 'realizadas' => 0];
             $grupos[$k]['leads']++;
+            if ($l->respondeu) {
+                $grupos[$k]['responderam']++;
+            }
             if ($l->qualified !== null) {
                 $grupos[$k]['triados']++;
                 if ($l->qualified) {
                     $grupos[$k]['qualificados']++;
                 }
+            }
+            // O funil conta PESSOAS, não reuniões: um lead que remarcou três vezes é um
+            // lead que marcou, não três. As duas contagens viajam juntas porque respondem
+            // perguntas diferentes — "quantos chegaram até aqui" e "quanto de agenda isso deu".
+            if ((int) $l->reunioes > 0) {
+                $grupos[$k]['marcaram']++;
+            }
+            if ((int) $l->realizadas > 0) {
+                $grupos[$k]['compareceram']++;
             }
             $grupos[$k]['reunioes'] += (int) $l->reunioes;
             $grupos[$k]['realizadas'] += (int) $l->realizadas;
@@ -598,6 +639,20 @@ class MarketingController extends Controller
             $g['manski'] = $g['leads'] > 0
                 ? [round($g['qualificados'] / $g['leads'], 4), round(($g['qualificados'] + $g['sem_triagem']) / $g['leads'], 4)]
                 : [0, 1];
+
+            // Cada passo do funil sobre o passo ANTERIOR, não sobre o total. É o que
+            // responde "onde este segmento vaza": 60% de leads que respondem e 5% de quem
+            // responde que qualifica é um problema diferente do inverso, e as duas leituras
+            // dariam a mesma porcentagem sobre o total.
+            $taxa = fn (int $parte, int $todo) => $todo > 0 ? round($parte / $todo, 4) : null;
+            $g['funil'] = [
+                'respondeu' => $taxa($g['responderam'], $g['leads']),
+                'qualificou' => $taxa($g['qualificados'], $g['triados']),
+                'marcou' => $taxa($g['marcaram'], $g['qualificados']),
+                'compareceu' => $taxa($g['compareceram'], $g['marcaram']),
+                'fechou' => $taxa($g['vendas'], $g['compareceram']),
+            ];
+
             $linhas[] = $g;
         }
 

@@ -140,13 +140,13 @@ const td = 'font-size:12px;padding:7px 10px;border-top:1px solid var(--c-surface
                   <tr>
                     <th :style="th">&nbsp;</th>
                     <th :style="th">Leads</th>
-                    <th :style="th">Triados</th>
-                    <th :style="th">Qualif.</th>
-                    <th :style="th">Taxa</th>
+                    <th :style="th" title="Mandou 2+ mensagens — a primeira é automática do clique no anúncio">Respondeu</th>
+                    <th :style="th" title="Sobre os leads TRIADOS, não sobre o total">Qualificou</th>
                     <th :style="th">Intervalo (95%)</th>
-                    <th :style="th">No pior / melhor caso</th>
-                    <th :style="th">Reuniões</th>
-                    <th :style="th">Vendas</th>
+                    <th :style="th" title="Onde a taxa pode estar conforme o que os leads sem triagem viessem a ser">Pior / melhor caso</th>
+                    <th :style="th" title="Leads que marcaram reunião, sobre os qualificados">Marcou reunião</th>
+                    <th :style="th" title="Leads que compareceram, sobre os que marcaram">Compareceu</th>
+                    <th :style="th" title="Vendas sobre quem compareceu">Fechou</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -156,13 +156,16 @@ const td = 'font-size:12px;padding:7px 10px;border-top:1px solid var(--c-surface
                       <span v-if="l.triados < 12" title="Amostra pequena demais para entrar em comparação" style="font-size:10px;color:var(--c-text-faint);"> · amostra curta</span>
                     </td>
                     <td :style="td">{{ l.leads }}</td>
-                    <td :style="td">{{ l.triados }}</td>
-                    <td :style="td">{{ l.qualificados }}</td>
-                    <td :style="td + 'font-weight:800;'">{{ pct(l.taxa) }}</td>
+                    <td :style="td">{{ l.responderam }} <span style="color:var(--c-text-faint);">{{ pct(l.funil.respondeu) }}</span></td>
+                    <td :style="td + 'font-weight:800;'">
+                      {{ l.qualificados }}<span style="font-weight:400;color:var(--c-text-faint);">/{{ l.triados }}</span>
+                      <span style="color:var(--c-text-secondary);">{{ pct(l.funil.qualificou) }}</span>
+                    </td>
                     <td :style="td + 'color:var(--c-text-secondary);'">{{ pct(l.ic[0]) }} – {{ pct(l.ic[1]) }}</td>
                     <td :style="td + 'color:var(--c-text-faint);'">{{ pct(l.manski[0]) }} – {{ pct(l.manski[1]) }}</td>
-                    <td :style="td">{{ l.reunioes }}<span v-if="l.realizadas" style="color:var(--c-text-faint);"> ({{ l.realizadas }})</span></td>
-                    <td :style="td">{{ l.vendas }}</td>
+                    <td :style="td">{{ l.marcaram }} <span style="color:var(--c-text-faint);">{{ pct(l.funil.marcou) }}</span></td>
+                    <td :style="td">{{ l.compareceram }} <span style="color:var(--c-text-faint);">{{ pct(l.funil.compareceu) }}</span></td>
+                    <td :style="td">{{ l.vendas }} <span style="color:var(--c-text-faint);">{{ pct(l.funil.fechou) }}</span></td>
                   </tr>
                 </tbody>
               </table>
@@ -176,11 +179,15 @@ const td = 'font-size:12px;padding:7px 10px;border-top:1px solid var(--c-surface
 
         <!-- Bloco do Facebook, separado de propósito. -->
         <div style="border-top:1px solid var(--c-surface-1);padding-top:18px;margin-top:26px;">
-          <div style="font-weight:800;font-size:13.5px;margin-bottom:5px;">Recortes do Facebook</div>
+          <div style="font-weight:800;font-size:13.5px;margin-bottom:5px;">Recortes do Facebook — o funil PARA aqui</div>
           <div style="font-size:12px;color:var(--c-text-muted);line-height:1.6;margin-bottom:14px;">
-            Idade, gênero e localização só existem do lado da Meta — o WhatsApp não entrega nenhum dos três junto do lead.
-            Só que a Meta conhece um único resultado nesta operação: <strong>conversa iniciada</strong>. Não há qualificação nestes números.
-            Como nesta conta já se mediu que lead barato e lead bom andam em direções <strong>opostas</strong>, ler custo por conversa como qualidade de público inverte a decisão.
+            Idade, gênero e localização só existem do lado da Meta, e o WhatsApp não entrega nenhum dos três junto do lead.
+            Por isso <strong>não dá para dizer quem qualifica, quem marca reunião ou quem fecha por faixa etária ou por gênero</strong>:
+            não existe chave ligando a pessoa que conversou no WhatsApp à célula demográfica que a Meta contou — o dado dela é agregado por anúncio, não por pessoa.
+            O último passo do funil que estes recortes alcançam é <strong>conversa iniciada</strong>.
+            <br><br>
+            O funil completo — respondeu, qualificou, marcou, compareceu, fechou — está nas tabelas acima, que são as que cruzam com o CRM.
+            E cuidado ao ler custo por conversa como qualidade de público: nesta conta já se mediu que lead barato e lead bom andam em direções <strong>opostas</strong>.
           </div>
 
           <div v-if="dados.erro_facebook" style="background:var(--c-warn-bg);border:1px solid rgba(var(--c-warn-rgb),.4);border-radius:10px;padding:10px 12px;font-size:12px;color:var(--c-warn-hi);margin-bottom:14px;">

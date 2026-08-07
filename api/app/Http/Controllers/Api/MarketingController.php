@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Conversation;
 use App\Models\MarketingCreative;
 use App\Models\MarketingCredential;
+use App\Models\MarketingMemory;
 use App\Support\FacebookAds;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -487,6 +488,51 @@ class MarketingController extends Controller
         Cache::forget('fb_ok:campanhas:'.MarketingCredential::atual()->getKey());
 
         return response()->json(['ok' => true, 'resultado' => $resultado]);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Memória de marketing: o que já se aprendeu sobre os anúncios desta empresa.
+    // Separada da memória da IA de vendas de propósito — ver MarketingMemory.
+    // ---------------------------------------------------------------------------
+
+    public function memorias()
+    {
+        return response()->json([
+            'memorias' => MarketingMemory::orderByDesc('fixado')->orderByDesc('updated_at')->get(),
+            'categorias' => MarketingMemory::CATEGORIAS,
+        ]);
+    }
+
+    public function salvarMemoria(Request $request)
+    {
+        return response()->json(MarketingMemory::create($this->validarMemoria($request)), 201);
+    }
+
+    public function atualizarMemoria(Request $request, MarketingMemory $memoria)
+    {
+        $memoria->update($this->validarMemoria($request));
+
+        return response()->json($memoria);
+    }
+
+    public function apagarMemoria(MarketingMemory $memoria)
+    {
+        $memoria->delete();
+
+        return response()->json(['ok' => true]);
+    }
+
+    /** @return array<string, mixed> */
+    private function validarMemoria(Request $request): array
+    {
+        return $request->validate([
+            'categoria' => 'required|string|in:'.implode(',', MarketingMemory::CATEGORIAS),
+            'titulo' => 'required|string|max:180',
+            'conteudo' => 'required|string|max:4000',
+            'periodo' => 'nullable|string|max:64',
+            'confianca' => 'required|string|in:'.implode(',', MarketingMemory::CONFIANCAS),
+            'fixado' => 'boolean',
+        ]);
     }
 
     /** Duplica a campanha (conjuntos e anúncios juntos), pausada, como no Facebook. */

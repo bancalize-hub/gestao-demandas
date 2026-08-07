@@ -469,6 +469,7 @@ const rodapeSemAtrib = computed(() => semAtribuicao.value
         <div style="font-size:12px;color:var(--c-text-muted);">Campanhas do Facebook Ads cruzadas com os leads reais do CRM</div>
       </div>
       <div style="flex:1;" />
+      <NuxtLink to="/marketing/memoria" style="text-decoration:none;background:var(--c-surface-2);color:var(--c-text-secondary);font-size:12.5px;font-weight:700;padding:8px 13px;border-radius:9px;">🧠 Memória</NuxtLink>
       <NuxtLink to="/marketing/criativos" style="text-decoration:none;background:var(--c-surface-2);color:var(--c-text-secondary);font-size:12.5px;font-weight:700;padding:8px 13px;border-radius:9px;">🖼️ Criativos</NuxtLink>
     </div>
 

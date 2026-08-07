@@ -129,6 +129,11 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
         Route::get('/marketing/ad-stats', [MarketingController::class, 'adStats']);
         Route::patch('/marketing/campanhas/{id}', [MarketingController::class, 'atualizarCampanha']);
         Route::post('/marketing/campanhas/{id}/duplicar', [MarketingController::class, 'duplicarCampanha']);
+        // Memória de marketing: aprendizado sobre os anúncios, separado da memória da IA de vendas.
+        Route::get('/marketing/memorias', [MarketingController::class, 'memorias']);
+        Route::post('/marketing/memorias', [MarketingController::class, 'salvarMemoria']);
+        Route::patch('/marketing/memorias/{memoria}', [MarketingController::class, 'atualizarMemoria']);
+        Route::delete('/marketing/memorias/{memoria}', [MarketingController::class, 'apagarMemoria']);
 
         // Painel da PLATAFORMA (página /super): fala de todas as empresas ao mesmo tempo,
         // por isso vive aqui dentro e nunca no grupo comum. Ver PLANO-SUPER-ADMIN.md.

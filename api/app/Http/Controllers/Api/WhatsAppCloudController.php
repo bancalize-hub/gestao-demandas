@@ -11,7 +11,6 @@ use App\Models\WaAccount;
 use App\Services\LeadsDeAnuncio;
 use App\Support\Channels\CloudChannel;
 use App\Support\Evolution;
-use App\Support\MetaConversions;
 use App\Support\Realtime;
 use App\Support\Tenancy;
 use App\Support\Wa;
@@ -457,13 +456,16 @@ class WhatsAppCloudController extends Controller
         if (! $isOut) {
             LeadsDeAnuncio::registrarSeAnuncio($conv, $preview, $temReferral, $conversaNova);
             LeadsDeAnuncio::detectarCriativo($conv, $preview, $conversaNova);
-            // Primeiro contato de um lead de anúncio = conversão "Lead" para a Meta.
-            // Vai depois do save() porque é o save que grava o ctwa_clid que o evento usa.
-            if ($temReferral) {
-                // A etapa separa este lead do MESMO evento disparado na qualificação —
-                // sem ela a conversão "Lead no CRM" contaria os dois.
-                MetaConversions::enviarUmaVez($conv, MetaConversions::LEAD, ['etapa' => MetaConversions::ETAPA_LEAD]);
-            }
+            // NÃO se manda evento de "chegou lead" (removido em 08/08/2026).
+            //
+            // Ele existiu aqui e era o pior uso possível de um dos quatro nomes de evento
+            // que o business_messaging aceita: a Meta JÁ conta o mesmo fato sozinha, como
+            // conversa iniciada, e como conversão personalizada não lê evento de mensagem
+            // (ver MetaConversions), lead comum e lead qualificado chegavam no Gerenciador
+            // como a MESMA linha — 132 "leads" indistinguíveis, e nada para otimizar.
+            //
+            // Agora `MetaConversions::LEAD` é gasto com o lead que a triagem APROVA, e sai
+            // de Conversation::booted(). O evento do funil que nasce aqui é nenhum.
         }
 
         // Prospect respondeu a um disparo → marca o contato da campanha.

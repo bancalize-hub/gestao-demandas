@@ -3,42 +3,40 @@
 namespace App\Console\Commands;
 
 use App\Models\MarketingCredential;
-use App\Support\MetaConversions;
 use App\Support\Tenancy;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Http;
 
 /**
- * Cria no Facebook as CONVERSÕES PERSONALIZADAS dos quatro momentos do funil.
+ * Lista as conversões personalizadas da conta. NÃO CRIA MAIS NENHUMA.
  *
- * O evento em si não se "cria" na Meta — ele passa a existir quando chega. O que se
- * cria é a conversão personalizada: o objeto que aparece na lista de objetivos quando
- * você monta uma campanha de conversão. Sem ela, o evento chega ao Gerenciador de
- * Eventos mas não dá para escolher como meta de otimização.
+ * ISTO AQUI ERA UM CAMINHO SEM SAÍDA, e a medição está guardada para ninguém refazer:
+ * conversão personalizada é avaliada sobre evento de PIXEL/WEB e simplesmente não
+ * enxerga evento com `action_source: business_messaging`, que é o único jeito de
+ * reportar o funil de um lead que entra por Click-to-WhatsApp.
  *
- * Idempotente: conversão que já existe com o mesmo nome é pulada, não duplicada.
+ * A prova, colhida na conta em 08/08/2026:
+ *  - "CRM · Lead no CRM" — regra `LeadSubmitted` + `origem=crm`, as duas condições
+ *    presentes em todo payload nosso — recebeu ~87 eventos casáveis depois de criada e
+ *    tem `last_fired_time` VAZIO. O mesmo vale para as outras quatro.
+ *  - "Demonstração" — regra `PageView` + URL, evento de site — disparou normalmente na
+ *    MESMA conta. Ou seja: o mecanismo funciona, os nossos eventos é que não entram nele.
+ *  - Nas ações da conta não existe nenhum `offsite_conversion.custom.*`; os nossos
+ *    eventos aparecem como `onsite_conversion.lead`, `.initiate_checkout`, `.view_content`.
+ *
+ * Consequência de projeto: o que separa um momento do funil do outro é o NOME DO EVENTO,
+ * e são só quatro (ver MetaConversions). Por isso `LeadSubmitted` passou a ser gasto com
+ * o lead QUALIFICADO em vez de com "chegou um lead".
+ *
+ * As cinco conversões "CRM · …" foram arquivadas: mantê-las na lista de objetivos só
+ * levava alguém a montar campanha atrás de um alvo que nunca dispara — foi exatamente o
+ * que aconteceu com a campanha "Conversão (Lead) - Criativo 7", que gastou sem entregar.
  */
 class CapiConversoes extends Command
 {
-    protected $signature = 'capi:conversoes {--empresa=1 : Empresa dona da conta de anúncios} {--listar : Só mostra o que já existe}';
+    protected $signature = 'capi:conversoes {--empresa=1 : Empresa dona da conta de anúncios}';
 
-    protected $description = 'Cria as conversões personalizadas do funil na conta de anúncios';
-
-    /**
-     * `custom_event_type` NÃO é livre: a Meta exige a categoria correspondente ao nome do
-     * evento (o enum é INITIATED_CHECKOUT e CONTENT_VIEW — não os nomes dos eventos).
-     * Como os nomes são impostos pelo vocabulário de business_messaging (ver
-     * MetaConversions), a categoria vem junto — não há escolha a fazer aqui.
-     */
-    private const CONVERSOES = [
-        [MetaConversions::LEAD, 'CRM · Lead no CRM', 'LEAD', MetaConversions::ETAPA_LEAD],
-        // O alvo que realmente interessa otimizar: lead que a triagem aprovou. Mesmo
-        // evento do lead — o que separa é a etapa (ver MetaConversions::ETAPA_QUALIFICADO).
-        [MetaConversions::LEAD, 'CRM · Lead qualificado', 'LEAD', MetaConversions::ETAPA_QUALIFICADO],
-        [MetaConversions::REUNIAO_MARCADA, 'CRM · Reunião marcada', 'INITIATED_CHECKOUT', null],
-        [MetaConversions::REUNIAO_REALIZADA, 'CRM · Reunião realizada', 'CONTENT_VIEW', null],
-        [MetaConversions::VENDA, 'CRM · Venda fechada', 'PURCHASE', null],
-    ];
+    protected $description = 'Lista as conversões personalizadas da conta (criar não adianta — ver a classe)';
 
     public function handle(Tenancy $tenancy): int
     {
@@ -65,63 +63,28 @@ class CapiConversoes extends Command
         $conta = str_starts_with((string) $cred->ad_account_id, 'act_') ? $cred->ad_account_id : 'act_'.$cred->ad_account_id;
         $token = $cred->access_token;
 
-        // O que já existe, para não duplicar. Conversão apagada continua saindo nesta
-        // listagem — só some do Gerenciador — e volta com `is_archived: true`. Se ela
-        // contasse como "já existe", nunca daria para recriar uma com o mesmo nome.
         $todas = collect(
             Http::timeout(30)->get("{$base}/{$conta}/customconversions", [
-                'access_token' => $token, 'fields' => 'id,name,is_archived', 'limit' => 100,
+                'access_token' => $token, 'fields' => 'id,name,is_archived,last_fired_time', 'limit' => 100,
             ])->json('data') ?? []
         );
-        $existentes = $todas->reject(fn ($c) => (bool) ($c['is_archived'] ?? false))->pluck('id', 'name');
 
-        if ($this->option('listar')) {
-            $this->info("Conversões na conta {$conta}:");
-            foreach ($todas as $c) {
-                $this->line(sprintf('  %-20s %s%s', $c['id'], $c['name'] ?? '?', ($c['is_archived'] ?? false) ? '  (arquivada/apagada)' : ''));
-            }
-
-            return self::SUCCESS;
+        $this->info("Conversões personalizadas na conta {$conta}:");
+        foreach ($todas as $c) {
+            $this->line(sprintf(
+                '  %-20s %-30s %s  %s',
+                $c['id'],
+                mb_substr((string) ($c['name'] ?? '?'), 0, 30),
+                ($c['is_archived'] ?? false) ? 'arquivada' : 'ativa    ',
+                isset($c['last_fired_time']) ? 'disparou em '.$c['last_fired_time'] : 'NUNCA disparou',
+            ));
         }
 
-        foreach (self::CONVERSOES as [$evento, $nome, $tipo, $etapa]) {
-            if ($existentes->has($nome)) {
-                $this->line("· {$nome} — já existe ({$existentes[$nome]})");
-
-                continue;
-            }
-
-            // A regra casa pelo nome do evento E pela marca de origem. As DUAS condições
-            // são obrigatórias: com só a do evento a Graph API responde "A conversion rule
-            // is required at creation time" e não cria nada (testado contra a API real).
-            $condicoes = [
-                ['event' => ['eq' => $evento]],
-                ['or' => [['origem' => ['eq' => MetaConversions::ORIGEM]]]],
-            ];
-            // Dois eventos com o MESMO nome (lead e lead qualificado) só se distinguem
-            // por esta condição — sem ela a conversão de lead engoliria a de qualificado.
-            if ($etapa !== null) {
-                $condicoes[] = ['or' => [['etapa' => ['eq' => $etapa]]]];
-            }
-            $regra = json_encode(['and' => $condicoes]);
-
-            $res = Http::timeout(30)->asForm()->post("{$base}/{$conta}/customconversions", [
-                'access_token' => $token,
-                'name' => $nome,
-                'event_source_id' => $dataset,
-                'custom_event_type' => $tipo,
-                'rule' => $regra,
-                'description' => "Disparado pelo CRM quando o lead atinge esta etapa (evento {$evento}).",
-            ]);
-
-            $json = $res->json();
-            if (! empty($json['id'])) {
-                $this->info("✓ {$nome} criada ({$json['id']}) — evento {$evento}");
-            } else {
-                $msg = $json['error']['error_user_msg'] ?? $json['error']['message'] ?? 'erro desconhecido';
-                $this->error("✗ {$nome}: {$msg}");
-            }
-        }
+        $this->newLine();
+        $this->warn('Este comando não cria mais conversões: as do CRM nunca disparam.');
+        $this->line('Evento com action_source=business_messaging não é lido por conversão');
+        $this->line('personalizada. Quem separa os momentos do funil é o NOME do evento —');
+        $this->line('ver App\\Support\\MetaConversions.');
 
         return self::SUCCESS;
     }

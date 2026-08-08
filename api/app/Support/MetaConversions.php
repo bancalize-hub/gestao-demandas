@@ -39,9 +39,31 @@ class MetaConversions
      * recusados com "nome de evento inválido" (subcode 2804066).
      *
      * Por isso as duas etapas do meio usam nomes que não descrevem o que aconteceu: são
-     * os únicos slots livres. Quem dá nome de gente é a conversão personalizada criada
-     * pelo `capi:conversoes` — é ela que aparece como objetivo na hora de montar a
-     * campanha, com o rótulo "CRM · Reunião marcada".
+     * os únicos slots livres.
+     *
+     * CADA MOMENTO DO FUNIL PRECISA DE UM NOME SÓ SEU — não dá para separar dois momentos
+     * pelo `custom_data` do mesmo evento. Conversão personalizada NÃO enxerga evento com
+     * `action_source: business_messaging`: ela é avaliada sobre evento de pixel/web.
+     * Medido na conta em 08/08/2026 — "CRM · Lead no CRM" (regra `LeadSubmitted` +
+     * `origem=crm`, as duas presentes no payload) recebeu ~87 eventos casáveis desde a
+     * criação e tem `last_fired_time` VAZIO, enquanto "Demonstração" (`PageView` + URL,
+     * evento de site) disparou normal. Nenhum `offsite_conversion.custom.*` aparece nas
+     * ações da conta; os nossos chegam como `onsite_conversion.lead` e afins.
+     *
+     * Consequência: o que aparece no Gerenciador é o NOME DO EVENTO. Por isso
+     * {@see self::LEAD} é gasto com o lead QUALIFICADO, que é o único alvo que vale
+     * otimizar — ver o comentário lá.
+     */
+
+    /**
+     * Lead QUALIFICADO — não "chegou um lead".
+     *
+     * Este nome já significou "lead entrou no CRM" e foi remanejado em 08/08/2026. O
+     * motivo: sendo o nome do evento a única coisa que a Meta separa (ver acima), gastar
+     * um dos quatro slots com "chegou lead" é desperdiçá-lo — a Meta JÁ conta isso
+     * nativamente como conversa iniciada (`messaging_conversation_started_7d`), e a conta
+     * já mediu que lead barato e lead bom andam em direções opostas. Agora a coluna
+     * "Lead" do Gerenciador quer dizer lead que a triagem aprovou.
      */
     public const LEAD = 'LeadSubmitted';
 
@@ -52,19 +74,19 @@ class MetaConversions
     public const VENDA = 'Purchase';
 
     /**
-     * A ETAPA vai no custom_data porque `business_messaging` só aceita os quatro nomes de
-     * evento acima — não existe "LeadQualificado" para inventar. Quem separa lead de lead
-     * QUALIFICADO é a conversão personalizada, filtrando por este campo sobre o mesmo
-     * evento. Sem ele, "CRM · Lead no CRM" contaria as duas coisas e a otimização voltaria
-     * a perseguir volume, que é justamente o que já se mediu não trazer cliente.
+     * A etapa continua indo no `custom_data`, mas NÃO é ela que separa nada para a Meta —
+     * conversão personalizada não lê evento de business_messaging (ver acima). Ela fica
+     * por dois motivos honestos: é o que se lê no Gerenciador de Eventos ao depurar um
+     * evento específico, e é o que o `event_id` usa para deduplicar reenvio.
+     *
+     * NÃO volte a criar conversão personalizada filtrando por este campo esperando que
+     * ela conte: já foi medido que não conta.
      */
-    public const ETAPA_LEAD = 'lead';
-
     public const ETAPA_QUALIFICADO = 'qualificado';
 
     /** Rótulo humano de cada evento, para log e para a tela. */
     public const ROTULOS = [
-        self::LEAD => 'Lead chegou no CRM',
+        self::LEAD => 'Lead qualificado',
         self::REUNIAO_MARCADA => 'Reunião marcada',
         self::REUNIAO_REALIZADA => 'Reunião realizada',
         self::VENDA => 'Venda fechada',

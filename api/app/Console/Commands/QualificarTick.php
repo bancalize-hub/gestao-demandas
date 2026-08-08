@@ -215,8 +215,17 @@ class QualificarTick extends Command
             ->filter()
             ->implode("\n");
 
+        // Nada legível: a conversa só tem mídia sem texto nem transcrição. NÃO devolve
+        // `null` aqui — `null` significa "a IA falhou, tenta de novo", e o laço não grava
+        // nada, então a conversa voltava ao topo da fila PARA SEMPRE (é por
+        // `last_message_at DESC`). Eram as conversas 708 e 1445 queimando 2 das 6 vagas de
+        // cada rodada desde julho, e foi o que fez o mutirão de 08/08 cair de 4 para 2
+        // julgamentos por lote.
+        //
+        // O veredito certo é abstenção COM carimbo: some da fila e só volta se chegar
+        // mensagem nova — que é exatamente a regra de reentrada que já existe.
         if (trim($linhas) === '') {
-            return null;
+            return [null, 'Só mídia sem texto nem transcrição — não havia o que julgar.'];
         }
 
         $prompt = <<<TXT

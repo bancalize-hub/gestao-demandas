@@ -255,13 +255,17 @@ function estiloCard(c: Criativo) {
 
         <div style="width:1px;height:26px;background:var(--c-surface-1);margin:0 3px;" />
 
+        <!-- Diz "Reprovados", e não "Arquivados": é a MESMA palavra do selo do card e do
+             botão que reprova. Com dois nomes para o mesmo estado, quem procura pelo
+             veredito que acabou de dar não encontra o recorte — o arquivamento é a
+             consequência, não o nome do estado. -->
         <button
-          title="Reprovados — ficam fora da biblioteca e são recusados na criação de anúncio"
-          :style="{ background: filtro === 'reprovado' ? 'var(--c-surface-2)' : 'transparent', border: '1px solid ' + (filtro === 'reprovado' ? SELOS.reprovado.cor : 'var(--c-surface-1)'), borderRadius: '10px', padding: '8px 14px', cursor: 'pointer', fontFamily: 'inherit', color: 'var(--c-text-faint)', display: 'flex', alignItems: 'baseline', gap: '7px' }"
+          title="Reprovados — saem da biblioteca e são recusados na criação de anúncio, inclusive pela IA"
+          :style="{ background: filtro === 'reprovado' ? 'var(--c-surface-2)' : 'var(--c-bg-deepest)', border: '1px solid ' + (filtro === 'reprovado' ? SELOS.reprovado.cor : 'var(--c-surface-1)'), borderRadius: '10px', padding: '8px 14px', cursor: 'pointer', fontFamily: 'inherit', color: 'var(--c-text)', display: 'flex', alignItems: 'baseline', gap: '7px' }"
           @click="filtro = filtro === 'reprovado' ? 'biblioteca' : 'reprovado'"
         >
-          <strong style="font-size:16px;">{{ contagem.reprovado }}</strong>
-          <span style="font-size:11.5px;font-weight:700;">🗄️ Arquivados</span>
+          <strong :style="{ fontSize: '16px', color: SELOS.reprovado.cor }">{{ contagem.reprovado }}</strong>
+          <span style="font-size:11.5px;color:var(--c-text-muted);font-weight:700;">{{ SELOS.reprovado.icone }} {{ SELOS.reprovado.curto }}</span>
         </button>
 
         <div style="flex:1;" />
@@ -278,13 +282,13 @@ function estiloCard(c: Criativo) {
       <div style="font-size:11px;color:var(--c-text-faint);margin-bottom:16px;">{{ criativos.length }} criativo{{ criativos.length === 1 ? '' : 's' }} no total</div>
 
       <div v-if="arquivadoAgora" style="background:var(--c-surface-1);border:1px solid var(--c-surface-3);border-radius:10px;padding:9px 12px;font-size:12px;margin-bottom:14px;display:flex;align-items:center;gap:10px;">
-        <span>🗄️ <strong>{{ arquivadoAgora }}</strong> foi arquivado e saiu da biblioteca.</span>
-        <button style="background:none;border:none;color:var(--c-text-secondary);font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;text-decoration:underline;" @click="filtro = 'reprovado'; arquivadoAgora = ''">Ver arquivados</button>
+        <span>⛔ <strong>{{ arquivadoAgora }}</strong> foi reprovado e saiu da biblioteca.</span>
+        <button style="background:none;border:none;color:var(--c-text-secondary);font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;text-decoration:underline;" @click="filtro = 'reprovado'; arquivadoAgora = ''">Ver reprovados</button>
         <button style="margin-left:auto;background:none;border:none;color:var(--c-text-faint);cursor:pointer;font-size:15px;" @click="arquivadoAgora = ''">×</button>
       </div>
 
       <div v-if="filtro === 'reprovado'" style="background:rgba(255,77,77,.06);border:1px solid rgba(255,77,77,.25);border-radius:10px;padding:10px 12px;font-size:12px;color:var(--c-text-secondary);margin-bottom:16px;line-height:1.5;">
-        <strong>Arquivados.</strong> Estas peças deram ruim e ficam fora da biblioteca — a criação de anúncio recusa cada uma delas, inclusive quando quem pede é a IA.
+        <strong>Reprovados.</strong> Estas peças deram ruim e ficam fora da biblioteca — a criação de anúncio recusa cada uma delas, inclusive quando quem pede é a IA.
         Para trazer uma de volta, mude o selo dela para <strong>Em teste</strong> ou <strong>Validado</strong>.
       </div>
 
@@ -320,8 +324,8 @@ function estiloCard(c: Criativo) {
       <div v-if="carregando" style="font-size:12.5px;color:var(--c-text-faint);">Carregando…</div>
       <div v-else-if="!criativos.length" style="font-size:12.5px;color:var(--c-text-faint);">Nenhum criativo ainda.</div>
       <div v-else-if="!visiveis.length" style="font-size:12.5px;color:var(--c-text-faint);">
-        {{ filtro === 'biblioteca' ? 'Nenhum criativo na biblioteca — todos foram arquivados.'
-          : filtro === 'reprovado' ? 'Nenhum criativo arquivado.'
+        {{ filtro === 'biblioteca' ? 'Nenhum criativo na biblioteca — todos foram reprovados.'
+          : filtro === 'reprovado' ? 'Nenhum criativo reprovado.'
             : filtro === 'naosubiu' ? 'Todos os criativos da biblioteca já viraram anúncio.'
               : filtro === 'testando' ? 'Nenhum criativo em teste — nenhum dos não-julgados está no ar.'
                 : 'Nenhum criativo validado.' }}

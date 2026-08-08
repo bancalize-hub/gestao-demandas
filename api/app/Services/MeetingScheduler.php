@@ -32,6 +32,31 @@ class MeetingScheduler
      */
     public function decideAndBook(User $user, Conversation $conversation, string $memoryContext = ''): array
     {
+        // LEAD REPROVADO NA TRIAGEM NÃO GANHA HORÁRIO.
+        //
+        // Medido em 08/08/2026, contando só quem a triagem avaliou: das 10 pessoas que
+        // COMPARECERAM a uma call, 10 eram qualificadas. Desqualificado marcou 5 reuniões
+        // e não apareceu em nenhuma — eram horários de comercial reservados para quem já
+        // tinha dito, com todas as letras, que queria empréstimo ou conta para uso próprio.
+        //
+        // A trava é só em `qualified === 0`, o veredito explícito. Abstenção (NULL) segue
+        // podendo marcar: metade dos leads de anúncio ainda não disse o suficiente para
+        // ser julgada, e tratá-los como reprovados fecharia a porta para quem só não falou
+        // ainda. Ver [[gestao-triagem-leads]] para o porquê de NULL ≠ desqualificado.
+        //
+        // Quem JÁ tem reunião ativa passa direto: senão o lead reprovado ficaria sem
+        // conseguir nem cancelar nem remarcar pela IA o que já está na agenda.
+        // `qualified` tem cast de boolean: false = reprovado, null = ainda sem triagem.
+        // Comparação estrita é obrigatória aqui — `== false` pegaria o NULL junto.
+        if ($conversation->qualified === false && ! Meeting::activeFor($conversation->id)) {
+            return [
+                'action' => 'nada',
+                'scheduled' => false,
+                'message' => null,
+                'note' => 'Lead reprovado na triagem — a IA não oferece horário. Marque à mão se discordar.',
+            ];
+        }
+
         $durationMin = 60; // reuniões de 1 hora
         $slots = $this->google->freeSlots($user, $durationMin);
 

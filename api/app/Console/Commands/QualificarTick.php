@@ -33,7 +33,9 @@ class QualificarTick extends Command
      * A 6 por rodada o acúmulo escoa em algumas horas e o dia a dia (poucos leads novos
      * por rodada) fica instantâneo de qualquer jeito.
      */
-    protected $signature = 'leads:qualificar-tick {--limite=6 : quantas conversas por rodada}';
+    protected $signature = 'leads:qualificar-tick
+        {--limite=6 : quantas conversas por rodada}
+        {--dias=45 : só conversas criadas nos últimos N dias}';
 
     protected $description = 'IA faz a pré-triagem dos leads (qualificado / desqualificado)';
 
@@ -65,7 +67,7 @@ class QualificarTick extends Command
             }
 
             $total += $tenancy->run((int) $empresa->id, function () use ($criterio) {
-                return $this->triarEmpresa($criterio, (int) $this->option('limite'));
+                return $this->triarEmpresa($criterio, (int) $this->option('limite'), (int) $this->option('dias'));
             });
         }
 
@@ -75,12 +77,19 @@ class QualificarTick extends Command
     }
 
     /** @return int quantas conversas foram marcadas */
-    private function triarEmpresa(string $criterio, int $limite): int
+    private function triarEmpresa(string $criterio, int $limite, int $dias = 45): int
     {
         $pendentes = Conversation::query()
             ->where('archived', false)
-            // Lead antigo já foi triado na mão ou não importa mais para a decisão de verba.
-            ->where('created_at', '>=', now()->subDays(45))
+            // Por padrão só os últimos 45 dias: lead antigo já foi triado na mão ou não
+            // importa mais para a DECISÃO DE VERBA, que é o que o painel de marketing usa.
+            //
+            // Mas a triagem também serve para decidir A QUEM VALE FALAR DE NOVO, e aí o
+            // corte atrapalha: em 08/08/2026 havia 261 conversas do número antigo (que
+            // saiu do ar) nunca julgadas só por estarem fora da janela — gente que ficou
+            // invisível para qualquer reativação. Por isso o prazo virou opção: o
+            // agendador segue com 45, e um mutirão passa `--dias` maior.
+            ->where('created_at', '>=', now()->subDays(max(1, $dias)))
             ->where(function ($q) {
                 // Nunca olhada por ninguém. O `qualified_auto = 0` é o que impede o laço:
                 // quando a IA responde "não dá para julgar", a conversa CONTINUA com

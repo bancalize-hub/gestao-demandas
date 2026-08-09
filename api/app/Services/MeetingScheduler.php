@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Support\Claude;
 use App\Support\MetaConversions;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Cérebro do agendamento de reuniões: a IA lê a conversa, e SÓ marca quando o lead
@@ -540,15 +541,7 @@ class MeetingScheduler
 
         $label = $this->label($active->starts_at);
 
-        if ($active->google_event_id) {
-            $this->google->deleteEvent($user, $active->google_event_id);
-        }
-
-        $active->update([
-            'cancelled_at' => now(),
-            'cancel_reason' => 'pedido do cliente',
-            'reminder_sent_at' => now(), // não lembra de reunião cancelada
-        ]);
+        $this->dropMeeting($active, 'pedido do cliente');
 
         LeadActivity::log($conversation->id, 'reuniao', "Reunião de {$label} cancelada pelo cliente", null, $user->id);
 
@@ -559,6 +552,40 @@ class MeetingScheduler
             'previous_slot_label' => $label,
             'message' => "Sem problema! Cancelei a reunião de {$label}. Quer sugerir outro dia e horário para remarcarmos?",
         ];
+    }
+
+    /**
+     * Tira a reunião do ar: apaga o evento e carimba o cancelamento. É a parte MECÂNICA,
+     * sem mensagem ao lead — quem cancela decide o que (e se) fala com ele.
+     *
+     * O evento é apagado na agenda do ANFITRIÃO (`meetings.user_id`), não na de quem pediu:
+     * com time de anfitriões, o evento de um não existe na conta do outro.
+     *
+     * O Google não avisa ninguém (o delete não manda `sendUpdates`), o que é proposital nos
+     * cancelamentos por triagem: quem decide se o lead é avisado é o time, olhando a ficha.
+     */
+    public function dropMeeting(Meeting $meeting, string $motivo): bool
+    {
+        if ($meeting->google_event_id && $meeting->user) {
+            try {
+                $this->google->deleteEvent($meeting->user, $meeting->google_event_id);
+            } catch (\Throwable $e) {
+                // Agenda fora do ar não pode deixar a reunião "viva" no CRM: o registro é
+                // cancelado do mesmo jeito e o evento órfão aparece na agenda de quem o
+                // criou — melhor um evento a mais na tela do que um lembrete indo para um
+                // lead que o time já desmarcou.
+                Log::warning('agenda: evento não pôde ser apagado ao cancelar', [
+                    'meeting' => $meeting->id,
+                    'e' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        return $meeting->update([
+            'cancelled_at' => now(),
+            'cancel_reason' => $motivo,
+            'reminder_sent_at' => now(), // não lembra de reunião cancelada
+        ]);
     }
 
     /** Convida o lead: usa o e-mail do cadastro ou, na falta, o que ele digitou na conversa. */

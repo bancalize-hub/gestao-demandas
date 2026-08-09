@@ -4,10 +4,14 @@ namespace App\Console\Commands;
 
 use App\Models\Company;
 use App\Models\Conversation;
+use App\Models\LeadActivity;
+use App\Models\Meeting;
+use App\Services\MeetingScheduler;
 use App\Support\Claude;
 use App\Support\Tenancy;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Pré-triagem dos leads pela IA: marca `qualified` com um palpite e o porquê.
@@ -139,10 +143,59 @@ class QualificarTick extends Command
                 'qualified_at' => now(),
             ])->save();
 
+            if ($qualificado === false) {
+                $this->desmarcarReuniao($conv, $motivo);
+            }
+
             $marcados++;
         }
 
         return $marcados;
+    }
+
+    /**
+     * Lead reprovado que JÁ tinha horário perde o horário.
+     *
+     * A trava do agendador só olha o veredito no instante da marcação, e a triagem chega
+     * depois: `auto-reply:tick` roda a cada minuto e este, a cada três. Quem confirma
+     * horário rápido marcava antes de ser julgado (caso real: conv 2274, reunião às
+     * 13:41 e reprovação às 13:42) e o horário de comercial ficava reservado para quem
+     * a triagem já tinha dito que não ia fechar. Faltava o caminho de volta.
+     *
+     * EM SILÊNCIO, de propósito: avisar convida o lead a pedir outro horário, e cada
+     * ida e volta dessas é resposta da IA gerada para uma conversa que já foi reprovada.
+     * O registro fica na ficha, e é lá que o time decide se vale falar com ele.
+     */
+    private function desmarcarReuniao(Conversation $conv, string $motivo): void
+    {
+        $reuniao = Meeting::activeFor($conv->id);
+        if (! $reuniao) {
+            return;
+        }
+
+        $quando = $reuniao->starts_at?->copy()
+            ->setTimezone(config('app.timezone', 'America/Sao_Paulo'))
+            ->locale('pt_BR')->isoFormat('dddd, DD/MM [às] HH:mm') ?? 'sem data';
+
+        try {
+            app(MeetingScheduler::class)->dropMeeting($reuniao, 'lead reprovado na triagem');
+        } catch (\Throwable $e) {
+            Log::warning('triagem: falha ao desmarcar reunião do lead reprovado', [
+                'conversation' => $conv->id, 'meeting' => $reuniao->id, 'e' => $e->getMessage(),
+            ]);
+
+            return;
+        }
+
+        LeadActivity::log(
+            $conv->id,
+            'reuniao',
+            "Reunião de {$quando} desmarcada: lead reprovado na triagem",
+            "Motivo da triagem: {$motivo}\n\nO lead NÃO foi avisado. Se discordar da triagem, "
+                .'mude o chip de qualificação na conversa e remarque à mão.',
+        );
+
+        $this->warn("triagem: reunião {$reuniao->id} (conversa {$conv->id}) desmarcada — lead reprovado");
     }
 
     /**

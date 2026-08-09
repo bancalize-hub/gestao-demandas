@@ -47,11 +47,18 @@ class QualificarTick extends Command
     private const MIN_MENSAGENS = 1;
 
     /**
-     * Quanto tempo uma reprovação precisa ficar de pé, sem mexer na conversa, antes de
-     * custar o horário do lead. É a margem contra o veredito que a própria IA desfaz
+     * Quanto tempo uma reprovação da IA precisa ficar de pé, sem mexer na conversa, antes
+     * de custar o horário do lead. É a margem contra o veredito que a própria IA desfaz
      * minutos depois — ver desmarcarReprovados().
      */
-    private const ESPERA_MINUTOS = 30;
+    private const ESPERA_IA = 30;
+
+    /**
+     * O mesmo para a reprovação feita por gente. É curta porque decisão humana não se
+     * desfaz sozinha: só precisa cobrir o CICLO do chip, que passa por "desqualificado"
+     * a caminho de "sem triagem".
+     */
+    private const ESPERA_HUMANO = 5;
 
     /**
      * Repetições que fazem uma primeira-mensagem virar "texto de botão".
@@ -188,18 +195,32 @@ class QualificarTick extends Command
     {
         $reprovados = Conversation::query()
             ->where('qualified', false)
-            ->where('qualified_auto', true)
+            // Sem a hora da decisão não dá para saber se ela assentou. Toda decisão nova
+            // é carimbada (aqui e no PATCH do chip); sem carimbo é reprovação antiga, e
+            // ela só volta a ser considerada quando alguém mexer no chip de novo.
             ->whereNotNull('qualified_at')
-            ->where('qualified_at', '<=', now()->subMinutes(self::ESPERA_MINUTOS))
-            // Mensagem depois do veredito = re-julgamento a caminho. Não age sobre o que
-            // ainda vai ser revisto.
-            ->where(fn ($q) => $q->whereNull('last_message_at')
-                ->orWhereColumn('last_message_at', '<=', 'qualified_at'))
+            ->where(function ($q) {
+                // MARCA DA IA: veredito volátil, exige silêncio e meia hora de pé.
+                $q->where(fn ($s) => $s->where('qualified_auto', true)
+                    ->where('qualified_at', '<=', now()->subMinutes(self::ESPERA_IA))
+                    // Mensagem depois do veredito = re-julgamento a caminho. Não age sobre
+                    // o que ainda vai ser revisto.
+                    ->where(fn ($t) => $t->whereNull('last_message_at')
+                        ->orWhereColumn('last_message_at', '<=', 'qualified_at')))
+                    // MARCA DE GENTE: vale mais que a da IA e não se desfaz sozinha, então
+                    // não espera silêncio nenhum — conversa que continua andando não torna
+                    // a decisão de quem leu a conversa menos verdadeira. Os poucos minutos
+                    // existem só por causa do ciclo do chip (qualificado → desqualificado →
+                    // sem triagem): quem está limpando a marca passa por "desqualificado"
+                    // no caminho, e um clique de passagem não pode apagar reunião.
+                    ->orWhere(fn ($s) => $s->where('qualified_auto', false)
+                        ->where('qualified_at', '<=', now()->subMinutes(self::ESPERA_HUMANO)));
+            })
             ->whereHas('meetings', fn ($q) => $q->active())
             ->get();
 
         foreach ($reprovados as $conv) {
-            $this->desmarcarReuniao($conv, (string) $conv->qualified_reason);
+            $this->desmarcarReuniao($conv, (string) $conv->qualified_reason, (bool) $conv->qualified_auto);
         }
     }
 
@@ -209,7 +230,7 @@ class QualificarTick extends Command
      * uma conversa já reprovada. O registro fica na ficha, e é lá que o time decide se
      * vale falar com ele.
      */
-    private function desmarcarReuniao(Conversation $conv, string $motivo): void
+    private function desmarcarReuniao(Conversation $conv, string $motivo, bool $daIa): void
     {
         $reuniao = Meeting::activeFor($conv->id);
         if (! $reuniao) {
@@ -220,8 +241,12 @@ class QualificarTick extends Command
             ->setTimezone(config('app.timezone', 'America/Sao_Paulo'))
             ->locale('pt_BR')->isoFormat('dddd, DD/MM [às] HH:mm') ?? 'sem data';
 
+        // Quem reprovou muda o que se lê na ficha meses depois — "a IA achou" e "alguém do
+        // time leu e decidiu" não são a mesma informação na hora de revisar um cancelamento.
+        $porQuem = $daIa ? 'reprovado pela triagem da IA' : 'reprovado pelo time';
+
         try {
-            app(MeetingScheduler::class)->dropMeeting($reuniao, 'lead reprovado na triagem');
+            app(MeetingScheduler::class)->dropMeeting($reuniao, "lead {$porQuem}");
         } catch (\Throwable $e) {
             Log::warning('triagem: falha ao desmarcar reunião do lead reprovado', [
                 'conversation' => $conv->id, 'meeting' => $reuniao->id, 'e' => $e->getMessage(),
@@ -233,12 +258,13 @@ class QualificarTick extends Command
         LeadActivity::log(
             $conv->id,
             'reuniao',
-            "Reunião de {$quando} desmarcada: lead reprovado na triagem",
-            "Motivo da triagem: {$motivo}\n\nO lead NÃO foi avisado. Se discordar da triagem, "
-                .'mude o chip de qualificação na conversa e remarque à mão.',
+            "Reunião de {$quando} desmarcada: lead {$porQuem}",
+            ($motivo !== '' ? "Motivo: {$motivo}\n\n" : '')
+                .'O lead NÃO foi avisado. Se discordar, mude o chip de qualificação na conversa '
+                .'e remarque à mão.',
         );
 
-        $this->warn("triagem: reunião {$reuniao->id} (conversa {$conv->id}) desmarcada — lead reprovado");
+        $this->warn("triagem: reunião {$reuniao->id} (conversa {$conv->id}) desmarcada — {$porQuem}");
     }
 
     /**

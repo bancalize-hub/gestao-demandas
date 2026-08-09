@@ -78,6 +78,11 @@ class ConversationController extends Controller
         // voltaria por cima da correção de quem leu a conversa.
         if ($conversation->wasChanged('qualified')) {
             $conversation->qualified_auto = false;
+            // Carimba a hora da decisão HUMANA também. Quem reprova à mão faz o lead perder
+            // o horário (QualificarTick::desmarcarReprovados), e sem a hora não dá para
+            // separar "acabou de decidir" de "está só ciclando o chip" — o ciclo passa por
+            // desqualificado no caminho de volta para "sem triagem".
+            $conversation->qualified_at = now();
             $conversation->save();
         }
 

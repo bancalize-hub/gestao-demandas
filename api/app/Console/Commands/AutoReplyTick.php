@@ -154,7 +154,10 @@ class AutoReplyTick extends Command
 
                 if ($agendar) {
                     try {
-                        $res = $scheduler->decideAndBook($googleUser, $conv, $ai->memoryContext($conv));
+                        // `false`: aqui ninguém clicou em nada — $googleUser é só a prova de
+                        // que a empresa tem agenda conectada. Quem recebe a reunião é o
+                        // anfitrião menos carregado que estiver livre no horário.
+                        $res = $scheduler->decideAndBook($googleUser, $conv, $ai->memoryContext($conv), preferActingUser: false);
                         // Usa a mensagem do agendador SEMPRE que ele agiu (marcou/remarcou/cancelou/
                         // perguntou) e também quando ainda não há reunião (aí é a proposta de horários).
                         // Assim a IA nunca diz "confirmado" sem o evento ter sido realmente criado — e,

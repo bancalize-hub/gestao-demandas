@@ -24,6 +24,12 @@ class Meeting extends Model
         'attendees' => 'array',
     ];
 
+    /** O anfitrião: a conta Google em que o evento existe. Remarcar/cancelar é NELA. */
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
+    }
+
     public function conversation(): BelongsTo
     {
         return $this->belongsTo(Conversation::class);

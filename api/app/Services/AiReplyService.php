@@ -113,9 +113,15 @@ class AiReplyService
         $agendaBlock = '';
         $agendaRule = '- Para marcar reunião, pergunte ao lead qual dia/horário ele prefere. NUNCA invente datas ou horários específicos.';
         try {
-            $gUser = User::whereNotNull('google_access_token')->first();
-            if ($gUser && $gUser->hasGoogle()) {
-                $slots = app(GoogleCalendarService::class)->freeSlots($gUser, 60);
+            // TODAS as agendas conectadas DESTA empresa: os horários oferecidos têm de ser os
+            // mesmos que o agendador consegue marcar, e ele já trabalha com o time inteiro —
+            // com dois anfitriões, oferecer só a agenda de um esconderia metade da capacidade.
+            // O filtro por empresa não é decorativo: `User` não tem escopo de tenant, então
+            // sem ele a IA de uma empresa proporia o horário livre da agenda de outra.
+            $hosts = User::where('company_id', $conversation->company_id)
+                ->whereNotNull('google_refresh_token')->get();
+            if ($hosts->isNotEmpty()) {
+                $slots = app(GoogleCalendarService::class)->freeSlotsForHosts($hosts, 60);
                 if ($slots) {
                     $list = collect($slots)->take(8)->map(fn ($s) => '- '.$s['label'])->implode("\n");
                     $agendaBlock = "HORÁRIOS REAIS LIVRES NA AGENDA (são os ÚNICOS disponíveis; reunião dura 1 hora):\n{$list}\n\n";

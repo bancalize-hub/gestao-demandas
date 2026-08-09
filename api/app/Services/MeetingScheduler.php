@@ -19,18 +19,72 @@ use Carbon\Carbon;
  * REGRA DE OURO: cada contato tem NO MÁXIMO UM agendamento ativo. Antes de marcar qualquer
  * coisa consultamos o agendamento ativo da conversa; se já existir e o cliente citar uma data
  * nova, é REMARCAÇÃO (cancela o antigo ANTES de criar o novo), nunca uma segunda reunião.
+ *
+ * VÁRIOS ANFITRIÕES: quem tem agenda Google conectada na empresa forma um time, e a
+ * capacidade é a soma das agendas — 14h segue livre para o segundo enquanto o primeiro já
+ * tem alguém lá. Cada reunião é de UM anfitrião (`meetings.user_id`); ninguém é convidado
+ * para a call do outro. O time só é consultado ao MARCAR: remarcar e cancelar acontecem
+ * sempre na agenda em que o evento foi criado, senão o Google não acha o evento.
  */
 class MeetingScheduler
 {
     public function __construct(private GoogleCalendarService $google) {}
 
     /**
+     * O time de anfitriões da empresa, em ordem de preferência para receber a reunião.
+     *
+     * Quando alguém clicou "Agendar", essa pessoa vem primeiro: é a agenda dela que ela
+     * tem na cabeça ao clicar. No atendimento automático NÃO há alguém clicando — o
+     * `$acting` ali é só "um usuário com Google conectado", e tratá-lo como preferido
+     * daria toda a fila ao mesmo anfitrião. Por isso a preferência é uma decisão de quem
+     * chama, não um efeito colateral do parâmetro.
+     *
+     * O desempate seguinte é por CARGA (menos reuniões futuras primeiro) — é ele que
+     * torna a segunda agenda útil de verdade: sem isso o primeiro da lista ficaria com
+     * tudo que coubesse nele e o segundo só pegaria a sobra dos horários já lotados.
+     *
+     * @return \Illuminate\Support\Collection<int, User>
+     */
+    private function hosts(Conversation $conversation, User $acting, bool $preferActing): \Illuminate\Support\Collection
+    {
+        $preferidoId = $preferActing ? $acting->id : null;
+
+        $time = User::where('company_id', $conversation->company_id)
+            ->whereNotNull('google_refresh_token')
+            ->get();
+
+        // Carga = reuniões ainda por acontecer de cada um. Filtrada pelos ids do time e não
+        // pelo escopo de empresa: o agendador também roda no tick, onde nem sempre há tenant
+        // ligado, e aí o escopo global não filtra nada.
+        $carga = Meeting::withoutGlobalScopes()->active()
+            ->whereIn('user_id', $time->pluck('id'))
+            ->selectRaw('user_id, count(*) as total')
+            ->groupBy('user_id')->pluck('total', 'user_id');
+
+        $time = $time
+            ->sortBy([
+                fn (User $a, User $b) => ($b->id === $preferidoId ? 1 : 0) <=> ($a->id === $preferidoId ? 1 : 0),
+                fn (User $a, User $b) => (int) ($carga[$a->id] ?? 0) <=> (int) ($carga[$b->id] ?? 0),
+                fn (User $a, User $b) => $a->id <=> $b->id,
+            ])
+            ->values();
+
+        // Empresa sem ninguém conectado: cai em quem pediu, e quem estoura é a chamada ao
+        // Google — o mesmo comportamento de antes de existir time.
+        return $time->isEmpty() ? collect([$acting]) : $time;
+    }
+
+    /**
      * Decide e executa a ação de agenda. Retorna um array neutro:
      * ['action'=>'marcar|remarcar|cancelar|perguntar|nada', 'scheduled'=>bool, 'rescheduled'=>bool,
      *  'cancelled'=>bool, 'message'=>?string, 'note'=>?string, 'event'=>?array, 'meet_link'=>?string,
      *  'slot_label'=>?string, 'previous_slot_label'=>?string, 'error'=>?string].
+     *
+     * `$preferActingUser`: true quando um humano clicou "Agendar" (a reunião fica com ele
+     * se a agenda dele permitir); false no atendimento automático, onde não há dono da
+     * ação e o time se reveza por carga. Ver `hosts()`.
      */
-    public function decideAndBook(User $user, Conversation $conversation, string $memoryContext = ''): array
+    public function decideAndBook(User $user, Conversation $conversation, string $memoryContext = '', bool $preferActingUser = true): array
     {
         // LEAD REPROVADO NA TRIAGEM NÃO GANHA HORÁRIO.
         //
@@ -58,7 +112,8 @@ class MeetingScheduler
         }
 
         $durationMin = 60; // reuniões de 1 hora
-        $slots = $this->google->freeSlots($user, $durationMin);
+        $hosts = $this->hosts($conversation, $user, $preferActingUser);
+        $slots = $this->google->freeSlotsForHosts($hosts, $durationMin);
 
         $transcript = $conversation->messages()
             ->where(function ($q) {
@@ -167,7 +222,8 @@ class MeetingScheduler
         }
 
         if ($action === 'cancelar') {
-            return $this->cancel($user, $conversation, $active, $tz);
+            // Apagar o evento é na agenda de quem o criou, não na de quem pediu.
+            return $this->cancel($active?->user ?: $user, $conversation, $active, $tz);
         }
 
         if ($action !== 'marcar' && $action !== 'remarcar') {
@@ -200,18 +256,38 @@ class MeetingScheduler
 
         // Ao remarcar, a própria reunião não pode contar como conflito consigo mesma.
         $ignore = $action === 'remarcar' ? $active?->google_event_id : null;
-        if (! $this->google->isFree($user, $start, $end, $ignore)) {
+
+        // REMARCAR fica no anfitrião que já tem o evento — trocar de agenda no meio do
+        // caminho deixaria um evento órfão na antiga e o lead com dois convites. MARCAR
+        // é que escolhe: o primeiro do time livre naquele horário.
+        $host = $action === 'remarcar' && $active
+            ? ($active->user ?: $user)
+            : $this->google->firstFreeHost($hosts, $start, $end, $ignore);
+
+        if (! $host) {
             return [
                 'action' => 'nada',
                 'scheduled' => false,
                 'message' => $message,
-                'note' => 'O horário combinado já está ocupado na sua agenda — proponha outro ao lead.',
+                'note' => $hosts->count() > 1
+                    ? 'O horário combinado já está ocupado nas agendas do time — proponha outro ao lead.'
+                    : 'O horário combinado já está ocupado na sua agenda — proponha outro ao lead.',
+            ];
+        }
+
+        // Remarcação: o conflito ainda precisa ser conferido, agora só na agenda do dono.
+        if ($action === 'remarcar' && $active && ! $this->google->isFree($host, $start, $end, $ignore)) {
+            return [
+                'action' => 'nada',
+                'scheduled' => false,
+                'message' => $message,
+                'note' => 'O novo horário já está ocupado na agenda de quem vai atender — proponha outro ao lead.',
             ];
         }
 
         return $action === 'remarcar' && $active
-            ? $this->reschedule($user, $conversation, $active, $start, $end, (string) ($data['title'] ?? ''), $transcript)
-            : $this->book($user, $conversation, $start, $end, (string) ($data['title'] ?? ''), $transcript);
+            ? $this->reschedule($host, $conversation, $active, $start, $end, (string) ($data['title'] ?? ''), $transcript)
+            : $this->book($host, $conversation, $start, $end, (string) ($data['title'] ?? ''), $transcript);
     }
 
     /** Bloco de regras quando o contato NÃO tem agendamento ativo. */

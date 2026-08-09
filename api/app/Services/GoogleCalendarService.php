@@ -321,18 +321,13 @@ class GoogleCalendarService
     }
 
     /**
-     * Horários livres na agenda do usuário em horário comercial (seg–sex),
-     * considerando os eventos com hora marcada como ocupados.
+     * Intervalos ocupados na agenda do usuário na janela pedida (só eventos com
+     * hora marcada; dia-inteiro não bloqueia horário).
      *
-     * @return array<int, array{iso:string, label:string}>
+     * @return array<int, array{0: Carbon, 1: Carbon}>
      */
-    public function freeSlots(User $user, int $durationMin = 45, int $daysAhead = 10, int $workStart = 9, int $workEnd = 18, int $max = 14): array
+    protected function busyIntervals(User $user, Carbon $from, Carbon $to): array
     {
-        $tz = config('app.timezone', 'America/Sao_Paulo');
-        $now = Carbon::now($tz);
-        $from = $now->copy();
-        $to = $now->copy()->addDays($daysAhead)->endOfDay();
-
         $events = $this->calendar($user)->events->listEvents($this->calendarId($user), [
             'timeMin' => $from->toRfc3339String(),
             'timeMax' => $to->toRfc3339String(),
@@ -341,7 +336,6 @@ class GoogleCalendarService
             'maxResults' => 250,
         ]);
 
-        // Intervalos ocupados (só eventos com hora; ignora dia-inteiro).
         $busy = [];
         foreach ($events->getItems() as $e) {
             $s = $e->getStart()?->getDateTime();
@@ -351,14 +345,82 @@ class GoogleCalendarService
             }
         }
 
-        $overlaps = function (Carbon $a1, Carbon $a2) use ($busy): bool {
-            foreach ($busy as [$b1, $b2]) {
-                if ($a1->lt($b2) && $a2->gt($b1)) {
-                    return true;
+        return $busy;
+    }
+
+    /**
+     * Horários livres na agenda do usuário em horário comercial (seg–sex).
+     * Caso de um anfitrião só — ver `freeSlotsForHosts` para o time.
+     *
+     * @return array<int, array{iso:string, label:string}>
+     */
+    public function freeSlots(User $user, int $durationMin = 45, int $daysAhead = 10, int $workStart = 9, int $workEnd = 18, int $max = 14): array
+    {
+        return $this->freeSlotsForHosts([$user], $durationMin, $daysAhead, $workStart, $workEnd, $max);
+    }
+
+    /**
+     * Horários em que PELO MENOS UM dos anfitriões está livre.
+     *
+     * A oferta é a UNIÃO das agendas, não a interseção: dois anfitriões atendem leads
+     * diferentes em reuniões separadas, então 14h continua sendo horário oferecível
+     * enquanto sobrar alguém livre nele. Interseção seria a regra de reunião conjunta —
+     * daria o oposto do que se quer, que é dobrar a capacidade.
+     *
+     * Quem escolhe o anfitrião de cada horário é `firstFreeHost`, na hora de marcar.
+     *
+     * @param  iterable<User>  $hosts
+     * @return array<int, array{iso:string, label:string}>
+     */
+    public function freeSlotsForHosts(iterable $hosts, int $durationMin = 45, int $daysAhead = 10, int $workStart = 9, int $workEnd = 18, int $max = 14): array
+    {
+        $tz = config('app.timezone', 'America/Sao_Paulo');
+        $now = Carbon::now($tz);
+        $from = $now->copy();
+        $to = $now->copy()->addDays($daysAhead)->endOfDay();
+
+        // Um mapa de ocupação POR anfitrião — juntar tudo num só faria a agenda de um
+        // bloquear o horário do outro, que é exatamente o contrário da união.
+        $busyPorHost = [];
+        $ultimaFalha = null;
+        $total = 0;
+        foreach ($hosts as $h) {
+            $total++;
+            try {
+                $busyPorHost[] = $this->busyIntervals($h, $from, $to);
+            } catch (\Throwable $e) {
+                // Agenda de UM anfitrião fora do ar (token revogado, API instável) não pode
+                // derrubar o agendamento do time: ele só deixa de oferecer disponibilidade.
+                // Tratá-lo como "livre" seria pior — marcaria por cima do que ele já tem.
+                $ultimaFalha = $e;
+            }
+        }
+        // Mas se NENHUM respondeu, o erro é real e sobe: quem chama distingue "agenda
+        // cheia" (lista vazia) de "não consegui ler a agenda" (exceção), e engolir isso
+        // faria a IA anunciar que não há horário quando na verdade não perguntou.
+        if (! $busyPorHost) {
+            if ($ultimaFalha && $total > 0) {
+                throw $ultimaFalha;
+            }
+
+            return [];
+        }
+
+        $overlaps = function (Carbon $a1, Carbon $a2) use ($busyPorHost): bool {
+            foreach ($busyPorHost as $busy) {
+                $ocupado = false;
+                foreach ($busy as [$b1, $b2]) {
+                    if ($a1->lt($b2) && $a2->gt($b1)) {
+                        $ocupado = true;
+                        break;
+                    }
+                }
+                if (! $ocupado) {
+                    return false; // sobrou alguém livre — o horário vale
                 }
             }
 
-            return false;
+            return true;
         };
 
         $weekdays = ['', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado', 'domingo'];
@@ -558,6 +620,31 @@ class GoogleCalendarService
         }
 
         return true;
+    }
+
+    /**
+     * O primeiro anfitrião da lista que está REALMENTE livre no horário, ou null se
+     * nenhum estiver. A ordem recebida é a preferência (ver MeetingScheduler::hosts).
+     *
+     * Confere na agenda de verdade, um a um, em vez de confiar no mapa de horários
+     * oferecido: entre propor e o lead confirmar passam minutos ou dias, e nesse meio
+     * alguém pode ter marcado outra coisa por fora do CRM.
+     *
+     * @param  iterable<User>  $hosts
+     */
+    public function firstFreeHost(iterable $hosts, Carbon $start, Carbon $end, ?string $ignoreEventId = null): ?User
+    {
+        foreach ($hosts as $h) {
+            try {
+                if ($this->isFree($h, $start, $end, $ignoreEventId)) {
+                    return $h;
+                }
+            } catch (\Throwable $e) {
+                continue; // agenda ilegível não conta como livre
+            }
+        }
+
+        return null;
     }
 
     /** Cria um evento e devolve o normalizado (com o id do Google). */

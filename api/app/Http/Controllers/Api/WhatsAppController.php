@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\CampaignContact;
 use App\Models\Company;
 use App\Models\Conversation;
+use App\Models\Meeting;
 use App\Models\Message;
 use App\Models\Stage;
 use App\Models\WaAccount;
@@ -1387,6 +1388,23 @@ class WhatsAppController extends Controller
         // Canal oficial: o chat usa isto para saber que fora da janela de 24h só sai
         // template aprovado (e já oferecer a lista em vez de deixar o envio falhar).
         $full->setAttribute('wa_cloud', (bool) $conversation->account?->isCloud());
+
+        // A PRÓXIMA reunião marcada, para o painel do chat.
+        //
+        // Vai aqui e NÃO na lista de conversas: a lista carrega centenas de linhas a cada
+        // atualização e uma subconsulta por linha pesaria à toa (ver o cuidado com o
+        // payload enxuto acima). Aqui é uma consulta indexada por conversa aberta.
+        //
+        // `activeFor` já significa "não cancelada e ainda por acontecer" — é a mesma
+        // pergunta que o agendador faz antes de marcar, então a tela não pode divergir
+        // dele sobre o que conta como reunião de pé.
+        $reuniao = Meeting::activeFor($conversation->id);
+        $full->setAttribute('meeting', $reuniao ? [
+            'id' => $reuniao->id,
+            'starts_at' => $reuniao->starts_at?->toIso8601String(),
+            'title' => $reuniao->title,
+            'meet_link' => $reuniao->meet_link,
+        ] : null);
         $payload = response()->json($full);
 
         // Backfill do histórico via Evolution (até 30 páginas) é caro (~20s e era

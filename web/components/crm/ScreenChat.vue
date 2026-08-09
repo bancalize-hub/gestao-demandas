@@ -746,6 +746,34 @@ const windowClosed = computed(() => {
   return (Date.now() / 1000 - lastInboundTs.value) >= 24 * 3600
 })
 const neverTalked = computed(() => !(conv.value?.thread || []).some((m: any) => !m.isOut))
+
+// Quando é a reunião, em português de gente: "hoje às 15:00" vale mais que a data crua
+// para quem está no meio da conversa e precisa decidir o que dizer agora.
+const meetingWhen = computed(() => {
+  const iso = conv.value?.meeting?.starts_at
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const hora = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+  const dia = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  const hoje = new Date()
+  const base = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate()).getTime()
+  const dif = Math.round((dia - base) / 86400000)
+  if (dif === 0) return `hoje às ${hora}`
+  if (dif === 1) return `amanhã às ${hora}`
+  const data = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+  if (dif > 1 && dif < 7) return `${d.toLocaleDateString('pt-BR', { weekday: 'long' })}, ${data} às ${hora}`
+  return `${data} às ${hora}`
+})
+
+// Template escolhido pelo menu lateral: abre o painel do rodapé já nele, que é onde as
+// variáveis são preenchidas e a prévia é conferida antes de sair.
+function useTemplate(t: WaTemplate) {
+  crm.templatePanel = true
+  crm.templateError = ''
+  chooseTemplate(t)
+}
+
 function useAISuggestion() {
   const el = inputRef.value
   if (el && crm.aiSuggestion) { el.value = crm.aiSuggestion; el.focus(); nextTick(autogrow) }
@@ -1039,6 +1067,9 @@ watch(() => crm.activeId, async () => {
   await nextTick()
   scrollDown()
 })
+// Templates para o menu lateral: só quando a conversa sai pelo número oficial (é onde
+// eles existem) e só na primeira vez — o ensureTemplates guarda a lista da sessão.
+watch(() => conv.value?.waCloud, (cloud) => { if (cloud) crm.ensureTemplates() }, { immediate: true })
 // mensagem nova: só desce se o usuário já estava no fim (não atrapalha quem lê o histórico)
 watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.value) scrollDown() })
 </script>
@@ -1460,6 +1491,22 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
         </div>
       </div>
 
+      <!-- Reunião de pé. Fica ANTES do negócio porque "esse lead tem call marcada?" é
+           pergunta de olhada rápida, não de leitura — e a resposta muda o que se diz a
+           ele no minuto seguinte. Só aparece quando existe: linha "sem reunião" em toda
+           conversa seria ruído em cima da maioria, que não tem. -->
+      <div v-if="active.meeting" style="padding:16px 20px;border-bottom:1px solid var(--c-surface-1);">
+        <div style="font-size:11px;font-weight:700;color:var(--c-text-muted);letter-spacing:.5px;margin-bottom:11px;">REUNIÃO MARCADA</div>
+        <div style="background:rgba(var(--accent-rgb),.1);border:1px solid rgba(var(--accent-rgb),.32);border-radius:12px;padding:12px 13px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="flex-shrink:0;"><rect x="3" y="4.5" width="18" height="16" rx="2.5" /><path d="M3 9h18M8 2.5v4M16 2.5v4" stroke-linecap="round" /></svg>
+            <span style="font-size:13.5px;font-weight:800;color:var(--accent);">{{ meetingWhen }}</span>
+          </div>
+          <div v-if="active.meeting.title" style="font-size:12px;color:var(--c-text-secondary);margin-top:6px;line-height:1.4;">{{ active.meeting.title }}</div>
+          <a v-if="active.meeting.meet_link" :href="active.meeting.meet_link" target="_blank" rel="noopener" style="display:inline-block;margin-top:9px;font-size:12.5px;font-weight:700;color:var(--accent);text-decoration:none;">Abrir no Meet →</a>
+        </div>
+      </div>
+
       <div style="padding:16px 20px;border-bottom:1px solid var(--c-surface-1);">
         <div style="font-size:11px;font-weight:700;color:var(--c-text-muted);letter-spacing:.5px;margin-bottom:11px;">NEGÓCIO</div>
         <div style="background:var(--c-surface-2);border-radius:12px;padding:14px;">
@@ -1489,6 +1536,22 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
         </div>
 
         <div style="display:flex;flex-direction:column;gap:8px;">
+          <!-- Templates aprovados junto das respostas rápidas: é o mesmo gesto ("mandar
+               uma frase pronta"), e fora da janela de 24h é a ÚNICA frase que sai. Ter
+               isso só no aviso do rodapé escondia a saída até o envio falhar.
+               Clicar já abre o template escolhido, para preencher as variáveis. -->
+          <div v-if="active.waCloud && crm.templates.length" style="font-size:10px;font-weight:700;color:var(--c-text-faint);letter-spacing:.5px;padding:2px 2px 0;">TEMPLATES APROVADOS</div>
+          <div
+            v-for="t in (active.waCloud ? crm.templates : [])" :key="'tpl-' + t.name + t.language"
+            class="ghost qrrow" style="background:var(--c-surface-2);border:1px dashed var(--c-surface-3);border-radius:10px;padding:10px 12px;font-size:13px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px;"
+            :title="t.body"
+            @click="useTemplate(t)"
+          >
+            <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ t.name }}</span>
+            <span v-if="t.params" style="font-size:10px;font-weight:700;color:var(--accent);flex-shrink:0;">{{ t.params }} var</span>
+          </div>
+          <div v-if="active.waCloud && crm.templates.length" style="height:1px;background:var(--c-surface-1);margin:2px 0;" />
+
           <div v-if="!crm.quickReplies.length && !addingQR" style="font-size:12.5px;color:var(--c-text-faint);padding:4px 2px;">Nenhuma resposta rápida. Clique no + para criar.</div>
           <div v-for="qr in crm.quickReplies" :key="qr.id" class="ghost qrrow" style="background:var(--c-surface-2);border-radius:10px;padding:10px 12px;font-size:13px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px;" @click="useQuick(qr.text)">
             <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ qr.label }}</span>

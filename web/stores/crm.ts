@@ -81,6 +81,8 @@ export interface Conversation {
   thread: Msg[]
   threadHasMore: boolean // há mensagens mais antigas no servidor (paginação da thread)
   waCloud: boolean // sai pela API oficial da Meta → vale a janela de 24h / templates
+  // A próxima reunião de pé, ou null. Só vem no /full — a lista de conversas não carrega.
+  meeting: { id: number, starts_at: string | null, title: string | null, meet_link: string | null } | null
 }
 
 export interface Deal {
@@ -299,6 +301,7 @@ function mapConv(c: any): Conversation {
     thread: (c.messages ?? []).map(mapMsg),
     threadHasMore: !!c.messages_has_more,
     waCloud: !!c.wa_cloud, // só vem no /full e no /wpp/start (a lista não carrega a conta)
+    meeting: c.meeting ?? null, // idem: só no /full
   }
 }
 function mapMsg(m: any): Msg {
@@ -386,6 +389,7 @@ export const useCrmStore = defineStore('crm', {
     templatePanel: false,
     templates: [] as WaTemplate[],
     templatesLoading: false,
+    templatesFetched: false, // a lista do menu lateral já foi buscada nesta sessão?
     templateError: '',
     // ----- Google Agenda -----
     googleConnected: false, // a conta Google DO USUÁRIO logado (só controla o botão "Conectar")
@@ -490,7 +494,7 @@ export const useCrmStore = defineStore('crm', {
         if (!existing) return mapped
         // A lista não traz mais a thread (só a última msg) nem o canal; preserva o que já
         // está carregado — senão a conversa aberta "esquece" que é da API oficial.
-        Object.assign(existing, mapped, { thread: existing.thread, threadHasMore: existing.threadHasMore, waCloud: existing.waCloud })
+        Object.assign(existing, mapped, { thread: existing.thread, threadHasMore: existing.threadHasMore, waCloud: existing.waCloud, meeting: existing.meeting })
         // Conversa aberta recebeu mensagem nova? (última do servidor != última carregada)
         if (existing.id === this.activeId && r.last_message) {
           const lastLoaded = [...existing.thread].reverse().find(o => o.id)
@@ -560,6 +564,7 @@ export const useCrmStore = defineStore('crm', {
           conv.thread = (c.messages ?? []).map(mapMsg)
           conv.threadHasMore = !!c.messages_has_more
           conv.waCloud = !!c.wa_cloud
+          conv.meeting = c.meeting ?? null
           const newest = conv.thread.length ? (conv.thread[conv.thread.length - 1].ts ?? 0) : 0
           mergeIncoming(conv, prev.filter(m => !m.id || (m.ts ?? 0) >= newest))
           // Conversa nova no canal oficial: não existe janela de 24h para abrir texto
@@ -611,7 +616,7 @@ export const useCrmStore = defineStore('crm', {
         this.conversations.unshift(conv)
       }
       else {
-        Object.assign(conv, mapConv(row), { thread: conv.thread, threadHasMore: conv.threadHasMore, waCloud: conv.waCloud })
+        Object.assign(conv, mapConv(row), { thread: conv.thread, threadHasMore: conv.threadHasMore, waCloud: conv.waCloud, meeting: conv.meeting })
         // Conversa com mensagem nova sobe pro topo (mesma ordem do servidor).
         const idx = this.conversations.indexOf(conv)
         if (idx > 0) {
@@ -661,7 +666,7 @@ export const useCrmStore = defineStore('crm', {
         const row = await api()<any>(`/api/conversations/${slug}`)
         const conv = this.conversations.find(c => c.id === slug)
         // waCloud não vem na linha da lista: preserva o que o /full já descobriu.
-        if (conv) Object.assign(conv, mapConv(row), { thread: conv.thread, threadHasMore: conv.threadHasMore, waCloud: conv.waCloud })
+        if (conv) Object.assign(conv, mapConv(row), { thread: conv.thread, threadHasMore: conv.threadHasMore, waCloud: conv.waCloud, meeting: conv.meeting })
         else this.conversations.unshift(mapConv(row))
         this.linkContactNames()
       }
@@ -829,6 +834,28 @@ export const useCrmStore = defineStore('crm', {
             this.openTemplates()
           }
         })
+    },
+
+    /**
+     * Carrega a lista de templates UMA VEZ por sessão, para o menu do painel lateral.
+     *
+     * A rota é por conversa, mas o que ela devolve é da CONTA — os mesmos templates
+     * aprovados valem para todo mundo. Buscar a cada conversa aberta seria uma chamada
+     * à Graph API por clique na lista, e o chat já apanhou de payload gordo antes.
+     *
+     * Silencioso de propósito: é enfeite de menu. Se falhar, o caminho de sempre
+     * (openTemplates, no rodapé) continua mostrando erro de verdade.
+     */
+    async ensureTemplates() {
+      if (this.templatesFetched || this.templatesLoading) return
+      this.templatesFetched = true
+      const conv = this.activeConv
+      if (!conv) return
+      try {
+        const r = await api()<{ templates: WaTemplate[] }>(`/api/conversations/${conv.id}/templates`)
+        this.templates = r.templates || []
+      }
+      catch { this.templatesFetched = false } // deixa tentar de novo na próxima conversa
     },
 
     /** Abre o painel de templates (e carrega a lista aprovada da Meta). */

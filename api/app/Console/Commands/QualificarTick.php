@@ -47,6 +47,13 @@ class QualificarTick extends Command
     private const MIN_MENSAGENS = 1;
 
     /**
+     * Quanto tempo uma reprovação precisa ficar de pé, sem mexer na conversa, antes de
+     * custar o horário do lead. É a margem contra o veredito que a própria IA desfaz
+     * minutos depois — ver desmarcarReprovados().
+     */
+    private const ESPERA_MINUTOS = 30;
+
+    /**
      * Repetições que fazem uma primeira-mensagem virar "texto de botão".
      * 3 é baixo de propósito: falso positivo aqui só tira força de evidência que já era
      * fraca ("bom dia"), enquanto o falso negativo deixa a IA qualificar quem não digitou
@@ -143,28 +150,64 @@ class QualificarTick extends Command
                 'qualified_at' => now(),
             ])->save();
 
-            if ($qualificado === false) {
-                $this->desmarcarReuniao($conv, $motivo);
-            }
-
             $marcados++;
         }
+
+        // O cancelamento NÃO acontece junto com o veredito — ver desmarcarReprovados().
+        $this->desmarcarReprovados();
 
         return $marcados;
     }
 
     /**
-     * Lead reprovado que JÁ tinha horário perde o horário.
+     * Lead reprovado que JÁ tinha horário perde o horário — mas só depois que a reprovação
+     * ASSENTA. Este é o ponto delicado da regra inteira.
      *
-     * A trava do agendador só olha o veredito no instante da marcação, e a triagem chega
-     * depois: `auto-reply:tick` roda a cada minuto e este, a cada três. Quem confirma
-     * horário rápido marcava antes de ser julgado (caso real: conv 2274, reunião às
-     * 13:41 e reprovação às 13:42) e o horário de comercial ficava reservado para quem
-     * a triagem já tinha dito que não ia fechar. Faltava o caminho de volta.
+     * O veredito da IA é revisável e revisado o tempo todo: a fila re-julga toda conversa
+     * com marca automática assim que `last_message_at > qualified_at`, e `last_message_at`
+     * sobe TAMBÉM quando somos NÓS que mandamos mensagem (ChatSender, nudge, campanha,
+     * lembrete de reunião). Ou seja, a própria resposta da IA reabre a triagem do lead.
      *
-     * EM SILÊNCIO, de propósito: avisar convida o lead a pedir outro horário, e cada
-     * ida e volta dessas é resposta da IA gerada para uma conversa que já foi reprovada.
-     * O registro fica na ficha, e é lá que o time decide se vale falar com ele.
+     * Foi o que aconteceu com a conv 2274 em 09/08/2026: reprovado às 13:42:27, e às
+     * 13:45:41 a IA voltou atrás ("não ficou claro se quer estrutura própria ou só captar")
+     * — reaberta pela NOSSA mensagem das 13:43:09, não por algo que o lead disse.
+     *
+     * Cancelar no ato desses 3 minutos seria estrago sem volta: o horário volta para a
+     * lista de livres, o próximo lead marca em cima, e quando o veredito se desfaz não há
+     * o que reverter — a vaga tem dono novo. E ninguém foi avisado de nada, nem o lead
+     * (de propósito) nem o time. O prejuízo cai justamente sobre o lead bom.
+     *
+     * Por isso só desmarca o que está QUIETO e ESTÁVEL:
+     * - reprovado pela IA (humano nunca é re-julgado, mas também nunca chega aqui);
+     * - sem nada pendente que reabra a triagem (`last_message_at <= qualified_at`);
+     * - com o veredito de pé há pelo menos ESPERA_MINUTOS.
+     * Conversa viva não perde horário; ela perde quando esfria reprovada. Como reunião é
+     * marcada com dias de antecedência, a espera não custa nada em vaga ocupada à toa.
+     */
+    private function desmarcarReprovados(): void
+    {
+        $reprovados = Conversation::query()
+            ->where('qualified', false)
+            ->where('qualified_auto', true)
+            ->whereNotNull('qualified_at')
+            ->where('qualified_at', '<=', now()->subMinutes(self::ESPERA_MINUTOS))
+            // Mensagem depois do veredito = re-julgamento a caminho. Não age sobre o que
+            // ainda vai ser revisto.
+            ->where(fn ($q) => $q->whereNull('last_message_at')
+                ->orWhereColumn('last_message_at', '<=', 'qualified_at'))
+            ->whereHas('meetings', fn ($q) => $q->active())
+            ->get();
+
+        foreach ($reprovados as $conv) {
+            $this->desmarcarReuniao($conv, (string) $conv->qualified_reason);
+        }
+    }
+
+    /**
+     * Apaga o horário de UM lead reprovado, EM SILÊNCIO — de propósito: avisar convida o
+     * lead a pedir outro horário, e cada ida e volta dessas é resposta da IA gerada para
+     * uma conversa já reprovada. O registro fica na ficha, e é lá que o time decide se
+     * vale falar com ele.
      */
     private function desmarcarReuniao(Conversation $conv, string $motivo): void
     {

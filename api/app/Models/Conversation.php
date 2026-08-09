@@ -175,6 +175,12 @@ class Conversation extends Model
         return $this->hasMany(LeadActivity::class);
     }
 
+    /** Reuniões do contato, canceladas inclusive. Para "as que valem", use o escopo active(). */
+    public function meetings(): HasMany
+    {
+        return $this->hasMany(Meeting::class);
+    }
+
     /**
      * Timestamp (unix) da última mensagem RECEBIDA do cliente — o marco que abre a
      * janela de 24h da API oficial. null = o cliente nunca escreveu.

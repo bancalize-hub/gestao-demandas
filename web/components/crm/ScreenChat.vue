@@ -411,6 +411,7 @@ const EMPTY = {
   // Sem conversa aberta o cabeçalho não aparece, mas `active.qual` é lido antes disso —
   // sem o chip vazio aqui, o acesso quebra a tela inteira em vez de não mostrar nada.
   autoReply: false, qual: qualChip(null, '', false),
+  meeting: null as { id: number, starts_at: string | null, title: string | null, meet_link: string | null } | null,
 }
 
 const active = computed(() => {
@@ -419,6 +420,10 @@ const active = computed(() => {
   return {
     id: c.id, name: c.name, initials: c.initials, avatar: c.avatar, role: c.role, autoReply: c.autoReply,
     qual: qualChip(c.qualified, c.qualifiedReason, c.qualifiedAuto),
+    // `active` é uma lista fechada de campos, não um espelho da conversa: o que não
+    // for copiado aqui chega no template como undefined. A reunião estava faltando,
+    // então o `v-if` do bloco nunca era verdadeiro por mais que o /full a trouxesse.
+    meeting: c.meeting ?? null,
     phone: maskPhone(c.phone), statusText: c.statusText, statusColor: c.online ? 'var(--accent)' : 'var(--c-text-muted)',
     dealValue: c.dealValue, dealUnit: c.dealUnit || '', stage: c.stage,
     probText: `${c.prob}% de probabilidade de fechamento`,

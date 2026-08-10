@@ -23,6 +23,8 @@ class ChatTabController extends Controller
             // Vazio = sem filtro (todos).
             'qualified' => 'nullable|array',
             'qualified.*' => 'string|in:1,0,sem',
+            // Lixeira: a tab mostra SÓ as conversas excluídas (as que ganharam hidden_at).
+            'show_hidden' => 'sometimes|boolean',
             'objetivo' => 'nullable|string|max:2000',
         ]);
         $data['stages'] = $data['stages'] ?? [];
@@ -39,6 +41,7 @@ class ChatTabController extends Controller
             'stages.*' => 'string|max:64',
             'qualified' => 'sometimes|nullable|array',
             'qualified.*' => 'string|in:1,0,sem',
+            'show_hidden' => 'sometimes|boolean',
             'position' => 'sometimes|integer',
             // Objetivo da IA com os leads deste time (SDR/Closer/CS).
             'objetivo' => 'sometimes|nullable|string|max:2000',

@@ -24,7 +24,10 @@ class Realtime
             return;
         }
         try {
-            $conv = Conversation::listQuery()->whereKey($message->conversation_id)->first();
+            // Inclui desqualificado de propósito: quem esconde é o front. Sem isto, quem
+            // abriu um lead reprovado para tentar recuperá-lo pararia de ver as respostas
+            // dele chegando — e a IA, que segue conversando, ficaria trabalhando às cegas.
+            $conv = Conversation::listQuery(true)->whereKey($message->conversation_id)->first();
             if (! $conv) {
                 return;
             }

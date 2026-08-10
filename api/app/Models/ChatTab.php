@@ -15,7 +15,7 @@ class ChatTab extends Model
 
     protected $guarded = [];
 
-    protected $casts = ['stages' => 'array', 'qualified' => 'array'];
+    protected $casts = ['stages' => 'array', 'qualified' => 'array', 'show_hidden' => 'boolean'];
 
     /**
      * A conversa entra nesta tab? Etapa E triagem — as duas têm de bater.
@@ -45,6 +45,10 @@ class ChatTab extends Model
      * Time responsável por uma etapa do funil. A primeira tab que lista a etapa
      * ganha — etapa em duas tabs é configuração ambígua, e a ordem da tela é a
      * resposta menos surpreendente.
+     *
+     * Lixeira (`show_hidden`) fica de fora: ela é um recorte de arquivo morto, não um time.
+     * Se ganhasse a etapa, a IA passaria a perseguir o objetivo escrito na lixeira com leads
+     * vivos — e o sintoma apareceria longe daqui, na resposta errada mandada ao cliente.
      */
     public static function forStage(?string $stage): ?self
     {
@@ -52,7 +56,7 @@ class ChatTab extends Model
             return null;
         }
 
-        return static::orderBy('position')->orderBy('id')->get()
+        return static::where('show_hidden', false)->orderBy('position')->orderBy('id')->get()
             ->first(fn (self $t) => in_array($stage, (array) $t->stages, true));
     }
 }

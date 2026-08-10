@@ -18,23 +18,43 @@ class ConversationController extends Controller
 {
     public function __construct(private AiReplyService $ai, private MeetingScheduler $scheduler) {}
 
-    public function index()
+    public function index(Request $request)
     {
         // A LISTA carrega só a última mensagem de cada conversa (preview + ✓✓), não as 11k+
         // mensagens de todas — a thread vem do endpoint /full ao abrir a conversa.
         // started_ts = ts da 1ª mensagem (data do 1º contato) — usado no filtro de data do Funil.
         // Colunas enxutas (LIST_COLUMNS): com centenas de conversas re-baixadas em tempo
         // real, cada coluna extra aqui vira dezenas de KB por refresh em cada aba aberta.
-        return Conversation::listQuery()
+        //
+        // ?desqualificados=1 devolve SÓ os leads reprovados na triagem — a tab
+        // "Desqualificados" os pede sob demanda para revisar/corrigir a marca. Traz todos,
+        // inclusive os que a carga normal já mandou (lead com reunião ou fora da 1ª etapa
+        // continua visível): a tab é "todos os reprovados", e o front deduplica.
+        //
+        // ?excluidas=1 é a lixeira: devolve SÓ as conversas "excluídas" (as que ganharam
+        // hidden_at). Nada foi apagado — a tab de lixeira é o caminho de volta para elas,
+        // que antes só existia nos 8 segundos do Desfazer.
+        $soDesqualificados = $request->boolean('desqualificados');
+        $soExcluidas = $request->boolean('excluidas');
+
+        return Conversation::listQuery($soDesqualificados || $soExcluidas, $soExcluidas)
+            ->when($soDesqualificados, fn ($q) => $q->where('conversations.qualified', false))
             ->orderByRaw('last_message_at IS NULL, last_message_at DESC')
             ->orderBy('position')
             ->get();
     }
 
-    /** Linha única da lista (mesmo formato do index) — patch incremental via tempo real. */
+    /**
+     * Linha única da lista (mesmo formato do index) — patch incremental via tempo real.
+     *
+     * Traz o lead mesmo desqualificado ou excluído: quem esconde da tela é o front, pela
+     * marca que vem nesta linha. Se aqui filtrasse, o patch viraria 404 e o front apagaria a
+     * conversa da memória — e aí nem a requalificação (que chega por este mesmo caminho)
+     * nem a tab de lixeira teriam como mostrá-la sem recarregar a página.
+     */
     public function show(Conversation $conversation)
     {
-        return Conversation::listQuery()->whereKey($conversation->id)->firstOrFail();
+        return Conversation::listQuery(true, null)->whereKey($conversation->id)->firstOrFail();
     }
 
     /**
@@ -136,7 +156,7 @@ class ConversationController extends Controller
     {
         $conversation->update(['hidden_at' => null]);
 
-        return Conversation::listQuery()->whereKey($conversation->id)->firstOrFail();
+        return Conversation::listQuery(true, null)->whereKey($conversation->id)->firstOrFail();
     }
 
     /** Sugestão de próxima resposta — no seu estilo e usando a memória (Claude/assinatura). */

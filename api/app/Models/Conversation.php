@@ -31,7 +31,7 @@ class Conversation extends Model
     public const LIST_COLUMNS = [
         'id', 'slug', 'name', 'initials', 'avatar', 'online', 'status_text', 'role',
         'deal_value', 'deal_unit', 'stage', 'stage_color', 'prob', 'hot', 'preview', 'time',
-        'last_message_at', 'unread', 'archived', 'auto_reply', 'in_memory', 'tags', 'phone',
+        'last_message_at', 'unread', 'archived', 'hidden_at', 'auto_reply', 'in_memory', 'tags', 'phone',
         'email', 'company', 'origin', 'responsible', 'segmento', 'notes', 'interactions', 'company_id',
         // A triagem aparece no chip da lista e no cabeçalho, então tem de vir na lista.
         // São dois tinyint e uma frase curta — o motivo vem junto porque decidir sem ver
@@ -40,17 +40,71 @@ class Conversation extends Model
     ];
 
     /**
+     * "Escondido pela triagem": reprovado (`qualified = 0`) E ainda parado na 1ª etapa do
+     * funil E sem nenhuma reunião registrada.
+     *
+     * As duas exceções são de propósito. Reprovar é, na maioria das vezes, um PALPITE da IA
+     * que ninguém confirmou, e o palpite erra para o lado do leigo — quem pergunta besteira
+     * é desconhecimento, não lead ruim. Um lead que já andou no funil ou que ocupou a agenda
+     * de alguém teve tempo de gente investido nele: some da tela é caro demais se o veredito
+     * estiver errado, porque a lista é o único lugar onde alguém tropeça no erro. Lead novo
+     * reprovado, que é a esmagadora maioria, sai da frente normalmente.
+     *
+     * A 1ª etapa vem por subquery da empresa DA CONVERSA, não do tenant da requisição: esta
+     * conta também roda no push de tempo real (webhook/fila), onde nem sempre há empresa no
+     * contexto — e ali um palpite errado esconderia lead da empresa errada.
+     *
+     * O `coalesce` garante 0/1 (nunca NULL): com etapa nula ou empresa sem funil, o
+     * `not (...)` viraria NULL e a listagem apagaria a conversa da tela.
+     */
+    private static function sqlOcultoPelaTriagem(): string
+    {
+        return 'coalesce((conversations.qualified = 0'
+            .' and conversations.stage = (select s.`key` from stages s'
+            .' where s.company_id = conversations.company_id order by s.position, s.id limit 1)'
+            .' and not exists (select 1 from meetings where meetings.conversation_id = conversations.id)), 0)';
+    }
+
+    /**
      * Query padrão da lista: colunas enxutas + última mensagem (só o necessário
      * p/ preview/✓✓) + ts da 1ª mensagem (filtro de data do Funil).
      *
      * Conversa escondida (`hidden_at`) fica de fora aqui, e é o único lugar que precisa
      * filtrar: a tela inteira — lista, funil, busca, encaminhar — deriva deste payload.
+     *
+     * DESQUALIFICADO some junto, pelo mesmo motivo do "excluir": tira da frente sem
+     * apagar nada. A diferença é que aqui não há coluna de "escondido" — a régua é o
+     * próprio veredito (`qualified = 0`), então basta a IA (ou uma pessoa) requalificar
+     * o lead para ele voltar à lista sozinho. Ticks de triagem/resposta/retomada não
+     * passam por aqui, então o lead escondido continua sendo atendido e reavaliado.
+     *
+     * Cada linha ainda carrega `triagem_oculta`: é a MESMA conta, exposta para a tela.
+     * A lista do servidor já vem sem esses leads, mas o patch de tempo real precisa dizer
+     * ao front que aquela conversa acabou de sair (ou voltar), e o front não tem como
+     * refazer a conta sozinho — reunião não viaja na linha da lista.
+     *
+     * `$soExcluidas`: false = as ativas (padrão), true = só a lixeira, null = tanto faz.
+     * O `null` é para linha única (patch de tempo real), onde filtrar significaria 404 e o
+     * front apagaria da memória a conversa que a tela ainda está mostrando.
      */
-    public static function listQuery(): Builder
+    public static function listQuery(bool $comDesqualificados = false, ?bool $soExcluidas = false): Builder
     {
-        return static::query()
-            ->whereNull('conversations.hidden_at')
+        $oculto = self::sqlOcultoPelaTriagem();
+        $q = static::query();
+
+        // Ou as ativas, ou a lixeira — nunca as duas juntas: misturar apagado com ativo na
+        // mesma lista tira a única informação que a lixeira tem para dar.
+        if ($soExcluidas === true) {
+            $q->whereNotNull('conversations.hidden_at');
+        } elseif ($soExcluidas === false) {
+            $q->whereNull('conversations.hidden_at');
+        }
+
+        return $q
+            ->unless($comDesqualificados, fn ($b) => $b->whereRaw("not {$oculto}"))
+            // selectRaw depois do select: `select()` zera as colunas e levaria o campo junto.
             ->select(array_map(fn ($c) => "conversations.{$c}", self::LIST_COLUMNS))
+            ->selectRaw("{$oculto} as triagem_oculta")
             ->with(['lastMessage' => fn ($q) => $q->select('messages.id', 'messages.conversation_id', 'messages.is_out', 'messages.ts')])
             ->withMin('messages as started_ts', 'ts');
     }

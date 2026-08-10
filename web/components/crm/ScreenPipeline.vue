@@ -120,7 +120,7 @@ const stats = computed(() => {
   const ds = crm.dealList
   const val = (v: string) => Number.parseInt(String(v || '').replace(/[^\d]/g, ''), 10) || 0
   // Conversas no período filtrado (ou todas, se "período total"). Filtro pela data de início (1ª msg).
-  const convs = crm.conversations.filter(c => !c.archived && inDateRange(c.startedAt))
+  const convs = crm.visiveis.filter(c => !c.archived && inDateRange(c.startedAt))
   // Valor total do pipeline = conversas (do período) + negócios. Negócios só entram em "período total".
   const totalPipeline = convs.reduce((a, c) => a + val(c.dealValue), 0)
     + (dateActive.value ? 0 : ds.reduce((a, d) => a + val(d.value), 0))
@@ -186,7 +186,7 @@ const cols = computed(() => crm.stages.map((st) => {
   const isLast = crm.stages[crm.stages.length - 1]?.key === st.key
 
   // Conversas (cada conversa = um negócio) na etapa atual.
-  const convCards = crm.conversations
+  const convCards = crm.visiveis
     .filter(c => !c.archived && c.stage === st.key && inDateRange(c.startedAt))
     .map(c => ({
       kind: 'conv' as const,

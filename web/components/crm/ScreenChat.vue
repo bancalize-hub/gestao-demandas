@@ -114,6 +114,13 @@ async function doDelete(id: string) {
   if (undoTimer) clearTimeout(undoTimer)
   undoTimer = setTimeout(() => { undoDelete.value = null }, 8000)
 }
+/** Restaurar a partir da tab de lixeira (o Desfazer do aviso dura só alguns segundos). */
+async function doRestore(id: string) {
+  menuFor.value = ''
+  toast(await crm.restoreConversation(id)
+    ? 'Conversa restaurada ✓ — voltou para a lista'
+    : 'Falha ao restaurar a conversa')
+}
 async function doUndoDelete() {
   const u = undoDelete.value
   if (!u) return
@@ -327,8 +334,9 @@ async function createConversation() {
 
 // ----- Tabs por etiqueta -----
 const activeTab = ref<number | null>(null)
+const tabAtiva = computed(() => (activeTab.value ? crm.chatTabs.find(t => t.id === activeTab.value) : null) || null)
 const activeTabStageNames = computed(() => {
-  const tab = activeTab.value ? crm.chatTabs.find(t => t.id === activeTab.value) : null
+  const tab = tabAtiva.value
   if (!tab) return null as Set<string> | null
   return new Set(crm.stages.filter(s => tab.stages.includes(s.key)).map(s => s.name))
 })
@@ -343,25 +351,47 @@ function visibleTags(tags: { label: string, color: string }[]) {
  * da tab discorda do que a lista mostra.
  */
 function tabMatch(t: { stages: string[], qualified?: string[] }, c: { stage: string, qualified: boolean | null }) {
-  if (!t.stages.includes(c.stage)) return false
+  // Nenhuma etiqueta marcada = todas, igual ao filtro de triagem logo abaixo. Antes uma tab
+  // sem etiqueta abria vazia — armadilha certa para a lixeira, que não é recorte de etapa.
+  if (t.stages.length && !t.stages.includes(c.stage)) return false
   const tri = (t.qualified || []).filter(Boolean)
   if (!tri.length) return true // sem filtro de triagem = todos
   // null é "ainda não triado", um estado de verdade — nunca igual a desqualificado.
   return tri.includes(c.qualified === null ? 'sem' : c.qualified ? '1' : '0')
 }
-function tabCount(t: { stages: string[], qualified?: string[] }) {
-  return crm.conversations.filter(c => !c.archived && tabMatch(t, c)).length
+/**
+ * A tab pede os desqualificados? É o que libera o lead reprovado a aparecer: fora daí ele
+ * some da tela (regra do `crm.visiveis`), mesmo com o histórico intacto no banco.
+ */
+function tabMostraDesq(t?: { qualified?: string[] } | null) {
+  return !!t && (t.qualified || []).includes('0')
 }
+/** A lixeira é EXCLUSIVA: mostra só as excluídas, nunca misturadas com as ativas. */
+function baseDaTab(t?: { qualified?: string[], show_hidden?: boolean } | null) {
+  if (t?.show_hidden) return crm.conversations.filter(c => c.excluida)
+  return tabMostraDesq(t) ? crm.conversations.filter(c => !c.excluida) : crm.visiveis
+}
+function tabCount(t: { stages: string[], qualified?: string[], show_hidden?: boolean }) {
+  return baseDaTab(t).filter(c => !c.archived && tabMatch(t, c)).length
+}
+// Os reprovados não vêm na carga da lista; a tab que os revê pede ao servidor assim que
+// existir — sem isto a bolinha marcaria 0 e a tab abriria vazia.
+watch(() => crm.chatTabs.some(t => tabMostraDesq(t)), (tem) => { if (tem) crm.carregarDesqualificados() }, { immediate: true })
+// Idem para a lixeira: as excluídas também ficam fora da carga normal da lista.
+watch(() => crm.chatTabs.some(t => t.show_hidden), (tem) => { if (tem) crm.carregarExcluidas() }, { immediate: true })
 const QUAL_OPCOES = [
   { key: '1', label: '✓ Qualificado' },
   { key: '0', label: '✕ Desqualificado' },
   { key: 'sem', label: '◌ Sem triagem' },
 ] as const
 /** Resumo do que a tab filtra, para a linha da lista do modal. */
-function tabResumo(t: { stages: string[], qualified?: string[] }) {
+function tabResumo(t: { stages: string[], qualified?: string[], show_hidden?: boolean }) {
   const tri = (t.qualified || []).filter(Boolean)
-  const etiquetas = `${t.stages.length} etiqueta(s)`
-  return tri.length ? `${etiquetas} · ${tri.length} de 3 triagens` : etiquetas
+  const etiquetas = t.stages.length ? `${t.stages.length} etiqueta(s)` : 'todas as etiquetas'
+  const partes = [etiquetas]
+  if (tri.length) partes.push(`${tri.length} de 3 triagens`)
+  if (t.show_hidden) partes.push('🗑 excluídas')
+  return partes.join(' · ')
 }
 
 // Editor de tabs
@@ -369,13 +399,15 @@ const showTabs = ref(false)
 const tabName = ref('')
 const tabStages = ref<string[]>([])
 const tabQualified = ref<string[]>([])
+const tabShowHidden = ref(false)
 const editingTabId = ref<number | null>(null)
-function newTabForm() { editingTabId.value = null; tabName.value = ''; tabStages.value = []; tabQualified.value = [] }
-function editTabForm(t: { id: number, name: string, stages: string[], qualified?: string[] }) {
+function newTabForm() { editingTabId.value = null; tabName.value = ''; tabStages.value = []; tabQualified.value = []; tabShowHidden.value = false }
+function editTabForm(t: { id: number, name: string, stages: string[], qualified?: string[], show_hidden?: boolean }) {
   editingTabId.value = t.id
   tabName.value = t.name
   tabStages.value = [...t.stages]
   tabQualified.value = [...(t.qualified || [])]
+  tabShowHidden.value = !!t.show_hidden
 }
 function toggleTabStage(key: string) {
   const i = tabStages.value.indexOf(key)
@@ -390,7 +422,7 @@ function toggleTabQual(key: string) {
 async function saveTab() {
   const name = tabName.value.trim()
   if (!name) return
-  const payload = { name, stages: [...tabStages.value], qualified: [...tabQualified.value] as any }
+  const payload = { name, stages: [...tabStages.value], qualified: [...tabQualified.value] as any, show_hidden: tabShowHidden.value }
   if (editingTabId.value) crm.updateChatTab(editingTabId.value, payload)
   else await crm.createChatTab(payload)
   newTabForm()
@@ -468,12 +500,30 @@ function qualChip(q: boolean | null, motivo: string, auto: boolean, curto = fals
   }
 }
 
-const list = computed(() => crm.conversations.map(c => ({
+/**
+ * Um clique no chip cicla a triagem. Reprovar ESCONDE o lead da lista (nada é apagado: a
+ * IA segue atendendo e pode requalificá-lo), então o aviso é obrigatório — sem ele a
+ * conversa sumiria da tela sem explicação, que é exatamente a queixa do "excluir".
+ */
+async function cycleQual(id: string) {
+  await crm.cycleQualified(id)
+  const c = crm.conversations.find(x => x.id === id)
+  if (c?.qualified !== false || tabMostraDesq(tabAtiva.value))
+    return
+  // Quem já andou no funil ou tem reunião marcada NÃO some — e isso precisa ser dito, senão
+  // o próximo reprovado que continuar na lista parece bug do "sumir".
+  toast(c.triagemOculta
+    ? 'Lead desqualificado: saiu da lista (volta se for requalificado).'
+    : 'Lead desqualificado, mas continua na lista: já avançou no funil ou tem reunião marcada.', 4500)
+}
+
+const list = computed(() => baseDaTab(tabAtiva.value).map(c => ({
   id: c.id, name: c.name, initials: c.initials, avatar: c.avatar, preview: c.preview, time: fmtListTime(c.lastMessageAt, c.time),
   unread: c.unread, online: c.online, hot: !!c.hot, hasUnread: c.unread > 0, archived: c.archived, inMemory: c.inMemory, tags: c.tags || [], stage: c.stage,
   autoReply: c.autoReply, lastOut: c.lastOut, stageColor: c.stageColor,
   // Cru, além do chip: é o que a tab filtra (o chip já virou texto e cor).
   qualified: c.qualified,
+  excluida: c.excluida,
   qual: qualChip(c.qualified, c.qualifiedReason, c.qualifiedAuto, true),
   stageName: (crm.stages.find(s => s.key === c.stage)?.name) || c.stage,
   rowStyle: ROW_STYLE,
@@ -484,7 +534,7 @@ const list = computed(() => crm.conversations.map(c => ({
 // Base filtrada pela TAB ativa (Todas/SDR/CLOSER/CS). Os contadores de status (Tudo/Não
 // lidas/Arquivadas) e a lista derivam daqui — assim ficam dinâmicos com a tab selecionada.
 const tabBase = computed(() => {
-  const tab = activeTab.value ? crm.chatTabs.find(t => t.id === activeTab.value) : null
+  const tab = tabAtiva.value
   return tab ? list.value.filter(c => tabMatch(tab, c)) : list.value
 })
 
@@ -850,7 +900,7 @@ function startForward(m: any) {
 }
 const forwardList = computed(() => {
   const q = forwardSearch.value.trim().toLowerCase()
-  return crm.conversations
+  return crm.visiveis
     .filter(c => !c.archived && (!q || `${c.name} ${c.phone}`.toLowerCase().includes(q)))
     .slice(0, 50)
 })
@@ -1147,8 +1197,8 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
               <!-- Etiqueta (etapa) clicável + toggle de atendimento automático, direto na lista -->
               <div style="display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap;">
                 <button class="ghost" :style="{ fontSize: '10.5px', fontWeight: 700, color: c.stageColor, background: `${c.stageColor}22`, padding: '2px 9px', borderRadius: '6px', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }" @click.stop="stageFor = stageFor === c.id ? '' : c.id; menuFor = ''">{{ c.stageName }} ▾</button>
-                <button class="ghost" :title="c.autoReply ? 'Atendimento automático ligado — clique para desligar' : 'Ativar atendimento automático (IA responde sozinha)'" :style="{ fontSize: '10.5px', fontWeight: 700, padding: '2px 9px', borderRadius: '6px', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', color: c.autoReply ? 'var(--accent-ink)' : 'var(--c-text-muted)', background: c.autoReply ? 'var(--accent)' : 'var(--c-surface-2)' }" @click.stop="crm.toggleAutoReply(c.id)">🤖 {{ c.autoReply ? 'IA ligada' : 'IA' }}</button>
-                <button class="ghost" :title="c.qual.titulo" :style="{ ...c.qual.style, fontSize: '10.5px', fontWeight: 700, padding: '2px 9px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }" @click.stop="crm.cycleQualified(c.id)">{{ c.qual.icone }} {{ c.qual.txt }}</button>
+                <button class="ghost" :title="c.autoReply ? 'Atendimento automático ligado — clique para desligar' : 'Ativar atendimento automático (IA responde sozinha)'" :style="{ fontSize: '10.5px', fontWeight: 700, padding: '2px 9px', borderRadius: '6px', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', color: c.autoReply ? 'var(--accent-ink)' : 'var(--c-text-faint)', background: c.autoReply ? 'var(--accent)' : 'var(--c-surface-2)', opacity: c.autoReply ? 1 : 0.6 }" @click.stop="crm.toggleAutoReply(c.id)">🤖 IA</button>
+                <button class="ghost" :title="c.qual.titulo" :style="{ ...c.qual.style, fontSize: '10.5px', fontWeight: 700, padding: '2px 9px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }" @click.stop="cycleQual(c.id)">{{ c.qual.icone }} {{ c.qual.txt }}</button>
               </div>
             </div>
             <div v-if="stageFor === c.id" style="position:absolute;left:62px;top:58px;z-index:31;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:5px;min-width:170px;box-shadow:0 10px 28px rgba(0,0,0,.45);" @click.stop>
@@ -1165,7 +1215,8 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
               <button class="mitem" style="width:100%;text-align:left;background:none;border:none;color:var(--c-text);font-family:inherit;font-size:13px;padding:8px 11px;border-radius:7px;cursor:pointer;" @click="crm.toggleArchive(c.id); menuFor = ''">{{ c.archived ? 'Desarquivar' : 'Arquivar' }}</button>
               <button class="mitem" style="width:100%;text-align:left;background:none;border:none;color:var(--c-ai-soft);font-family:inherit;font-size:13px;padding:8px 11px;border-radius:7px;cursor:pointer;" @click="doMemorize(c.id)">{{ c.inMemory ? '✓ Na memória' : '🧠 Adicionar à memória' }}</button>
               <div style="height:1px;background:var(--c-surface-3);margin:4px 6px;"></div>
-              <button class="mitem" style="width:100%;text-align:left;background:none;border:none;color:#f2686b;font-family:inherit;font-size:13px;padding:8px 11px;border-radius:7px;cursor:pointer;" @click="doDelete(c.id)">Excluir conversa</button>
+              <button v-if="c.excluida" class="mitem" style="width:100%;text-align:left;background:none;border:none;color:var(--accent);font-family:inherit;font-size:13px;padding:8px 11px;border-radius:7px;cursor:pointer;" @click="doRestore(c.id)">↩ Restaurar conversa</button>
+              <button v-else class="mitem" style="width:100%;text-align:left;background:none;border:none;color:#f2686b;font-family:inherit;font-size:13px;padding:8px 11px;border-radius:7px;cursor:pointer;" @click="doDelete(c.id)">Excluir conversa</button>
             </div>
           </div>
         </template>
@@ -1222,11 +1273,11 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
               <div style="font-size:11px;color:var(--c-text-faint);padding:7px 8px 2px;">Edite as etapas no Funil.</div>
             </div>
           </div>
-          <button class="iconbtn" :title="active.autoReply ? 'Atendimento automático LIGADO — a IA responde sozinha. Clique para desligar.' : 'Ativar atendimento automático (a IA responde o lead sozinha)'" :style="{ height: '38px', borderRadius: '11px', border: 'none', display: 'flex', alignItems: 'center', gap: '6px', padding: '0 12px', cursor: 'pointer', fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 700, color: active.autoReply ? 'var(--accent-ink)' : 'var(--accent)', background: active.autoReply ? 'var(--accent)' : 'var(--c-surface-2)' }" @click="crm.toggleAutoReply(active.id)">
+          <button class="iconbtn" :title="active.autoReply ? 'Atendimento automático LIGADO — a IA responde sozinha. Clique para desligar.' : 'Ativar atendimento automático (a IA responde o lead sozinha)'" :style="{ height: '38px', borderRadius: '11px', border: 'none', display: 'flex', alignItems: 'center', gap: '6px', padding: '0 12px', cursor: 'pointer', fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 700, color: active.autoReply ? 'var(--accent-ink)' : 'var(--c-text-faint)', background: active.autoReply ? 'var(--accent)' : 'var(--c-surface-2)', opacity: active.autoReply ? 1 : 0.6 }" @click="crm.toggleAutoReply(active.id)">
             <span style="font-size:15px;line-height:1;">🤖</span>
-            {{ active.autoReply ? 'IA ligada' : 'Ativar IA' }}
+            IA
           </button>
-          <button class="iconbtn" :title="active.qual.titulo" :style="{ ...active.qual.style, height: '38px', borderRadius: '11px', display: 'flex', alignItems: 'center', gap: '6px', padding: '0 12px', cursor: 'pointer', fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 700 }" @click="crm.cycleQualified(active.id)">
+          <button class="iconbtn" :title="active.qual.titulo" :style="{ ...active.qual.style, height: '38px', borderRadius: '11px', display: 'flex', alignItems: 'center', gap: '6px', padding: '0 12px', cursor: 'pointer', fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 700 }" @click="cycleQual(active.id)">
             <span style="font-size:14px;line-height:1;">{{ active.qual.icone }}</span>
             {{ active.qual.txt }}
           </button>
@@ -1699,6 +1750,14 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
             <button v-for="o in QUAL_OPCOES" :key="o.key" :style="{ fontSize: '12px', fontWeight: 600, padding: '5px 11px', borderRadius: '8px', cursor: 'pointer', border: tabQualified.includes(o.key) ? '1px solid var(--accent)' : '1px solid var(--c-surface-3)', background: tabQualified.includes(o.key) ? 'rgba(var(--accent-rgb),.16)' : 'var(--c-surface-2)', color: tabQualified.includes(o.key) ? 'var(--c-text)' : 'var(--c-text-muted)' }" @click="toggleTabQual(o.key)">
               {{ o.label }}
             </button>
+          </div>
+
+          <div style="font-size:11.5px;color:var(--c-text-muted);margin:14px 0 7px;">Conversas excluídas:</div>
+          <button :style="{ fontSize: '12px', fontWeight: 600, padding: '5px 11px', borderRadius: '8px', cursor: 'pointer', border: tabShowHidden ? '1px solid var(--c-danger)' : '1px solid var(--c-surface-3)', background: tabShowHidden ? 'rgba(var(--c-danger-rgb),.14)' : 'var(--c-surface-2)', color: tabShowHidden ? 'var(--c-text)' : 'var(--c-text-muted)' }" @click="tabShowHidden = !tabShowHidden">
+            🗑 Lixeira: mostrar só as excluídas
+          </button>
+          <div v-if="tabShowHidden" style="font-size:11.5px;color:var(--c-text-muted);margin-top:7px;line-height:1.5;">
+            Esta tab mostra as conversas que foram excluídas (nada foi apagado do banco). Abra uma e use “Restaurar conversa” para trazê-la de volta.
           </div>
 
           <div style="display:flex;gap:10px;align-items:center;margin-top:16px;">

@@ -37,7 +37,8 @@ export interface WaTemplate { name: string, language: string, category: string, 
 export interface Stage { id?: number, key: string, name: string, color: string, goal?: string | null, wa_label_id?: string | null, position?: number }
 // qualified: '1' qualificado, '0' desqualificado, 'sem' ainda não triado. Vazio = todos.
 export type TabQual = '1' | '0' | 'sem'
-export interface ChatTab { id: number, name: string, stages: string[], qualified?: TabQual[], position?: number }
+// show_hidden: a tab é a LIXEIRA — mostra só as conversas excluídas, em vez das ativas.
+export interface ChatTab { id: number, name: string, stages: string[], qualified?: TabQual[], show_hidden?: boolean, position?: number }
 
 export interface Conversation {
   id: string // slug
@@ -67,6 +68,10 @@ export interface Conversation {
   qualifiedReason: string
   /** A marca veio da IA e ainda não foi confirmada por gente. */
   qualifiedAuto: boolean
+  /** Reprovado na triagem E sem nada que segure na tela (reunião / etapa avançada). Quem manda é o servidor. */
+  triagemOculta: boolean
+  /** "Excluída" pelo menu da lista: sai da tela sem apagar nada, e só a tab de lixeira a mostra. */
+  excluida: boolean
   lastOut: boolean
   inMemory: boolean
   tags: Tag[]
@@ -294,7 +299,7 @@ function mapConv(c: any): Conversation {
     preview: c.preview ?? '', time: c.time ?? '', lastMessageAt: c.last_message_at ?? null, startedAt: c.started_ts ?? null, unread: c.unread ?? 0, archived: !!c.archived, autoReply: !!c.auto_reply, lastOut: c.last_message ? !!c.last_message.is_out : lastIsOut(c.messages), inMemory: !!c.in_memory, tags: c.tags ?? [],
     // `?? null` e não `!!`: "sem triagem" é um estado de verdade, diferente de desqualificado.
     qualified: c.qualified === null || c.qualified === undefined ? null : !!c.qualified,
-    qualifiedReason: c.qualified_reason ?? '', qualifiedAuto: !!c.qualified_auto,
+    qualifiedReason: c.qualified_reason ?? '', qualifiedAuto: !!c.qualified_auto, triagemOculta: !!c.triagem_oculta, excluida: !!c.hidden_at,
     phone: c.phone ?? '', email: c.email ?? '', company: c.company ?? '', origin: c.origin ?? '', responsible: c.responsible ?? '',
     segmento: c.segmento ?? '', notes: c.notes ?? '',
     interactions: c.interactions ?? [],
@@ -410,11 +415,35 @@ export const useCrmStore = defineStore('crm', {
     // ----- Follow-ups do lead aberto na ficha -----
     followups: [] as FollowUp[],
     followupsConvId: null as string | null,
+    // Leads reprovados na triagem já foram buscados? Eles não vêm na carga normal.
+    desqualificadosCarregados: false,
+    desqualificadosCarregando: false,
+    // Idem para as conversas excluídas (lixeira).
+    excluidasCarregadas: false,
+    excluidasCarregando: false,
   }),
 
   getters: {
+    // O fallback tem de ser o primeiro VISÍVEL: sem conversa escolhida, abrir um lead que
+    // a triagem tirou da tela seria abrir justamente o que ninguém pediu para ver.
     activeConv(s): Conversation | undefined {
-      return s.conversations.find(c => c.id === s.activeId) || s.conversations[0]
+      return s.conversations.find(c => c.id === s.activeId) || s.conversations.find(c => !c.triagemOculta && !c.excluida)
+    },
+    /**
+     * Conversas que a operação enxerga. Lead DESQUALIFICADO some da tela igual a conversa
+     * excluída — só que sem apagar nem congelar nada: a IA continua atendendo, triando e
+     * retomando, e no dia em que o veredito virar qualificado (ou voltar a "sem triagem")
+     * ele reaparece sozinho, porque a régua é o campo, não uma cópia da lista.
+     *
+     * Filtra por `triagemOculta`, não por `qualified`: quem já andou no funil ou tem reunião
+     * marcada continua na tela mesmo reprovado (a conta é do servidor, e a tela não tem como
+     * refazê-la — reunião não viaja na linha da lista).
+     *
+     * Quem precisa vê-los mesmo assim (tab "Desqualificados", conversa aberta no chat) lê
+     * `conversations` direto — este getter é o padrão de tudo que é "a lista".
+     */
+    visiveis(s): Conversation[] {
+      return s.conversations.filter(c => !c.triagemOculta && !c.excluida)
     },
     pipeline(s): Column<Deal>[] {
       return s.stages.map(col => ({
@@ -488,6 +517,13 @@ export const useCrmStore = defineStore('crm', {
     applyConversations(raw: any[]) {
       const byId = new Map(this.conversations.map(c => [c.id, c]))
       let activeNewMsg = false
+      // O payload do servidor NÃO traz os escondidos pela triagem nem os excluídos. Quem já
+      // os tinha em memória (abriu a tab de reprovados ou a lixeira, está com um deles aberto
+      // no chat) não pode perdê-los no primeiro refresh — sumiriam da tab e a conversa aberta
+      // ficaria órfã. Sai da lista quem o servidor deixou de mandar por OUTRO motivo
+      // (ex.: excluída em outra aba, que chega aqui sem a marca local).
+      const vindos = new Set(raw.map((r: any) => r.slug))
+      const foraDoPayload = this.conversations.filter(c => (c.triagemOculta || c.excluida) && !vindos.has(c.id))
       this.conversations = raw.map((r) => {
         const mapped = mapConv(r)
         const existing = byId.get(mapped.id)
@@ -502,6 +538,7 @@ export const useCrmStore = defineStore('crm', {
         }
         return existing
       })
+      this.conversations.push(...foraDoPayload)
       this.linkContactNames()
       // Mantém a conversa aberta em dia buscando só o DELTA (mensagens após a última carregada).
       if (activeNewMsg && this.activeId) this.syncThread(this.activeId)
@@ -715,33 +752,73 @@ export const useCrmStore = defineStore('crm', {
     /**
      * "Exclui" a conversa — some da lista, mas o histórico fica no banco e ela volta
      * sozinha se o contato mandar mensagem nova. Devolve o que é preciso para o Desfazer.
-     * Some na hora (otimista) e é reposta no lugar se o servidor recusar.
+     * Some na hora (otimista) e a marca é desfeita se o servidor recusar.
+     *
+     * MARCA em vez de tirar do array: a tab de lixeira lê da mesma lista, então quem acabou
+     * de excluir vê a conversa aparecer lá na hora — tirar daqui obrigaria a rebuscar tudo.
      */
     async deleteConversation(id: string): Promise<{ ok: boolean, name: string }> {
-      const i = this.conversations.findIndex(x => x.id === id)
-      if (i < 0) return { ok: false, name: '' }
-      const [removed] = this.conversations.splice(i, 1)
-      if (this.activeId === id) this.activeId = this.conversations[0]?.id ?? ''
+      const c = this.conversations.find(x => x.id === id)
+      if (!c) return { ok: false, name: '' }
+      c.excluida = true
+      if (this.activeId === id) this.activeId = this.visiveis[0]?.id ?? ''
       try {
         await api()(`/api/conversations/${id}`, { method: 'DELETE' })
-        return { ok: true, name: removed.name }
+        return { ok: true, name: c.name }
       }
       catch {
-        this.conversations.splice(i, 0, removed)
-        return { ok: false, name: removed.name }
+        c.excluida = false
+        return { ok: false, name: c.name }
       }
     },
 
-    /** Desfaz o excluir. Recarrega a linha do servidor porque ela saiu da lista local. */
+    /** Desfaz o excluir. A linha volta do servidor porque a exclusão pode ser de outra aba. */
     async restoreConversation(id: string): Promise<boolean> {
       try {
         const r = await api()<any>(`/api/conversations/${id}/restore`, { method: 'POST' })
-        if (!this.conversations.some(c => c.id === r.slug)) this.conversations.push(mapConv(r))
+        const c = this.conversations.find(x => x.id === r.slug)
+        if (c) Object.assign(c, mapConv(r), { thread: c.thread, threadHasMore: c.threadHasMore, waCloud: c.waCloud, meeting: c.meeting })
+        else this.conversations.push(mapConv(r))
         return true
       }
       catch {
         return false
       }
+    },
+    /**
+     * Busca os leads reprovados na triagem — eles ficam fora da carga normal (somem da
+     * tela como conversa excluída) e só descem quando alguém pede para revê-los.
+     * Uma vez só por sessão: dali em diante o tempo real cuida deles como das outras.
+     */
+    async carregarDesqualificados() {
+      if (this.desqualificadosCarregados || this.desqualificadosCarregando) return
+      this.desqualificadosCarregando = true
+      try {
+        const raw = await api()<any[]>('/api/conversations?desqualificados=1')
+        const existentes = new Set(this.conversations.map(c => c.id))
+        this.conversations.push(...raw.filter(r => !existentes.has(r.slug)).map(mapConv))
+        this.desqualificadosCarregados = true
+        this.linkContactNames()
+      }
+      catch { /* silencioso: a tab só fica vazia */ }
+      finally { this.desqualificadosCarregando = false }
+    },
+    /**
+     * Busca as conversas EXCLUÍDAS (a lixeira). Nada foi apagado — elas só ganharam
+     * `hidden_at` e saíram da tela; a tab de lixeira é o caminho de volta.
+     */
+    async carregarExcluidas() {
+      if (this.excluidasCarregadas || this.excluidasCarregando) return
+      this.excluidasCarregando = true
+      try {
+        const raw = await api()<any[]>('/api/conversations?excluidas=1')
+        const existentes = new Set(this.conversations.map(c => c.id))
+        this.conversations.push(...raw.filter(r => !existentes.has(r.slug)).map(mapConv))
+        this.excluidasCarregadas = true
+        this.linkContactNames()
+      }
+      catch { /* silencioso: a tab só fica vazia */ }
+      finally { this.excluidasCarregando = false }
     },
     // Liga/desliga o atendimento automático (a IA responde o lead sozinha).
     toggleAutoReply(id: string) {
@@ -756,21 +833,27 @@ export const useCrmStore = defineStore('crm', {
      * Marcar à mão apaga o "auto": a partir daí a IA não mexe mais nesta conversa, então
      * o chip para de mudar sozinho debaixo de quem acabou de decidir.
      */
-    setQualified(id: string, value: boolean | null) {
+    async setQualified(id: string, value: boolean | null) {
       const c = this.conversations.find(x => x.id === id)
       if (!c) return
       const antes = { q: c.qualified, motivo: c.qualifiedReason, auto: c.qualifiedAuto }
       c.qualified = value
       c.qualifiedAuto = false
       if (value === null) c.qualifiedReason = ''
-      api()(`/api/conversations/${id}`, { method: 'PATCH', body: { qualified: value } })
-        .catch(() => { c.qualified = antes.q; c.qualifiedReason = antes.motivo; c.qualifiedAuto = antes.auto })
+      try {
+        await api()(`/api/conversations/${id}`, { method: 'PATCH', body: { qualified: value } })
+        // Só o servidor sabe se o lead sai da tela: a conta olha reunião e etapa, que a
+        // linha da lista não carrega. O broadcast do PATCH é `toOthers`, então esta aba
+        // ficaria com o chip novo e a visibilidade velha se não buscasse a linha aqui.
+        await this.patchConversationFromServer(id)
+      }
+      catch { c.qualified = antes.q; c.qualifiedReason = antes.motivo; c.qualifiedAuto = antes.auto }
     },
     /** Próximo estado do ciclo do chip de triagem. */
     cycleQualified(id: string) {
       const c = this.conversations.find(x => x.id === id)
       if (!c) return
-      this.setQualified(id, c.qualified === null ? true : (c.qualified ? false : null))
+      return this.setQualified(id, c.qualified === null ? true : (c.qualified ? false : null))
     },
     async memorize(id: string) {
       const c = this.conversations.find(x => x.id === id)
@@ -1242,7 +1325,7 @@ export const useCrmStore = defineStore('crm', {
     },
 
     // ----- Tabs da lista de conversas (filtram por etiqueta/etapa) -----
-    async createChatTab(payload: { name: string, stages: string[], qualified?: TabQual[] }) {
+    async createChatTab(payload: { name: string, stages: string[], qualified?: TabQual[], show_hidden?: boolean }) {
       const t = await api()<ChatTab>('/api/chat-tabs', { method: 'POST', body: payload })
       this.chatTabs.push({ ...t, stages: t.stages || [], qualified: t.qualified || [] })
       return t

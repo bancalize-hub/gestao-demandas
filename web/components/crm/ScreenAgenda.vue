@@ -314,6 +314,15 @@ function openWhatsApp(ev: CalEvent) {
   if (c) { crm.activeId = c.id; crm.go('chat') }
 }
 
+// Leads oferecidos para vincular à reunião: os visíveis (reprovado na triagem sai da tela)
+// mais o que JÁ está vinculado — sem ele na lista, abrir a reunião apagaria o vínculo.
+const leadOptions = computed(() => {
+  const atual = form.conversation_slug
+    ? crm.conversations.find(c => c.id === form.conversation_slug)
+    : undefined
+  return atual && !crm.visiveis.some(c => c.id === atual.id) ? [atual, ...crm.visiveis] : crm.visiveis
+})
+
 // Resumo da reunião num popover.
 const summaryFor = ref<CalEvent | null>(null)
 
@@ -780,7 +789,7 @@ async function excluirDoDetalhe(ev: CalEvent) {
         <label class="lbl">Lead vinculado (opcional) — liga a reunião à ficha do cliente</label>
         <select v-model="form.conversation_slug" class="inp">
           <option value="">— Nenhum —</option>
-          <option v-for="c in crm.conversations" :key="c.id" :value="c.id">{{ c.name }}</option>
+          <option v-for="c in leadOptions" :key="c.id" :value="c.id">{{ c.name }}</option>
         </select>
 
         <label class="lbl">Negócio vinculado (opcional)</label>

@@ -1204,10 +1204,10 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
     <template v-for="(pane, pi) in panes" :key="pi">
       <div :style="{ width: isMobile ? '100%' : '340px', flexShrink: 0, background: 'var(--c-bg)', borderRight: '1px solid var(--c-surface-1)', flexDirection: 'column', display: (isMobile && crm.chatOpen) ? 'none' : 'flex' }">
         <div style="padding:18px 18px 12px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+          <div class="r-xs-wrap" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
             <div style="font-size:19px;font-weight:800;letter-spacing:-.2px;">{{ chats > 1 ? `Conversas · ${instancia}` : 'Conversas' }}</div>
             <div style="display:flex;gap:6px;">
-              <button title="Importar conversa (.txt)" class="iconbtn" style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);font-family:inherit;font-size:12.5px;font-weight:600;padding:7px 10px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:5px;" @click="showImport = true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" stroke-linejoin="round" /></svg>Importar</button>
+              <button title="Importar conversa (.txt)" class="iconbtn" style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);font-family:inherit;font-size:12.5px;font-weight:600;padding:7px 10px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:5px;" @click="showImport = true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" stroke-linejoin="round" /></svg><span class="r-xs-hide">Importar</span></button>
               <button title="Nova conversa" class="wabtn" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:12.5px;font-weight:700;padding:7px 12px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:5px;" @click="showNewConv = true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>Nova</button>
               <button v-if="instancia === 1 && chats < MAX_CHATS" title="Duplicar o chat: cria mais um balão no menu lateral, com conversas configuradas à parte" class="iconbtn" style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);width:31px;height:31px;border-radius:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;" @click="duplicarChat"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="8" height="16" rx="2" /><rect x="13" y="4" width="8" height="16" rx="2" /></svg></button>
               <button v-if="instancia > 1" title="Remover este chat duplicado (o balão some do menu lateral; nenhuma conversa é apagada)" class="iconbtn" style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);width:31px;height:31px;border-radius:10px;cursor:pointer;font-size:17px;line-height:1;" @click="removerChat">×</button>
@@ -1225,7 +1225,7 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--c-text-muted)" stroke-width="2"><circle cx="11" cy="11" r="7" /><path d="m20 20-3-3" stroke-linecap="round" /></svg>
             <input v-model="pane.search" placeholder="Buscar conversa ou contato" style="flex:1;background:transparent;border:none;outline:none;color:var(--c-text);font-family:inherit;font-size:13.5px;">
           </div>
-          <div style="display:flex;gap:7px;margin-top:13px;">
+          <div class="r-xs-wrap" style="display:flex;gap:7px;margin-top:13px;">
             <button :style="pillStyle(pane.filter === 'tudo')" @click="pane.filter = 'tudo'">Tudo · {{ paneViews[pi].counts.tudo }}</button>
             <button :style="pillStyle(pane.filter === 'unread')" @click="pane.filter = 'unread'">Não lidas · {{ paneViews[pi].counts.unread }}</button>
             <button :style="pillStyle(pane.filter === 'arquivadas')" @click="pane.filter = 'arquivadas'">Arquivadas · {{ paneViews[pi].counts.arquivadas }}</button>
@@ -1266,14 +1266,17 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
                 <span v-if="c.hasUnread" style="background:var(--accent);color:var(--accent-ink);font-size:11px;font-weight:700;min-width:19px;height:19px;border-radius:10px;display:flex;align-items:center;justify-content:center;padding:0 5px;flex-shrink:0;">{{ c.unread }}</span>
               </div>
               <div v-if="c.hot" style="margin-top:6px;display:inline-flex;font-size:10.5px;font-weight:700;color:var(--c-orange);background:rgba(255,122,69,.13);padding:2px 8px;border-radius:6px;">🔥 Lead quente</div>
-              <!-- Etiqueta (etapa) clicável + toggle de atendimento automático, direto na lista -->
+              <!-- Etiqueta (etapa) clicável + toggle de atendimento automático, direto na lista.
+                   Os três chips têm 18px de altura e um deles cicla a TRIAGEM (esconde o lead
+                   da lista): no dedo, r-tap-pad cresce só a área clicável, senão acertar o
+                   chip errado é questão de sorte. -->
               <div style="display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap;">
-                <button class="ghost" :style="{ fontSize: '10.5px', fontWeight: 700, color: c.stageColor, background: `${c.stageColor}22`, padding: '2px 9px', borderRadius: '6px', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }" @click.stop="stageFor = stageFor === pi + ':' + c.id ? '' : pi + ':' + c.id; menuFor = ''">{{ c.stageName }} ▾</button>
-                <button class="ghost" :title="c.autoReply ? 'Atendimento automático ligado — clique para desligar' : 'Ativar atendimento automático (IA responde sozinha)'" :style="{ fontSize: '10.5px', fontWeight: 700, padding: '2px 9px', borderRadius: '6px', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', color: c.autoReply ? 'var(--accent-ink)' : 'var(--c-text-faint)', background: c.autoReply ? 'var(--accent)' : 'var(--c-surface-2)', opacity: c.autoReply ? 1 : 0.6 }" @click.stop="crm.toggleAutoReply(c.id)">🤖 IA</button>
-                <button class="ghost" :title="c.qual.titulo" :style="{ ...c.qual.style, fontSize: '10.5px', fontWeight: 700, padding: '2px 9px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }" @click.stop="cycleQual(c.id)">{{ c.qual.icone }} {{ c.qual.txt }}</button>
+                <button class="ghost r-tap-pad" :style="{ fontSize: '10.5px', fontWeight: 700, color: c.stageColor, background: `${c.stageColor}22`, padding: '2px 9px', borderRadius: '6px', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }" @click.stop="stageFor = stageFor === pi + ':' + c.id ? '' : pi + ':' + c.id; menuFor = ''">{{ c.stageName }} ▾</button>
+                <button class="ghost r-tap-pad" :title="c.autoReply ? 'Atendimento automático ligado — clique para desligar' : 'Ativar atendimento automático (IA responde sozinha)'" :style="{ fontSize: '10.5px', fontWeight: 700, padding: '2px 9px', borderRadius: '6px', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', color: c.autoReply ? 'var(--accent-ink)' : 'var(--c-text-faint)', background: c.autoReply ? 'var(--accent)' : 'var(--c-surface-2)', opacity: c.autoReply ? 1 : 0.6 }" @click.stop="crm.toggleAutoReply(c.id)">🤖 IA</button>
+                <button class="ghost r-tap-pad" :title="c.qual.titulo" :style="{ ...c.qual.style, fontSize: '10.5px', fontWeight: 700, padding: '2px 9px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }" @click.stop="cycleQual(c.id)">{{ c.qual.icone }} {{ c.qual.txt }}</button>
               </div>
             </div>
-            <div v-if="stageFor === pi + ':' + c.id" style="position:absolute;left:62px;top:58px;z-index:31;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:5px;min-width:170px;box-shadow:0 10px 28px rgba(0,0,0,.45);" @click.stop>
+            <div v-if="stageFor === pi + ':' + c.id" class="r-pop" style="position:absolute;left:62px;top:58px;z-index:31;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:5px;min-width:170px;box-shadow:0 10px 28px rgba(0,0,0,.45);" @click.stop>
               <div style="font-size:10px;color:var(--c-text-muted);font-weight:700;letter-spacing:.5px;padding:3px 8px 6px;">MUDAR ETIQUETA</div>
               <button v-for="l in crm.stages" :key="l.key" class="mitem" style="width:100%;display:flex;align-items:center;gap:9px;background:none;border:none;color:var(--c-text);font-family:inherit;font-size:13px;padding:7px 8px;border-radius:7px;cursor:pointer;text-align:left;" @click="crm.setConvStage(c.id, l.key); stageFor = ''">
                 <span :style="{ width: '11px', height: '11px', borderRadius: '3px', background: l.color, flexShrink: 0 }" />
@@ -1281,7 +1284,11 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
                 <svg v-if="c.stage === l.key" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5"><path d="m5 13 4 4L19 7" stroke-linecap="round" stroke-linejoin="round" /></svg>
               </button>
             </div>
-            <button class="rowmenu" title="Ações" style="position:absolute;top:8px;right:6px;background:var(--c-surface-2);border:none;color:var(--c-text);width:22px;height:22px;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:15px;line-height:1;" @click.stop="menuFor = menuFor === pi + ':' + c.id ? '' : pi + ':' + c.id">⋮</button>
+            <!-- No dedo não existe :hover — sem r-touch-show o ⋮ (não lida / arquivar /
+                 memória / excluir) some do aparelho junto com essas quatro ações. A área
+                 de toque cresce por ::after no bloco de estilo do fim do arquivo, para
+                 o botão não tapar o horário da linha. -->
+            <button class="rowmenu r-touch-show" title="Ações" style="position:absolute;top:8px;right:6px;background:var(--c-surface-2);border:none;color:var(--c-text);width:22px;height:22px;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:15px;line-height:1;" @click.stop="menuFor = menuFor === pi + ':' + c.id ? '' : pi + ':' + c.id">⋮</button>
             <div v-if="menuFor === pi + ':' + c.id" style="position:absolute;top:30px;right:6px;z-index:30;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:5px;min-width:180px;box-shadow:0 10px 28px rgba(0,0,0,.45);" @click.stop>
               <button class="mitem" style="width:100%;text-align:left;background:none;border:none;color:var(--c-text);font-family:inherit;font-size:13px;padding:8px 11px;border-radius:7px;cursor:pointer;" @click="crm.markUnread(c.id); menuFor = ''">Marcar como não lida</button>
               <button class="mitem" style="width:100%;text-align:left;background:none;border:none;color:var(--c-text);font-family:inherit;font-size:13px;padding:8px 11px;border-radius:7px;cursor:pointer;" @click="crm.toggleArchive(c.id); menuFor = ''">{{ c.archived ? 'Desarquivar' : 'Arquivar' }}</button>
@@ -1310,7 +1317,10 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
       </div>
 
       <!-- header -->
-      <div :style="{ display: 'flex', alignItems: 'center', flexWrap: isMobile ? 'wrap' : 'nowrap', gap: isMobile ? '9px' : '13px', padding: isMobile ? '10px 12px' : '13px 22px', background: 'var(--c-surface-2)', borderBottom: '1px solid var(--c-border)' }">
+      <!-- De 821 a 1200 o cabeçalho continuava em UMA linha: avatar + nome + 5 botões pedem
+           ~425px e sobravam ~360 (a ficha ao lado ainda estava de pé), então o nome era
+           espremido a zero e os botões saíam pelo corte. -->
+      <div class="r-md-wrap" :style="{ display: 'flex', alignItems: 'center', flexWrap: isMobile ? 'wrap' : 'nowrap', gap: isMobile ? '9px' : '13px', padding: isMobile ? '10px 12px' : '13px 22px', background: 'var(--c-surface-2)', borderBottom: '1px solid var(--c-border)' }">
         <button v-if="isMobile" title="Voltar" style="background:none;border:none;color:var(--c-text);cursor:pointer;display:flex;align-items:center;padding:0;margin-right:-4px;flex-shrink:0;" @click="backToList">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 19l-7-7 7-7" stroke-linecap="round" stroke-linejoin="round" /></svg>
         </button>
@@ -1325,18 +1335,22 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
             <span v-if="active.statusText" :style="{ fontSize: '11.5px', color: active.statusColor }">{{ active.statusText }}</span>
           </div>
         </div>
-        <div style="display:flex;gap:7px;align-items:center;">
+        <div class="hdr-actions" style="display:flex;gap:7px;align-items:center;">
           <div v-if="!isMobile" style="display:flex;gap:6px;margin-right:6px;">
             <span v-for="(t, i) in active.tags" :key="i" :style="t.style">{{ t.label }}</span>
           </div>
           <button class="iconbtn" :title="showThreadSearch ? 'Fechar busca' : 'Buscar nesta conversa'" :style="`width:38px;height:38px;border-radius:11px;border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;${showThreadSearch ? 'background:var(--accent);color:var(--accent-ink);' : 'background:var(--c-surface-2);color:var(--c-text);'}`" @click="toggleThreadSearch">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7" /><path d="m20 20-3-3" stroke-linecap="round" /></svg>
           </button>
-          <div style="position:relative;">
+          <div class="labelwrap" style="position:relative;">
             <button class="iconbtn" title="Etiquetas" style="width:38px;height:38px;border-radius:11px;border:none;background:var(--c-surface-2);color:var(--c-text);display:flex;align-items:center;justify-content:center;cursor:pointer;" @click.stop="showLabels = !showLabels">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7.2-7.2A2 2 0 0 1 2.8 12V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.4.6l7.4 7.4a2 2 0 0 1 0 2.8Z" stroke-linejoin="round" /><circle cx="7.5" cy="7.5" r="1.4" fill="currentColor" stroke="none" /></svg>
             </button>
-            <div v-if="showLabels" style="position:absolute;top:46px;right:0;z-index:40;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:12px;padding:9px;min-width:220px;box-shadow:0 12px 32px rgba(0,0,0,.5);" @click.stop>
+            <!-- Sem `.r-pop` aqui: ele ancora left/right na viewport, e o pai posicionado
+                 deste menu é o `.labelwrap` de 38px — as bordas de 10px cairiam dentro do
+                 botão. Ancorado em `right:0` o menu já cresce para dentro da tela; o teto de
+                 largura é a rede para o caso de a tela ser mais estreita que ele. -->
+            <div v-if="showLabels" style="position:absolute;top:46px;right:0;z-index:40;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:12px;padding:9px;min-width:220px;max-width:calc(100vw - 20px);box-shadow:0 12px 32px rgba(0,0,0,.5);" @click.stop>
               <div style="font-size:10.5px;color:var(--c-text-muted);font-weight:700;letter-spacing:.5px;padding:3px 7px 7px;">ETAPA DO FUNIL</div>
               <button v-for="l in crm.stages" :key="l.key" class="mitem" style="width:100%;display:flex;align-items:center;gap:9px;background:none;border:none;color:var(--c-text);font-family:inherit;font-size:13px;padding:7px 8px;border-radius:7px;cursor:pointer;text-align:left;" @click="setStage(l)">
                 <span :style="{ width: '11px', height: '11px', borderRadius: '3px', background: l.color, flexShrink: 0 }" />
@@ -1366,12 +1380,15 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--c-text-muted)" stroke-width="2" style="flex-shrink:0;"><circle cx="11" cy="11" r="7" /><path d="m20 20-3-3" stroke-linecap="round" /></svg>
         <input v-model="threadSearch" placeholder="Buscar mensagens nesta conversa" style="flex:1;background:transparent;border:none;outline:none;color:var(--c-text);font-family:inherit;font-size:13.5px;">
         <span v-if="threadSearch.trim()" style="font-size:12px;color:var(--c-text-muted);flex-shrink:0;">{{ searchCount }} resultado(s){{ conv?.threadHasMore ? ' · só nas carregadas' : '' }}</span>
-        <button title="Fechar" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:18px;line-height:1;flex-shrink:0;" @click="toggleThreadSearch">✕</button>
+        <button class="r-tap" title="Fechar" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:18px;line-height:1;flex-shrink:0;" @click="toggleThreadSearch">✕</button>
       </div>
 
       <!-- mensagens -->
       <div style="position:relative;flex:1;display:flex;flex-direction:column;min-height:0;">
-        <div ref="msgsRef" :style="{ flex: 1, overflowY: 'auto', padding: isMobile ? '14px 12px 14px' : '24px 18% 18px', display: 'flex', flexDirection: 'column', gap: '0', backgroundImage: 'radial-gradient(rgba(255,255,255,.02) 1px, transparent 1px)', backgroundSize: '22px 22px' }" @scroll="onScroll">
+        <!-- No ultrawide o padding de 18% segura pouco: em 3840px a bolha chegava a ~1270px
+             (linha de ~190 caracteres). r-wide-cap põe teto de 1440 nas TRÊS caixas da
+             thread (mensagens, barra da IA e composer), que assim ficam na mesma coluna. -->
+        <div ref="msgsRef" class="r-wide-cap" :style="{ flex: 1, overflowY: 'auto', padding: isMobile ? '14px 12px 14px' : '24px 18% 18px', display: 'flex', flexDirection: 'column', gap: '0', backgroundImage: 'radial-gradient(rgba(255,255,255,.02) 1px, transparent 1px)', backgroundSize: '22px 22px' }" @scroll="onScroll">
         <template v-if="crm.loading">
           <div style="align-self:center;width:70px;height:20px;border-radius:8px;background:var(--c-surface-1);animation:pulse 1.4s infinite;margin-bottom:6px;" />
           <div style="align-self:flex-start;width:46%;height:54px;border-radius:9px;background:var(--c-surface-1);animation:pulse 1.4s infinite;" />
@@ -1396,7 +1413,11 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
           <template v-for="(m, i) in thread" :key="m.key ?? `i${i}`">
             <div v-if="m.isDivider" :style="m.dividerStyle">{{ m.label }}</div>
             <div v-else-if="m.isText" class="bubble" :style="m.bubbleText" @dblclick="startReply(m)">
-              <button v-if="m.id" class="msgmenu-btn" :style="{ [m.isOut ? 'left' : 'right']: '-9px' }" title="Opções" @click.stop="toggleMsgMenu(m, i)">
+              <!-- Sem hover, o ⋮ era o único caminho para responder/encaminhar/copiar/apagar/
+                   reagir e não aparecia em aparelho de toque (o @dblclick de atalho também
+                   não existe no dedo). No celular ele entra 2px para dentro da bolha: em
+                   -9px encostava na borda da thread. -->
+              <button v-if="m.id" class="msgmenu-btn r-touch-show" :style="{ [m.isOut ? 'left' : 'right']: isMobile ? '2px' : '-9px' }" title="Opções" @click.stop="toggleMsgMenu(m, i)">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="12" cy="19" r="1.8" /></svg>
               </button>
               <div v-if="m.replyExcerpt" style="border-left:3px solid var(--accent);background:rgba(0,0,0,.18);border-radius:5px;padding:5px 9px;margin-bottom:5px;font-size:12.5px;color:var(--c-text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">↩ {{ m.replyExcerpt }}</div>
@@ -1427,14 +1448,15 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
               </div>
             </div>
             <div v-else-if="m.isMedia" v-lazy-media class="bubble" :style="m.bubbleMedia" :data-mid="m.id" @dblclick="startReply(m)">
-              <button v-if="m.id" class="msgmenu-btn" :style="{ [m.isOut ? 'left' : 'right']: '-9px' }" title="Opções" @click.stop="toggleMsgMenu(m, i)">
+              <button v-if="m.id" class="msgmenu-btn r-touch-show" :style="{ [m.isOut ? 'left' : 'right']: isMobile ? '2px' : '-9px' }" title="Opções" @click.stop="toggleMsgMenu(m, i)">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="12" cy="19" r="1.8" /></svg>
               </button>
               <div v-if="m.replyExcerpt" style="border-left:3px solid var(--accent);background:rgba(0,0,0,.18);border-radius:5px;padding:5px 9px;margin-bottom:6px;font-size:12.5px;color:var(--c-text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">↩ {{ m.replyExcerpt }}</div>
               <template v-if="mediaCache[m.id]">
                 <img v-if="m.isImage" :src="mediaCache[m.id]" title="Ampliar" style="max-width:260px;width:100%;border-radius:7px;display:block;cursor:zoom-in;" @click="lightbox = mediaCache[m.id]">
                 <video v-else-if="m.isVideo" :src="mediaCache[m.id]" controls style="max-width:260px;width:100%;border-radius:7px;display:block;" />
-                <audio v-else-if="m.isVoice" :src="mediaCache[m.id]" controls style="width:230px;display:block;" />
+                <!-- a regra global de mídia do responsive.css não pega <audio>: com 230px FIXOS o player vazava da bolha em telas de 360px -->
+                <audio v-else-if="m.isVoice" :src="mediaCache[m.id]" controls style="width:100%;max-width:230px;display:block;" />
                 <a v-else :href="mediaCache[m.id]" :download="m.fileName || 'arquivo'" style="display:flex;align-items:center;gap:10px;background:rgba(0,0,0,.18);border-radius:7px;padding:10px 12px;color:var(--c-text);text-decoration:none;font-size:13px;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--c-bubble-out-muted)" stroke-width="1.8"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14" stroke-linecap="round" stroke-linejoin="round" /></svg>Baixar arquivo</a>
               </template>
               <button v-else :disabled="mediaBusy[m.id] || mediaFailed[m.id]" style="display:flex;align-items:center;gap:9px;background:rgba(0,0,0,.18);border:none;color:var(--c-text);font-family:inherit;font-size:13px;padding:11px 14px;border-radius:7px;cursor:pointer;width:100%;min-width:170px;" @click="requestMedia(m.id)">
@@ -1474,31 +1496,41 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
         </button>
       </div>
 
-      <!-- sugestão IA (Claude via assinatura) -->
+      <!-- sugestão IA (Claude via assinatura). O texto tem 200-400 caracteres e esta barra fica
+           FORA da área rolável: sem o corte em 2 linhas (r-clamp) ela comia ~150px da conversa
+           no celular, justo com o teclado aberto. -->
+      <!-- O teto de 1440 vai no INVÓLUCRO, não na barra: `.r-wide-cap` usa margin-inline:auto
+           e uma declaração !important de folha vence estilo inline, então aplicá-lo direto na
+           barra apagava o recuo lateral dela (22px) e ela encostava nas bordas da thread,
+           desalinhada do composer — o contrário do que o teto queria resolver. -->
+      <div class="r-wide-cap">
       <div :style="{ margin: isMobile ? '0 12px' : '0 22px 0', background: 'linear-gradient(90deg,rgba(124,108,245,.14),rgba(124,108,245,.04))', border: '1px solid rgba(124,108,245,.3)', borderRadius: '12px', padding: '9px 13px' }">
         <div style="display:flex;align-items:center;gap:10px;">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="var(--c-ai)" style="flex-shrink:0;"><path d="m12 2 2.4 6.6L21 11l-6.6 2.4L12 20l-2.4-6.6L3 11l6.6-2.4z" /></svg>
           <span v-if="crm.aiLoading" style="font-size:13px;color:var(--c-ai-faint);flex:1;"><b style="color:var(--c-ai-soft);">IA</b> está escrevendo…</span>
-          <span v-else-if="crm.aiSuggestion" style="font-size:13px;color:var(--c-ai-faint);flex:1;"><b style="color:var(--c-ai-soft);">IA sugere:</b> "{{ crm.aiSuggestion }}"</span>
+          <span v-else-if="crm.aiSuggestion" class="r-clamp" style="font-size:13px;color:var(--c-ai-faint);flex:1;"><b style="color:var(--c-ai-soft);">IA sugere:</b> "{{ crm.aiSuggestion }}"</span>
           <span v-else style="font-size:13px;color:var(--c-ai-faint);flex:1;"><b style="color:var(--c-ai-soft);">IA:</b> gere uma resposta com base nesta conversa.</span>
           <button v-if="crm.aiSuggestion && !crm.aiLoading" class="aibtn" style="font-size:12px;font-weight:700;color:var(--c-on-accent);background:var(--c-ai);border:none;padding:7px 15px;border-radius:9px;cursor:pointer;flex-shrink:0;" @click="useAISuggestion">Usar</button>
           <button v-else class="aibtn" :disabled="crm.aiLoading" :style="{ fontSize: '12px', fontWeight: 700, color: 'var(--c-on-accent)', background: 'var(--c-ai)', border: 'none', padding: '7px 15px', borderRadius: '9px', cursor: crm.aiLoading ? 'default' : 'pointer', flexShrink: 0, opacity: crm.aiLoading ? 0.6 : 1 }" @click="crm.suggestReply()">{{ crm.aiLoading ? '…' : 'Gerar' }}</button>
         </div>
-        <div v-if="crm.aiSuggestion && !crm.aiLoading" style="display:flex;align-items:center;gap:7px;margin-top:9px;">
-          <input v-model="adjust" placeholder="Ajustar (ex: mais informal, não fale de preço)" style="flex:1;background:var(--c-bg);border:1px solid var(--c-surface-3);border-radius:8px;padding:7px 10px;color:var(--c-text);font-family:inherit;font-size:12.5px;outline:none;" @keydown.enter="doAdjust">
+        <div v-if="crm.aiSuggestion && !crm.aiLoading" class="r-xs-wrap" style="display:flex;align-items:center;gap:7px;margin-top:9px;">
+          <input v-model="adjust" class="r-min0 r-xs-full" placeholder="Ajustar (ex: mais informal, não fale de preço)" style="flex:1;background:var(--c-bg);border:1px solid var(--c-surface-3);border-radius:8px;padding:7px 10px;color:var(--c-text);font-family:inherit;font-size:12.5px;outline:none;" @keydown.enter="doAdjust">
           <button style="font-size:12px;font-weight:700;color:var(--c-ai-soft);background:var(--c-surface-2);border:none;padding:7px 13px;border-radius:8px;cursor:pointer;flex-shrink:0;" @click="doAdjust">Refazer</button>
           <button v-if="lastInstruction" title="Salvar essa correção na memória (não erra de novo)" style="font-size:12px;font-weight:700;color:var(--accent-soft);background:rgba(var(--accent-rgb),.12);border:1px solid rgba(var(--accent-rgb),.3);padding:7px 12px;border-radius:8px;cursor:pointer;flex-shrink:0;" @click="doSaveRule">💾 Salvar correção</button>
         </div>
       </div>
+      </div>
 
       <!-- composer -->
-      <div :style="{ padding: isMobile ? '10px 12px 12px' : '13px 22px 18px', position: 'relative' }">
+      <!-- Com a conversa aberta a Rail se esconde, então o composer é o último elemento da
+           tela: no iPhone a home indicator cobria os botões de enviar/gravar. -->
+      <div class="r-wide-cap r-safe-pad-bottom" :style="{ padding: isMobile ? '10px 12px 12px' : '13px 22px 18px', position: 'relative', '--r-pb': isMobile ? '12px' : '18px' }">
         <!-- janela de 24h fechada (API oficial): só template aprovado sai daqui -->
         <div v-if="crm.templatePanel" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:14px;padding:13px;margin-bottom:9px;">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:9px;">
             <span style="font-size:13.5px;font-weight:800;">{{ neverTalked ? '🚀 Iniciar conversa' : '⏳ Janela de 24h fechada' }}</span>
             <span style="flex:1;font-size:12px;color:var(--c-text-muted);">{{ neverTalked ? 'no número oficial, o primeiro contato tem que ser um template aprovado' : 'o cliente não escreve há mais de 24h — envie um template aprovado' }}</span>
-            <button title="Fechar" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:16px;" @click="closeTemplates">✕</button>
+            <button class="r-tap" title="Fechar" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:16px;" @click="closeTemplates">✕</button>
           </div>
 
           <div v-if="crm.templatesLoading" style="font-size:12.5px;color:var(--c-text-muted);padding:6px 0;">Carregando templates…</div>
@@ -1554,7 +1586,7 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
             <div style="font-size:12px;font-weight:700;color:var(--accent);">{{ replyTo.isOut ? 'Você' : active.name }}</div>
             <div style="font-size:12.5px;color:var(--c-text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ replyTo.text }}</div>
           </div>
-          <button title="Cancelar" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;padding:0 12px;font-size:17px;" @click="replyTo = null">✕</button>
+          <button class="r-tap" title="Cancelar" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;padding:0 12px;font-size:17px;" @click="replyTo = null">✕</button>
         </div>
 
         <!-- pré-visualização do anexo -->
@@ -1565,11 +1597,11 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
             <div style="font-size:13px;font-weight:600;color:var(--c-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ pendingFile.name }}</div>
             <div style="font-size:11.5px;color:var(--c-text-muted);">{{ fmtSize(pendingFile.size) }} · adicione uma legenda (opcional)</div>
           </div>
-          <button title="Remover anexo" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:17px;flex-shrink:0;" @click="cancelAttach">✕</button>
+          <button class="r-tap" title="Remover anexo" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:17px;flex-shrink:0;" @click="cancelAttach">✕</button>
         </div>
 
         <!-- seletor de emoji -->
-        <div v-if="showEmoji" style="position:absolute;bottom:100%;left:22px;z-index:20;background:var(--c-border);border:1px solid var(--c-surface-3);border-radius:14px;padding:10px;width:300px;box-shadow:0 12px 32px rgba(0,0,0,.5);display:flex;flex-wrap:wrap;gap:2px;" @click.stop>
+        <div v-if="showEmoji" class="r-pop" style="position:absolute;bottom:100%;left:22px;z-index:20;background:var(--c-border);border:1px solid var(--c-surface-3);border-radius:14px;padding:10px;width:300px;box-shadow:0 12px 32px rgba(0,0,0,.5);display:flex;flex-wrap:wrap;gap:2px;" @click.stop>
           <button v-for="e in EMOJIS" :key="e" style="background:none;border:none;font-size:21px;line-height:1;padding:5px;border-radius:8px;cursor:pointer;" class="emojibtn" @click="insertEmoji(e)">{{ e }}</button>
         </div>
 
@@ -1587,7 +1619,7 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
         <div v-else style="display:flex;align-items:flex-end;gap:10px;background:var(--c-surface-2);border-radius:15px;padding:7px 9px 7px 13px;">
           <button v-if="!isMobile" :title="showEmoji ? 'Fechar emojis' : 'Emojis'" :style="`width:36px;height:36px;border-radius:50%;border:none;background:transparent;display:flex;align-items:center;justify-content:center;cursor:pointer;${showEmoji ? 'color:var(--accent);' : 'color:var(--c-text-muted);'}`" @click.stop="showEmoji = !showEmoji"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 9.5a1 1 0 1 0 0-.1M15 9.5a1 1 0 1 0 0-.1M8.5 14.5a4.5 4.5 0 0 0 7 0" stroke-linecap="round" /><circle cx="12" cy="12" r="9.5" /></svg></button>
           <button title="Anexar foto, vídeo ou documento" style="width:36px;height:36px;border-radius:50%;border:none;background:transparent;color:var(--c-text-muted);display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;" @click="pickFile"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21.4 11.05 12.25 20.2a5.5 5.5 0 0 1-7.78-7.78l8.49-8.49a3.67 3.67 0 0 1 5.19 5.19l-8.5 8.49a1.83 1.83 0 0 1-2.59-2.59l7.78-7.78" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
-          <button class="agbtn" title="Agendar reunião com IA" style="height:36px;border-radius:18px;border:none;background:rgba(var(--accent-rgb),.14);color:var(--accent);display:flex;align-items:center;gap:6px;padding:0 13px;cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:700;flex-shrink:0;" @click="agendarReuniao"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18M9 16l2 2 4-4" stroke-linecap="round" stroke-linejoin="round" /></svg>Agendar</button>
+          <button class="agbtn" title="Agendar reunião com IA" style="height:36px;border-radius:18px;border:none;background:rgba(var(--accent-rgb),.14);color:var(--accent);display:flex;align-items:center;gap:6px;padding:0 13px;cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:700;flex-shrink:0;" @click="agendarReuniao"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18M9 16l2 2 4-4" stroke-linecap="round" stroke-linejoin="round" /></svg><span class="r-xs-hide">Agendar</span></button>
           <textarea ref="inputRef" :placeholder="pendingFile ? 'Legenda (opcional)…' : 'Digite uma mensagem'" rows="1" style="flex:1;background:transparent;border:none;outline:none;resize:none;color:var(--c-text);font-family:inherit;font-size:14px;padding:9px 0;line-height:1.4;max-height:130px;" @keydown="onKeyDown" @input="autogrow" />
           <button v-if="!hasInput && !pendingFile" title="Gravar áudio" style="width:42px;height:42px;border-radius:50%;border:none;background:var(--accent);color:var(--accent-ink);display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;box-shadow:0 4px 12px rgba(var(--accent-rgb),.3);" @click="startRec"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8.5 21h7" stroke-linecap="round" /></svg></button>
           <button v-else :disabled="sendingMedia" :style="`width:42px;height:42px;border-radius:50%;border:none;background:var(--accent);color:var(--accent-ink);display:flex;align-items:center;justify-content:center;cursor:${sendingMedia ? 'default' : 'pointer'};flex-shrink:0;box-shadow:0 4px 12px rgba(var(--accent-rgb),.3);opacity:${sendingMedia ? 0.6 : 1};`" @click="send">
@@ -1598,8 +1630,12 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
       </div>
     </div>
 
-    <!-- painel de contexto -->
-    <div :style="{ width:'312px', flexShrink:0, background:'var(--c-surface-2)', borderLeft:'1px solid var(--c-border)', flexDirection:'column', overflowY:'auto', display: isMobile ? 'none' : 'flex' }">
+    <!-- painel de contexto. As TRÊS colunas pedem rail 76 + lista 340 + ficha 312 = 728px de
+         cromo: em 821-1024px sobra pouco para a conversa e a ficha sai. De 1025 para cima
+         ela FICA — ali sobram ~300px de thread e apagá-la tirava do ar o valor do negócio,
+         a etapa, o link do Meet, as respostas rápidas e os templates aprovados, sem nenhum
+         outro caminho para chegar neles (o drawer do celular ainda não existe). -->
+    <div class="r-tablet-hide" :style="{ width:'min(312px, 100%)', flexShrink:0, background:'var(--c-surface-2)', borderLeft:'1px solid var(--c-border)', flexDirection:'column', overflowY:'auto', display: isMobile ? 'none' : 'flex' }">
       <div style="padding:24px 20px 18px;text-align:center;border-bottom:1px solid var(--c-surface-1);">
         <div :style="[active.avatarBig, broken.has(active.id) ? {} : semFundo]">
           <img v-if="active.id && !broken.has(active.id)" :src="avatarSrc(active.id)" title="Ver foto ampliada" style="width:100%;height:100%;border-radius:50%;object-fit:cover;cursor:zoom-in;" @click="lightbox = avatarSrc(active.id)" @error="broken.add(active.id)">
@@ -1694,20 +1730,23 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
       </div>
     </div>
 
-    <div v-if="memoToast" style="position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:60;background:var(--c-surface-3);color:var(--c-text);font-size:13px;font-weight:600;padding:11px 20px;border-radius:11px;box-shadow:0 8px 24px rgba(0,0,0,.45);">{{ memoToast }}</div>
+    <!-- No celular a Rail é a barra INFERIOR (58px): estes dois avisos caíam em cima dela.
+         O de baixo ainda traz o nome do lead, de tamanho imprevisível — centralizado com
+         translateX(-50%) e sem teto, vazava dos DOIS lados. -->
+    <div v-if="memoToast" class="r-above-nav r-toast" style="position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:60;background:var(--c-surface-3);color:var(--c-text);font-size:13px;font-weight:600;padding:11px 20px;border-radius:11px;box-shadow:0 8px 24px rgba(0,0,0,.45);">{{ memoToast }}</div>
 
     <!-- Excluiu uma conversa: aviso com Desfazer (a exclusão só esconde) -->
-    <div v-if="undoDelete" style="position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:61;display:flex;align-items:center;gap:14px;background:var(--c-surface-3);color:var(--c-text);font-size:13px;font-weight:600;padding:11px 14px 11px 20px;border-radius:11px;box-shadow:0 8px 24px rgba(0,0,0,.45);">
+    <div v-if="undoDelete" class="r-above-nav r-toast r-wrap" style="position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:61;display:flex;align-items:center;gap:14px;background:var(--c-surface-3);color:var(--c-text);font-size:13px;font-weight:600;padding:11px 14px 11px 20px;border-radius:11px;box-shadow:0 8px 24px rgba(0,0,0,.45);">
       <span>Conversa de {{ undoDelete.name }} excluída</span>
       <button style="background:none;border:none;color:var(--accent);font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;padding:2px 6px;" @click="doUndoDelete">Desfazer</button>
     </div>
 
     <!-- Encaminhar: escolher conversa de destino -->
-    <div v-if="forwardMsg" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:80;padding:20px;" @click.self="forwardMsg = null">
-      <div style="width:420px;max-width:100%;max-height:80vh;display:flex;flex-direction:column;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:18px;">
+    <div v-if="forwardMsg" class="r-xs-pad-sm" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:80;padding:20px;" @click.self="forwardMsg = null">
+      <div class="r-modal" style="width:420px;max-width:100%;max-height:80dvh;display:flex;flex-direction:column;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:18px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-shrink:0;">
           <div style="font-size:16px;font-weight:800;">Encaminhar para…</div>
-          <button style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:20px;line-height:1;" @click="forwardMsg = null">✕</button>
+          <button class="r-tap" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:20px;line-height:1;" @click="forwardMsg = null">✕</button>
         </div>
         <div style="display:flex;align-items:center;gap:9px;background:var(--c-surface-2);border-radius:10px;padding:8px 11px;margin-bottom:11px;flex-shrink:0;">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--c-text-muted)" stroke-width="2"><circle cx="11" cy="11" r="7" /><path d="m20 20-3-3" stroke-linecap="round" /></svg>
@@ -1725,16 +1764,16 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
 
     <!-- Lightbox: imagem em tela cheia -->
     <div v-if="lightbox" style="position:fixed;inset:0;background:rgba(0,0,0,.9);display:flex;align-items:center;justify-content:center;z-index:80;cursor:zoom-out;" @click="lightbox = null">
-      <img :src="lightbox" style="max-width:92vw;max-height:92vh;border-radius:8px;object-fit:contain;box-shadow:0 10px 40px rgba(0,0,0,.6);">
-      <button title="Fechar" style="position:absolute;top:18px;right:22px;background:rgba(255,255,255,.12);border:none;color:var(--c-on-accent);width:42px;height:42px;border-radius:50%;cursor:pointer;font-size:22px;line-height:1;" @click.stop="lightbox = null">✕</button>
+      <img :src="lightbox" style="max-width:92vw;max-height:92dvh;border-radius:8px;object-fit:contain;box-shadow:0 10px 40px rgba(0,0,0,.6);">
+      <button title="Fechar" style="position:absolute;top:calc(18px + env(safe-area-inset-top, 0px));right:22px;background:rgba(255,255,255,.12);border:none;color:var(--c-on-accent);width:42px;height:42px;border-radius:50%;cursor:pointer;font-size:22px;line-height:1;" @click.stop="lightbox = null">✕</button>
     </div>
 
     <!-- Modal: importar conversa (.txt) -->
-    <div v-if="showImport" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:60;padding:24px;" @click.self="showImport = false">
-      <div style="width:440px;max-width:100%;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:24px;">
+    <div v-if="showImport" class="r-xs-pad-sm" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:60;padding:24px;" @click.self="showImport = false">
+      <div class="r-modal r-xs-pad-sm" style="width:440px;max-width:100%;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:24px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
           <div style="font-size:18px;font-weight:800;">Importar conversa (.txt)</div>
-          <button style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:20px;line-height:1;" @click="showImport = false">×</button>
+          <button class="r-tap" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:20px;line-height:1;" @click="showImport = false">×</button>
         </div>
         <div style="font-size:12.5px;color:var(--c-text-muted);margin-bottom:16px;">No WhatsApp: abra a conversa → ⋮ / nome → <b>Exportar conversa</b> → Sem mídia → salve o .txt e suba aqui.</div>
 
@@ -1766,11 +1805,11 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
     </div>
 
     <!-- Modal: nova conversa por número -->
-    <div v-if="showNewConv" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:60;padding:24px;" @click.self="showNewConv = false">
-      <div style="width:400px;max-width:100%;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:24px;">
+    <div v-if="showNewConv" class="r-xs-pad-sm" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:60;padding:24px;" @click.self="showNewConv = false">
+      <div class="r-modal r-xs-pad-sm" style="width:400px;max-width:100%;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:24px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
           <div style="font-size:18px;font-weight:800;">Nova conversa</div>
-          <button style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:20px;line-height:1;" @click="showNewConv = false">×</button>
+          <button class="r-tap" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:20px;line-height:1;" @click="showNewConv = false">×</button>
         </div>
         <div style="font-size:12.5px;color:var(--c-text-muted);margin-bottom:16px;">Inicie uma conversa com um número do WhatsApp (mesmo sem histórico).</div>
         <label class="lbl2">Número (com DDD)</label>
@@ -1787,22 +1826,22 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
     </div>
 
     <!-- Modal: gerenciar tabs por etiqueta -->
-    <div v-if="showTabs" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:60;padding:24px;" @click.self="showTabs = false">
-      <div style="width:440px;max-width:100%;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:24px;">
+    <div v-if="showTabs" class="r-xs-pad-sm" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:60;padding:24px;" @click.self="showTabs = false">
+      <div class="r-modal r-xs-pad-sm" style="width:440px;max-width:100%;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:24px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
           <div style="font-size:18px;font-weight:800;">Tabs por etiqueta</div>
-          <button style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:20px;line-height:1;" @click="showTabs = false">×</button>
+          <button class="r-tap" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:20px;line-height:1;" @click="showTabs = false">×</button>
         </div>
         <div style="font-size:12.5px;color:var(--c-text-muted);margin-bottom:16px;">Crie tabs que filtram as conversas por etiqueta e, se quiser, pela triagem (ex.: "SDR" = Lead + Contato feito, só qualificados e sem triagem).</div>
 
         <!-- tabs existentes -->
         <!-- Só as tabs DESTE chat: excluir/editar aqui não mexe nos outros balões. -->
         <div v-if="tabsDoChat.length" style="display:flex;flex-direction:column;gap:7px;margin-bottom:16px;">
-          <div v-for="t in tabsDoChat" :key="t.id" style="display:flex;align-items:center;gap:8px;background:var(--c-surface-2);border-radius:10px;padding:8px 11px;">
+          <div v-for="t in tabsDoChat" :key="t.id" class="r-xs-wrap" style="display:flex;align-items:center;gap:8px;background:var(--c-surface-2);border-radius:10px;padding:8px 11px;">
             <span style="flex:1;font-size:13.5px;font-weight:600;">{{ t.name }}</span>
             <span style="font-size:11.5px;color:var(--c-text-muted);">{{ tabResumo(t) }}</span>
-            <button title="Editar" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;padding:2px 4px;" @click="editTabForm(t)">✎</button>
-            <button title="Excluir" style="background:none;border:none;color:var(--c-danger);cursor:pointer;padding:2px 4px;" @click="deleteTab(t.id)">✕</button>
+            <button class="r-tap" title="Editar" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;padding:2px 4px;" @click="editTabForm(t)">✎</button>
+            <button class="r-tap" title="Excluir" style="background:none;border:none;color:var(--c-danger);cursor:pointer;padding:2px 4px;" @click="deleteTab(t.id)">✕</button>
           </div>
         </div>
 
@@ -1844,11 +1883,11 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
     </div>
 
     <!-- Modal: agendar reunião com IA -->
-    <div v-if="schedOpen" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:60;padding:24px;" @click.self="schedOpen = false">
-      <div style="width:440px;max-width:100%;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:24px;">
+    <div v-if="schedOpen" class="r-xs-pad-sm" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:60;padding:24px;" @click.self="schedOpen = false">
+      <div class="r-modal r-xs-pad-sm" style="width:440px;max-width:100%;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:24px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
           <div style="font-size:18px;font-weight:800;">Agendar reunião</div>
-          <button style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:20px;line-height:1;" @click="schedOpen = false">×</button>
+          <button class="r-tap" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:20px;line-height:1;" @click="schedOpen = false">×</button>
         </div>
 
         <!-- Carregando -->
@@ -1931,4 +1970,32 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
 .resend-btn { display: inline-flex; align-items: center; gap: 4px; margin-right: 2px; background: rgba(var(--c-danger-rgb),.14); border: 1px solid var(--c-danger); color: var(--c-danger); font-family: inherit; font-size: 10.5px; font-weight: 700; line-height: 1; padding: 3px 7px; border-radius: 20px; cursor: pointer; }
 .resend-btn:hover:not(:disabled) { background: var(--c-danger); color: #fff; }
 .resend-btn:disabled { opacity: .6; cursor: default; }
+
+/* ==========================================================================
+   Responsivo — ver assets/css/responsive.css. Só fica aqui o que nenhum
+   utilitário resolve sem mexer na estrutura da tela.
+   ========================================================================== */
+
+/*
+  Até 1200px o cabeçalho da conversa quebra linha (r-md-wrap) e a fileira de botões
+  cai para a ESQUERDA: o dropdown de etiquetas, ancorado em `right:0` de um invólucro
+  de 38px, ia ~125px para fora da tela pela esquerda. Ancorando no grupo inteiro (que
+  ocupa a linha) ele volta para dentro — e o `.r-pop` passa a medir a linha, não os
+  38px do botão.
+*/
+@media (max-width: 1200px) {
+  .hdr-actions { position: relative; }
+  .labelwrap { position: static !important; }
+}
+
+/*
+  Alvo de toque dos dois ⋮ (linha da conversa e bolha da mensagem): 22px é metade do
+  mínimo do dedo. O alvo cresce por ::after em vez de `.r-tap-inline` porque aquele
+  força position:relative e estes dois são position:absolute — assim a caixa continua
+  com 22px e não tapa o horário da linha nem o texto da bolha.
+*/
+@media (hover: none), (pointer: coarse) {
+  .rowmenu::after,
+  .msgmenu-btn::after { content: ''; position: absolute; inset: -11px; }
+}
 </style>

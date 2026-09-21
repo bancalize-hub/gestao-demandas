@@ -63,7 +63,7 @@ const box = { background: 'var(--c-surface-2)', border: '1px solid var(--c-borde
 </script>
 
 <template>
-  <div style="flex:1;overflow-y:auto;padding:32px 28px;background:var(--c-bg);color:var(--c-text);">
+  <div style="flex:1;min-width:0;overflow-y:auto;padding:32px clamp(12px,4vw,30px);background:var(--c-bg);color:var(--c-text);">
     <div style="max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:20px;">
       <div>
         <div style="font-size:22px;font-weight:800;letter-spacing:-.3px;">Marca da empresa</div>
@@ -71,7 +71,7 @@ const box = { background: 'var(--c-surface-2)', border: '1px solid var(--c-borde
       </div>
 
       <!-- Cor de destaque -->
-      <div :style="box">
+      <div class="r-xs-pad-sm" :style="box">
         <div style="font-size:15px;font-weight:700;margin-bottom:14px;">Cor de destaque</div>
         <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
           <input v-model="color" type="color" style="width:56px;height:56px;border:none;border-radius:12px;background:none;cursor:pointer;padding:0;">
@@ -83,14 +83,14 @@ const box = { background: 'var(--c-surface-2)', border: '1px solid var(--c-borde
             Restaurar padrão
           </button>
         </div>
-        <div style="display:flex;gap:10px;margin-top:16px;">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;">
           <div :style="{ background: 'var(--accent)', color: 'var(--accent-ink)', padding: '9px 16px', borderRadius: '10px', fontWeight: 700, fontSize: '13px' }">Botão</div>
           <div :style="{ background: 'rgba(var(--accent-rgb),.14)', color: 'var(--accent)', padding: '9px 16px', borderRadius: '10px', fontWeight: 700, fontSize: '13px' }">Destaque suave</div>
         </div>
       </div>
 
       <!-- Logos -->
-      <div :style="box">
+      <div class="r-xs-pad-sm" :style="box">
         <div style="font-size:15px;font-weight:700;margin-bottom:4px;">Logos</div>
         <div style="font-size:12.5px;color:var(--c-text-muted);margin-bottom:16px;">PNG/SVG/JPG até 2MB. A logo clara é usada no tema claro; a escura, no tema escuro.</div>
         <div class="r-col-1" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
@@ -100,7 +100,7 @@ const box = { background: 'var(--c-surface-2)', border: '1px solid var(--c-borde
               <img v-if="v === 'light' ? branding.logo_light_url : branding.logo_dark_url" :src="(v === 'light' ? branding.logo_light_url : branding.logo_dark_url) as string" style="max-height:56px;max-width:80%;object-fit:contain;">
               <span v-else style="font-size:12px;color:var(--c-text-muted);">sem logo</span>
             </div>
-            <div style="display:flex;gap:8px;">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
               <label style="flex:1;text-align:center;background:var(--accent);color:var(--accent-ink);font-weight:700;font-size:13px;padding:9px;border-radius:9px;cursor:pointer;">
                 Enviar
                 <input type="file" accept="image/*" style="display:none;" @change="onLogo($event, v)">

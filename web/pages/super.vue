@@ -112,23 +112,34 @@ function textoEstado(n: Numero) {
   return n.estado === 'open' ? 'conectado' : (n.estado || 'sem estado')
 }
 
-const cardBase = 'background:var(--c-surface-0);border:1px solid var(--c-surface-1);border-radius:12px;padding:14px 16px;'
+// `background-color` (e nao o atalho `background`) porque o atalho, vindo do style inline,
+// zerava o `background-image` da pista de rolagem (.r-scroll-hint) do cartao das tabelas.
+const cardBase = 'background-color:var(--c-surface-0);border:1px solid var(--c-surface-1);border-radius:12px;padding:14px 16px;'
 const th = 'padding:10px 12px;text-align:left;font-size:10.5px;font-weight:700;color:var(--c-text-faint);white-space:nowrap;text-transform:uppercase;letter-spacing:.04em;'
-const td = 'padding:11px 12px;font-size:12px;vertical-align:middle;white-space:nowrap;'
+// Sem `white-space:nowrap` aqui: aplicado a TODA celula, era ele que inflava a largura
+// minima das duas tabelas (~1100px em 360px de tela). Ele fica so nas colunas de numero
+// (as `text-align:right`), onde quebrar linha atrapalha; as de texto livre passam a caber.
+const td = 'padding:11px 12px;font-size:12px;vertical-align:middle;'
 </script>
 
 <template>
-  <div style="display:flex;flex-direction:column;height:100%;min-height:0;background:var(--c-bg-deepest);color:var(--c-text);font-family:'JetBrains Mono',ui-monospace,monospace;overflow:hidden;">
-    <!-- barra do topo -->
-    <header style="display:flex;align-items:center;gap:12px;padding:12px clamp(12px,4vw,28px);border-bottom:1px solid var(--c-surface-1);flex-shrink:0;">
+  <div style="flex:1;min-width:0;display:flex;flex-direction:column;height:100%;min-height:0;background:var(--c-bg-deepest);color:var(--c-text);font-family:'JetBrains Mono',ui-monospace,monospace;overflow:hidden;">
+    <!--
+      barra do topo - `r-wrap`: o min-content da barra (voltar + titulo + 242px de abas +
+      Atualizar) passa de 500px e a raiz corta o excedente (overflow:hidden). Em 360px a
+      aba "Servidor" ficava pela metade e o "Atualizar" saia inteiro da tela.
+    -->
+    <header class="r-wrap" style="display:flex;align-items:center;gap:12px;padding:12px clamp(12px,4vw,28px);border-bottom:1px solid var(--c-surface-1);flex-shrink:0;">
       <button
+        class="r-tap"
         title="Voltar ao CRM"
         style="background:transparent;border:1px solid var(--c-surface-3);color:var(--c-text-faint);font-family:inherit;font-size:11.5px;font-weight:700;padding:5px 10px;border-radius:7px;cursor:pointer;"
         @click="navigateTo('/')"
       >
         ← CRM
       </button>
-      <div>
+      <!-- r-break: sem min-width:0 o nome do usuario (token unico) empurrava a barra inteira. -->
+      <div class="r-break">
         <div style="font-size:14px;font-weight:800;letter-spacing:-.01em;">
           Plataforma
         </div>
@@ -139,16 +150,24 @@ const td = 'padding:11px 12px;font-size:12px;vertical-align:middle;white-space:n
 
       <div style="flex:1;" />
 
-      <div style="display:flex;gap:2px;background:var(--c-bg-deepest);border:1px solid var(--c-surface-1);border-radius:9px;padding:3px;">
+      <!--
+        Os tres rotulos nao encolhem (~242px irredutiveis) e a aba "Servidor" era cortada
+        pela borda. r-swipe deixa a tira arrastar com o dedo; o r-xs-full so entra em
+        <=480px, onde nem arrastando os 242px cabiam ao lado do "Atualizar" - de 481 a
+        820px os dois continuam dividindo a mesma linha, que la ja sobra espaco.
+      -->
+      <div class="r-swipe r-xs-full" style="display:flex;gap:2px;background:var(--c-bg-deepest);border:1px solid var(--c-surface-1);border-radius:9px;padding:3px;">
         <button
           v-for="t in [{ k: 'numeros', l: 'Números' }, { k: 'empresas', l: 'Empresas' }, { k: 'plataforma', l: 'Servidor' }]"
           :key="t.k"
+          class="r-tap"
           :style="{ background: aba === t.k ? 'var(--c-surface-0)' : 'transparent', border: '1px solid ' + (aba === t.k ? 'var(--c-surface-3)' : 'transparent'), color: aba === t.k ? 'var(--c-text)' : 'var(--c-text-faint)', fontFamily: 'inherit', fontSize: '11.5px', fontWeight: 700, padding: '5px 12px', borderRadius: '7px', cursor: 'pointer' }"
           @click="aba = t.k as any"
         >{{ t.l }}</button>
       </div>
 
       <button
+        class="r-tap"
         :disabled="carregando"
         :style="{ background: 'transparent', border: '1px solid var(--c-surface-3)', color: 'var(--c-text-faint)', fontFamily: 'inherit', fontSize: '11.5px', fontWeight: 700, padding: '5px 10px', borderRadius: '7px', cursor: carregando ? 'default' : 'pointer', opacity: carregando ? .5 : 1 }"
         @click="carregar()"
@@ -157,11 +176,15 @@ const td = 'padding:11px 12px;font-size:12px;vertical-align:middle;white-space:n
       </button>
     </header>
 
-    <div v-if="erro" style="margin:14px clamp(12px,4vw,28px);background:rgba(255,92,92,.08);border:1px solid rgba(255,92,92,.3);border-radius:11px;padding:12px 14px;font-size:12px;">
+    <div v-if="erro" class="r-break" style="margin:14px clamp(12px,4vw,28px);background:rgba(255,92,92,.08);border:1px solid rgba(255,92,92,.3);border-radius:11px;padding:12px 14px;font-size:12px;">
       {{ erro }}
     </div>
 
-    <main style="flex:1;overflow:auto;padding:16px clamp(12px,4vw,28px) 28px;">
+    <!--
+      r-page: sem teto, em 2560px o paragrafo de apoio vira uma linha de ~2,4 mil px e os
+      tres cartoes do Servidor esticam ate nao dar mais para ligar o rotulo ao numero.
+    -->
+    <main class="r-page" style="flex:1;overflow:auto;padding:16px clamp(12px,4vw,28px) 28px;">
       <!-- ============ NÚMEROS ============ -->
       <template v-if="aba === 'numeros'">
         <p style="font-size:11.5px;color:var(--c-text-faint);margin:0 0 12px;">
@@ -169,17 +192,29 @@ const td = 'padding:11px 12px;font-size:12px;vertical-align:middle;white-space:n
           quando o WhatsApp começa a recusar, a mensagem some sem erro na tela do atendente.
         </p>
 
-        <div :style="cardBase + 'padding:0;overflow:auto;'">
-          <table style="width:100%;border-collapse:collapse;">
+        <!--
+          11 colunas (9 na de empresas) dentro dos ~330px uteis de um 360px. r-table-wrap
+          rola o cartao e r-table mantem a largura natural das colunas; r-scroll-hint e a
+          sombra que avisa que ha mais coluna a direita (no dedo a barra de rolagem e
+          invisivel) e r-table-sticky-1 prende a 1a coluna, senao ao arrastar ate
+          "Recusadas" nao da mais para saber de qual linha e o numero que se esta lendo.
+        -->
+        <div class="r-table-wrap r-scroll-hint" :style="cardBase + 'padding:0;--r-hint-bg:var(--c-surface-0);'">
+          <table class="r-table r-table-sticky-1" style="width:100%;border-collapse:collapse;--r-sticky-bg:var(--c-surface-0);">
             <thead>
               <tr style="border-bottom:1px solid var(--c-surface-1);">
                 <th :style="th">Número</th>
                 <th :style="th">Empresa</th>
-                <th :style="th">Canal</th>
+                <!--
+                  r-hide nas colunas de menor valor (aqui e nos <td> correspondentes): sem isso
+                  "Recusadas", que e a razao de existir da tela, so aparece apos ~700px de
+                  rolagem lateral no celular.
+                -->
+                <th class="r-hide" :style="th">Canal</th>
                 <th :style="th">Estado</th>
                 <th :style="th + 'text-align:right;'">Enviadas 24h</th>
-                <th :style="th + 'text-align:right;'">Entregues</th>
-                <th :style="th + 'text-align:right;'">Lidas</th>
+                <th class="r-hide" :style="th + 'text-align:right;'">Entregues</th>
+                <th class="r-hide" :style="th + 'text-align:right;'">Lidas</th>
                 <th :style="th + 'text-align:right;'">Recusadas</th>
                 <th :style="th + 'text-align:right;'">Última recusa</th>
                 <th :style="th + 'text-align:right;'">Hoje / cap</th>
@@ -189,45 +224,53 @@ const td = 'padding:11px 12px;font-size:12px;vertical-align:middle;white-space:n
             <tbody>
               <tr v-for="n in numeros" :key="n.id" style="border-bottom:1px solid var(--c-surface-1);">
                 <td :style="td">
-                  <div style="font-weight:700;">
+                  <!--
+                    r-clamp-w: a 1a coluna ficou presa (sticky) e sem teto ela comia metade da
+                    tela do celular; min(280px, 52vw) deixa o nome quebrar em vez de esticar.
+                  -->
+                  <div class="r-clamp-w r-break" style="font-weight:700;">
                     {{ n.nome }}
                   </div>
-                  <div style="font-size:10.5px;color:var(--c-text-faint);">
+                  <div class="r-clamp-w r-break" style="font-size:10.5px;color:var(--c-text-faint);">
                     {{ n.telefone || '—' }} · {{ n.papel }}
                     <span v-if="n.sem_backup" title="A empresa só tem este número ativo: se ele cair ou for bloqueado, não há para onde o CRM redirecionar o envio." style="color:var(--c-warn, #ffaa00);cursor:help;"> · sem backup</span>
                   </div>
                 </td>
                 <td :style="td + 'color:var(--c-text-secondary);'">
-                  {{ n.empresa }}
+                  <!-- wrapper so para o nome da empresa ter onde quebrar (o teto nao pega no <td>). -->
+                  <div class="r-clamp-w r-break">
+                    {{ n.empresa }}
+                  </div>
                 </td>
-                <td :style="td + 'color:var(--c-text-secondary);'">
+                <td class="r-hide" :style="td + 'color:var(--c-text-secondary);'">
                   {{ n.canal }}
                 </td>
-                <td :style="td">
+                <td :style="td + 'white-space:nowrap;'">
                   <span :style="{ color: corEstado(n), fontWeight: 700, fontSize: '11px' }">● {{ textoEstado(n) }}</span>
                 </td>
-                <td :style="td + 'text-align:right;font-variant-numeric:tabular-nums;'">
+                <td :style="td + 'text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;'">
                   {{ num(n.enviadas_24h) }}
                 </td>
-                <td :style="td + 'text-align:right;color:var(--c-text-secondary);font-variant-numeric:tabular-nums;'">
+                <td class="r-hide" :style="td + 'text-align:right;white-space:nowrap;color:var(--c-text-secondary);font-variant-numeric:tabular-nums;'">
                   {{ num(n.entregues_24h) }}
                 </td>
-                <td :style="td + 'text-align:right;color:var(--c-text-secondary);font-variant-numeric:tabular-nums;'">
+                <td class="r-hide" :style="td + 'text-align:right;white-space:nowrap;color:var(--c-text-secondary);font-variant-numeric:tabular-nums;'">
                   {{ num(n.lidas_24h) }}
                 </td>
-                <td :style="td + 'text-align:right;font-variant-numeric:tabular-nums;'">
+                <td :style="td + 'text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;'">
                   <span :style="{ color: corRecusa(n), fontWeight: n.recusa_pct >= 5 ? 800 : 400 }">
                     {{ n.recusadas_24h ? `${num(n.recusadas_24h)} (${String(n.recusa_pct).replace('.', ',')}%)` : '—' }}
                   </span>
                 </td>
-                <td :style="td + 'text-align:right;color:var(--c-text-faint);font-size:11px;'">
+                <td :style="td + 'text-align:right;white-space:nowrap;color:var(--c-text-faint);font-size:11px;'">
                   {{ quando(n.ultima_recusa) }}
                 </td>
-                <td :style="td + 'text-align:right;color:var(--c-text-secondary);font-variant-numeric:tabular-nums;'">
+                <td :style="td + 'text-align:right;white-space:nowrap;color:var(--c-text-secondary);font-variant-numeric:tabular-nums;'">
                   {{ num(n.enviadas_hoje) }}<span v-if="n.cap_diario" style="color:var(--c-text-faint);"> / {{ num(n.cap_diario) }}</span>
                 </td>
-                <td :style="td + 'text-align:right;'">
+                <td :style="td + 'text-align:right;white-space:nowrap;'">
                   <button
+                    class="r-tap"
                     :disabled="salvando[`n${n.id}`]"
                     :style="{ background: 'transparent', border: '1px solid var(--c-surface-3)', color: n.ativo ? 'var(--c-text-faint)' : '#25D366', fontFamily: 'inherit', fontSize: '11px', fontWeight: 700, padding: '4px 9px', borderRadius: '6px', cursor: 'pointer' }"
                     @click="alternarNumero(n)"
@@ -248,16 +291,22 @@ const td = 'padding:11px 12px;font-size:12px;vertical-align:middle;white-space:n
 
       <!-- ============ EMPRESAS ============ -->
       <template v-else-if="aba === 'empresas'">
-        <div :style="cardBase + 'padding:0;overflow:auto;'">
-          <table style="width:100%;border-collapse:collapse;">
+        <!--
+          Mesmo tratamento da tabela de numeros: 9 colunas em ~330px uteis. Aqui as colunas
+          de decisao (Estado e o botao de suspender) sao as duas ULTIMAS, entao sem a pista
+          de rolagem e sem a 1a coluna presa nao dava para suspender a empresa certa.
+        -->
+        <div class="r-table-wrap r-scroll-hint" :style="cardBase + 'padding:0;--r-hint-bg:var(--c-surface-0);'">
+          <table class="r-table r-table-sticky-1" style="width:100%;border-collapse:collapse;--r-sticky-bg:var(--c-surface-0);">
             <thead>
               <tr style="border-bottom:1px solid var(--c-surface-1);">
                 <th :style="th">Empresa</th>
                 <th :style="th + 'text-align:right;'">Usuários</th>
                 <th :style="th + 'text-align:right;'">Números</th>
                 <th :style="th + 'text-align:right;'">Conversas</th>
-                <th :style="th + 'text-align:right;'">Recebidas 24h</th>
-                <th :style="th + 'text-align:right;'">Enviadas 24h</th>
+                <!-- r-hide: no celular estas duas ficam entre a empresa e as colunas de decisao (Estado e a acao). -->
+                <th class="r-hide" :style="th + 'text-align:right;'">Recebidas 24h</th>
+                <th class="r-hide" :style="th + 'text-align:right;'">Enviadas 24h</th>
                 <th :style="th + 'text-align:right;'">Última atividade</th>
                 <th :style="th + 'text-align:right;'">Estado</th>
                 <th :style="th" />
@@ -266,38 +315,40 @@ const td = 'padding:11px 12px;font-size:12px;vertical-align:middle;white-space:n
             <tbody>
               <tr v-for="c in empresas" :key="c.id" style="border-bottom:1px solid var(--c-surface-1);">
                 <td :style="td">
-                  <div style="font-weight:700;">
+                  <!-- mesmo teto da tabela de numeros: 1a coluna presa nao pode comer a tela. -->
+                  <div class="r-clamp-w r-break" style="font-weight:700;">
                     {{ c.nome }}
                   </div>
-                  <div style="font-size:10.5px;color:var(--c-text-faint);">
+                  <div class="r-clamp-w r-break" style="font-size:10.5px;color:var(--c-text-faint);">
                     #{{ c.id }} · {{ c.slug }}
                   </div>
                 </td>
-                <td :style="td + 'text-align:right;font-variant-numeric:tabular-nums;'">
+                <td :style="td + 'text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;'">
                   {{ num(c.usuarios) }}
                 </td>
-                <td :style="td + 'text-align:right;font-variant-numeric:tabular-nums;'">
+                <td :style="td + 'text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;'">
                   {{ num(c.numeros) }}
                 </td>
-                <td :style="td + 'text-align:right;font-variant-numeric:tabular-nums;'">
+                <td :style="td + 'text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;'">
                   {{ num(c.conversas) }}
                 </td>
-                <td :style="td + 'text-align:right;color:var(--c-text-secondary);font-variant-numeric:tabular-nums;'">
+                <td class="r-hide" :style="td + 'text-align:right;white-space:nowrap;color:var(--c-text-secondary);font-variant-numeric:tabular-nums;'">
                   {{ num(c.msgs_recebidas_24h) }}
                 </td>
-                <td :style="td + 'text-align:right;color:var(--c-text-secondary);font-variant-numeric:tabular-nums;'">
+                <td class="r-hide" :style="td + 'text-align:right;white-space:nowrap;color:var(--c-text-secondary);font-variant-numeric:tabular-nums;'">
                   {{ num(c.msgs_enviadas_24h) }}
                 </td>
-                <td :style="td + 'text-align:right;color:var(--c-text-faint);font-size:11px;'">
+                <td :style="td + 'text-align:right;white-space:nowrap;color:var(--c-text-faint);font-size:11px;'">
                   {{ quando(c.ultima_atividade) }}
                 </td>
-                <td :style="td + 'text-align:right;'">
+                <td :style="td + 'text-align:right;white-space:nowrap;'">
                   <span :style="{ color: c.ativa ? '#25D366' : 'var(--c-danger, #ff5c5c)', fontWeight: 700, fontSize: '11px' }">
                     ● {{ c.ativa ? 'ativa' : 'suspensa' }}
                   </span>
                 </td>
-                <td :style="td + 'text-align:right;'">
+                <td :style="td + 'text-align:right;white-space:nowrap;'">
                   <button
+                    class="r-tap"
                     :disabled="salvando[`e${c.id}`]"
                     :style="{ background: 'transparent', border: '1px solid var(--c-surface-3)', color: c.ativa ? 'var(--c-text-faint)' : '#25D366', fontFamily: 'inherit', fontSize: '11px', fontWeight: 700, padding: '4px 9px', borderRadius: '6px', cursor: 'pointer' }"
                     @click="alternarEmpresa(c)"
@@ -375,7 +426,13 @@ const td = 'padding:11px 12px;font-size:12px;vertical-align:middle;white-space:n
               style="display:flex;gap:10px;padding:6px 0;font-size:11.5px;border-bottom:1px solid var(--c-surface-1);"
             >
               <span style="color:var(--c-warn, #ffaa00);font-weight:800;min-width:34px;">{{ e.vezes }}×</span>
-              <span style="color:var(--c-text-secondary);word-break:break-word;">{{ e.mensagem }}</span>
+              <!--
+                r-break no lugar do `word-break:break-word`: mensagem de erro real (caminho,
+                classe com namespace, SQL, URL) e um token unico, e `break-word` nao reduz o
+                min-content do item flex - a linha estourava e era cortada pela raiz.
+                O teto de 100ch evita a linha de 1400px no ultrawide.
+              -->
+              <span class="r-break" style="color:var(--c-text-secondary);max-width:100ch;">{{ e.mensagem }}</span>
             </div>
           </div>
         </div>

@@ -234,9 +234,12 @@ function dataHora(iso: string | null | undefined) {
         <div style="font-size:12px;color:var(--c-text-muted);">Campanhas, métricas e orçamentos · somente administradores</div>
       </div>
 
-      <div style="display:flex;gap:5px;flex-shrink:0;flex-wrap:wrap;">
+      <!-- no dedo os quatro períodos ficavam a 5px um do outro e com ~30px de altura:
+           erro de alvo constante numa barra que refaz a consulta a cada clique (≤820) -->
+      <div class="r-sm-gap-sm" style="display:flex;gap:5px;flex-shrink:0;flex-wrap:wrap;">
         <button
           v-for="p in periodos" :key="p.value"
+          class="r-tap"
           :style="{
             background: periodo === p.value ? 'var(--c-ai)' : 'var(--c-surface-2)',
             border: 'none', color: periodo === p.value ? 'var(--c-on-accent)' : 'var(--c-text-muted)',
@@ -247,38 +250,46 @@ function dataHora(iso: string | null | undefined) {
         >{{ p.label }}</button>
       </div>
       <button
+        class="r-tap"
         :style="{ background: 'var(--c-surface-2)', border: 'none', color: 'var(--c-text-muted)', fontFamily: 'inherit', fontSize: '12px', fontWeight: 700, padding: '7px 12px', borderRadius: '8px', cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.5 : 1 }"
         :disabled="loading"
         @click="load"
       >{{ loading ? '…' : '↻ Atualizar' }}</button>
 
-      <NuxtLink to="/marketing" style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);font-family:inherit;font-size:12px;font-weight:700;padding:7px 12px;border-radius:8px;cursor:pointer;text-decoration:none;">
+      <NuxtLink to="/marketing" class="r-tap" style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);font-family:inherit;font-size:12px;font-weight:700;padding:7px 12px;border-radius:8px;cursor:pointer;text-decoration:none;">
         Agente IA →
       </NuxtLink>
     </div>
 
     <!-- resumo -->
-    <div v-if="!loading && Object.keys(metricas).length" style="padding:16px clamp(12px,4vw,30px) 0;display:flex;gap:12px;flex-wrap:wrap;">
+    <!-- eram três cartões de largura de conteúdo: em 360 quebravam 2+1 com larguras
+         desiguais e em 1600+ ficavam soltos na borda esquerda de uma linha de 2000px.
+         A grade auto-fit resolve as duas pontas (o r-auto manda sobre o display:flex). -->
+    <div v-if="!loading && Object.keys(metricas).length" class="r-auto r-wide-cap" style="--r-min:150px;padding:16px clamp(12px,4vw,30px) 0;display:flex;gap:12px;flex-wrap:wrap;">
       <div style="background:var(--c-surface-1);border-radius:12px;padding:12px 18px;">
         <div style="font-size:11px;color:var(--c-text-faint);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">Gasto no período</div>
-        <div style="font-size:22px;font-weight:800;letter-spacing:-.5px;">{{ brl(gastoTotal()) }}</div>
+        <div class="r-num" style="--r-num:22px;font-size:22px;font-weight:800;letter-spacing:-.5px;">{{ brl(gastoTotal()) }}</div>
       </div>
       <div style="background:var(--c-surface-1);border-radius:12px;padding:12px 18px;">
         <div style="font-size:11px;color:var(--c-text-faint);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">Campanhas</div>
-        <div style="font-size:22px;font-weight:800;letter-spacing:-.5px;">{{ campanhas.length }}</div>
+        <div class="r-num" style="--r-num:22px;font-size:22px;font-weight:800;letter-spacing:-.5px;">{{ campanhas.length }}</div>
       </div>
       <div style="background:var(--c-surface-1);border-radius:12px;padding:12px 18px;">
         <div style="font-size:11px;color:var(--c-text-faint);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">Ativas</div>
-        <div style="font-size:22px;font-weight:800;letter-spacing:-.5px;color:var(--c-ai);">{{ campanhas.filter(c => c.effective_status === 'ACTIVE').length }}</div>
+        <div class="r-num" style="--r-num:22px;font-size:22px;font-weight:800;letter-spacing:-.5px;color:var(--c-ai);">{{ campanhas.filter(c => c.effective_status === 'ACTIVE').length }}</div>
       </div>
     </div>
 
-    <div v-if="erroMetricas" style="margin:12px 30px 0;background:rgba(255,180,67,.1);border:1px solid rgba(255,180,67,.3);border-radius:10px;padding:10px 14px;font-size:12.5px;color:var(--c-warn-soft);">
+    <!-- os 30px fixos de margem lateral deixavam o aviso mais estreito e desalinhado das
+         faixas irmãs em 360; o texto vem cru da Meta (URL/JSON) e precisa poder quebrar -->
+    <div v-if="erroMetricas" class="r-break" style="margin:12px clamp(12px,4vw,30px) 0;background:rgba(255,180,67,.1);border:1px solid rgba(255,180,67,.3);border-radius:10px;padding:10px 14px;font-size:12.5px;color:var(--c-warn-soft);">
       Métricas indisponíveis: {{ erroMetricas }}
     </div>
 
-    <div style="flex:1;padding:18px clamp(12px,4vw,30px) 40px;">
-      <div v-if="loading" style="color:var(--c-text-muted);font-size:14px;text-align:center;padding:60px;">Carregando campanhas…</div>
+    <!-- sem teto, em 2560 a grade abria 6 colunas e o nome da campanha ficava a 2000px
+         do botão de pausar; o r-wide-cap só age a partir de 1201 -->
+    <div class="r-wide-cap" style="flex:1;padding:18px clamp(12px,4vw,30px) 40px;">
+      <div v-if="loading" style="color:var(--c-text-muted);font-size:14px;text-align:center;padding:60px 20px;">Carregando campanhas…</div>
 
       <div v-else-if="!campanhas.length" style="text-align:center;color:var(--c-text-muted);font-size:13.5px;padding:60px 20px;">
         <div style="font-size:38px;margin-bottom:12px;">📊</div>
@@ -300,7 +311,9 @@ function dataHora(iso: string | null | undefined) {
             <div style="flex:1;min-width:0;">
               <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:3px;">
                 <span :style="{ width: '8px', height: '8px', borderRadius: '50%', background: statusColor(c), display: 'inline-block', flexShrink: 0 }" />
-                <span style="font-weight:800;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ c.name }}</span>
+                <!-- no celular o nome truncava no meio ("C97 — engajamento — imposto…")
+                     e, sem hover, não havia como saber qual campanha se estava pausando -->
+                <span class="r-sm-unclamp" style="font-weight:800;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ c.name }}</span>
               </div>
               <div style="font-size:11.5px;color:var(--c-text-muted);">
                 <span :style="{ color: statusColor(c), fontWeight: 700 }">{{ statusLabel(c) }}</span>
@@ -309,6 +322,7 @@ function dataHora(iso: string | null | undefined) {
               </div>
             </div>
             <button
+              class="r-tap"
               :disabled="salvandoStatus[c.id] || c.effective_status === 'DELETED' || c.effective_status === 'ARCHIVED'"
               :style="{
                 background: isAtiva(c) ? 'rgba(255,180,67,.14)' : 'rgba(96,165,250,.14)',
@@ -323,28 +337,30 @@ function dataHora(iso: string | null | undefined) {
           </div>
 
           <!-- métricas do período -->
-          <div v-if="fmt(c).spend !== undefined" style="display:grid;grid-template-columns:repeat(3,1fr);gap:7px;">
-            <div style="background:var(--c-surface-2);border-radius:9px;padding:8px 10px;">
+          <!-- três trilhas 1fr não encolhem abaixo do min-content de "R$ 123.456,78":
+               em 360 a grade estourava o cartão e jogava a página inteira para o lado -->
+          <div v-if="fmt(c).spend !== undefined" class="r-xs-col-2" style="display:grid;grid-template-columns:repeat(3,1fr);gap:7px;">
+            <div class="r-min0" style="background:var(--c-surface-2);border-radius:9px;padding:8px 10px;">
               <div style="font-size:15px;font-weight:800;letter-spacing:-.5px;">{{ brl(fmt(c).spend) }}</div>
               <div style="font-size:10px;color:var(--c-text-faint);">gasto</div>
             </div>
-            <div style="background:var(--c-surface-2);border-radius:9px;padding:8px 10px;">
+            <div class="r-min0" style="background:var(--c-surface-2);border-radius:9px;padding:8px 10px;">
               <div style="font-size:15px;font-weight:800;letter-spacing:-.5px;">{{ num(fmt(c).impressions) }}</div>
               <div style="font-size:10px;color:var(--c-text-faint);">impressões</div>
             </div>
-            <div style="background:var(--c-surface-2);border-radius:9px;padding:8px 10px;">
+            <div class="r-min0" style="background:var(--c-surface-2);border-radius:9px;padding:8px 10px;">
               <div style="font-size:15px;font-weight:800;letter-spacing:-.5px;">{{ num(fmt(c).clicks) }}</div>
               <div style="font-size:10px;color:var(--c-text-faint);">cliques</div>
             </div>
-            <div style="background:var(--c-surface-2);border-radius:9px;padding:8px 10px;">
+            <div class="r-min0" style="background:var(--c-surface-2);border-radius:9px;padding:8px 10px;">
               <div style="font-size:15px;font-weight:800;letter-spacing:-.5px;">{{ pct(fmt(c).ctr) }}</div>
               <div style="font-size:10px;color:var(--c-text-faint);">CTR</div>
             </div>
-            <div style="background:var(--c-surface-2);border-radius:9px;padding:8px 10px;">
+            <div class="r-min0" style="background:var(--c-surface-2);border-radius:9px;padding:8px 10px;">
               <div style="font-size:15px;font-weight:800;letter-spacing:-.5px;">{{ fmt(c).cpc ? brl(fmt(c).cpc) : '—' }}</div>
               <div style="font-size:10px;color:var(--c-text-faint);">CPC</div>
             </div>
-            <div style="background:var(--c-surface-2);border-radius:9px;padding:8px 10px;">
+            <div class="r-min0" style="background:var(--c-surface-2);border-radius:9px;padding:8px 10px;">
               <div style="font-size:15px;font-weight:800;letter-spacing:-.5px;">{{ fmt(c).cpm ? brl(fmt(c).cpm) : '—' }}</div>
               <div style="font-size:10px;color:var(--c-text-faint);">CPM</div>
             </div>
@@ -352,12 +368,14 @@ function dataHora(iso: string | null | undefined) {
           <div v-else style="font-size:12px;color:var(--c-text-faint);text-align:center;padding:8px 0;">Sem dados para o período selecionado.</div>
 
           <!-- custo por mensagem -->
-          <div v-if="conversas(c) !== null" style="background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.2);border-radius:9px;padding:9px 12px;display:flex;justify-content:space-between;align-items:center;gap:8px;">
-            <div>
+          <div v-if="conversas(c) !== null" class="r-xs-wrap r-xs-gap-sm" style="background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.2);border-radius:9px;padding:9px 12px;display:flex;justify-content:space-between;align-items:center;gap:8px;">
+            <!-- em 360 os dois rótulos encostavam e "Custo/mensagem" quebrava desalinhado
+                 do irmão: deixamos os blocos encolherem e, no limite, caírem um sob o outro -->
+            <div class="r-min0">
               <div style="font-size:11px;color:var(--c-text-faint);margin-bottom:2px;">Conversas iniciadas</div>
               <div style="font-size:18px;font-weight:800;">{{ conversas(c) }}</div>
             </div>
-            <div v-if="custoPorConversa(c) !== null" style="text-align:right;">
+            <div v-if="custoPorConversa(c) !== null" class="r-min0" style="text-align:right;">
               <div style="font-size:11px;color:var(--c-text-faint);margin-bottom:2px;">Custo/mensagem</div>
               <div style="font-size:18px;font-weight:800;color:var(--c-ai);">{{ brl(custoPorConversa(c)) }}</div>
             </div>
@@ -377,29 +395,37 @@ function dataHora(iso: string | null | undefined) {
               </template>
             </div>
 
-            <div v-if="c.id in editandoOrcamento" style="display:flex;gap:7px;align-items:center;">
+            <!-- o input mantinha a largura intrínseca (~222px com a fonte de 16px do
+                 celular) e empurrava Salvar e ✕ para fora da borda do cartão em 360;
+                 o r-min0 destrava o encolhimento e o r-wrap é a rede de segurança -->
+            <div v-if="c.id in editandoOrcamento" class="r-wrap" style="display:flex;gap:7px;align-items:center;">
               <span style="font-size:13px;color:var(--c-text-muted);">R$</span>
               <input
                 v-model="editandoOrcamento[c.id]"
                 type="text"
                 inputmode="decimal"
                 placeholder="0,00"
+                class="r-min0"
                 style="flex:1;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:8px;padding:8px 10px;color:var(--c-text);font-family:inherit;font-size:13.5px;outline:none;"
                 @keydown.enter="salvarOrcamento(c)"
                 @keydown.escape="cancelarEdicaoOrcamento(c.id)"
               >
               <button
+                class="r-tap"
                 :disabled="salvandoOrcamento[c.id]"
                 style="background:var(--c-ai);border:none;color:var(--c-on-accent);font-family:inherit;font-size:12px;font-weight:700;padding:8px 13px;border-radius:8px;cursor:pointer;"
                 @click="salvarOrcamento(c)"
               >{{ salvandoOrcamento[c.id] ? '…' : 'Salvar' }}</button>
+              <!-- o ✕ tinha ~30px e ficava colado no Salvar, que dispara PATCH na conta -->
               <button
+                class="r-tap r-tap-pad"
                 style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);font-family:inherit;font-size:12px;font-weight:700;padding:8px 10px;border-radius:8px;cursor:pointer;"
                 @click="cancelarEdicaoOrcamento(c.id)"
               >✕</button>
             </div>
             <button
               v-else-if="c.daily_budget"
+              class="r-tap"
               style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);font-family:inherit;font-size:12px;font-weight:700;padding:7px 13px;border-radius:8px;cursor:pointer;"
               @click="iniciarEdicaoOrcamento(c)"
             >✏ Editar orçamento</button>

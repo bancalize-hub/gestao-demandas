@@ -60,8 +60,10 @@ async function submit() {
           <CrmPasswordField v-model="password" autocomplete="current-password" />
         </label>
 
-        <label style="display:flex;align-items:center;gap:9px;font-size:13px;color:var(--c-text-secondary);cursor:pointer;">
-          <input v-model="remember" type="checkbox" style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer;">
+        <!-- `r-tap-h` (só altura) e não `r-tap`: o alvo de 44px precisa vir sem o
+             `justify-content:center`, que jogaria a caixinha para o meio da linha. -->
+        <label class="r-tap-h" style="display:flex;align-items:center;gap:9px;font-size:13px;color:var(--c-text-secondary);cursor:pointer;">
+          <input v-model="remember" type="checkbox" style="width:18px;height:18px;flex-shrink:0;accent-color:var(--accent);cursor:pointer;">
           Manter conectado
         </label>
 

@@ -65,7 +65,7 @@ const box = {
 </script>
 
 <template>
-  <div style="flex:1;overflow-y:auto;padding:32px 28px;background:var(--c-bg);color:var(--c-text);">
+  <div class="r-min0 r-pad" style="flex:1;overflow-y:auto;padding-block:clamp(20px,4vw,32px);background:var(--c-bg);color:var(--c-text);">
     <div style="max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:20px;">
       <div>
         <div style="font-size:22px;font-weight:800;letter-spacing:-.3px;">Horário de atendimento</div>
@@ -74,12 +74,12 @@ const box = {
         </div>
       </div>
 
-      <div :style="box">
+      <div class="r-xs-pad-sm" :style="box">
         <div style="font-size:15px;font-weight:700;margin-bottom:14px;">Dias e horário</div>
 
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;">
           <button
-            v-for="d in DIAS" :key="d.iso"
+            v-for="d in DIAS" :key="d.iso" class="r-tap"
             :style="{
               fontFamily: 'inherit', fontSize: '13.5px', fontWeight: 700, padding: '10px 16px',
               borderRadius: '11px', cursor: 'pointer', border: '1px solid',
@@ -91,7 +91,9 @@ const box = {
           >{{ d.label }}</button>
         </div>
 
-        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <!-- em ≤480 o Salvar sobrava pendurado ao lado do 2º campo de hora: empilhado, ele
+             volta a ser a ação da seção. -->
+        <div class="r-xs-stack" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
           <label style="display:flex;align-items:center;gap:9px;font-size:14px;color:var(--c-text-secondary);">
             Das
             <input
@@ -107,6 +109,7 @@ const box = {
             >
           </label>
           <button
+            class="r-tap r-xs-full"
             :style="{ background: 'var(--accent)', color: 'var(--accent-ink)', border: 'none', fontFamily: 'inherit', fontSize: '14px', fontWeight: 700, padding: '12px 20px', borderRadius: '11px', cursor: 'pointer', opacity: saving ? 0.7 : 1 }"
             :disabled="saving" @click="save"
           >{{ saving ? 'Salvando…' : 'Salvar horário' }}</button>
@@ -118,7 +121,7 @@ const box = {
         </div>
       </div>
 
-      <div :style="box">
+      <div class="r-xs-pad-sm" :style="box">
         <div style="font-size:15px;font-weight:700;margin-bottom:10px;">O que este horário controla</div>
         <div style="display:flex;flex-direction:column;gap:9px;font-size:13.5px;color:var(--c-text-secondary);line-height:1.55;">
           <div><b style="color:var(--c-text);">Retomada de lead sumido</b> — a IA só busca quem parou de responder dentro deste horário. Única exceção: o primeiro toque, até 30 min depois do silêncio, sai a qualquer hora — é continuação de conversa viva, não abordagem nova.</div>

@@ -81,31 +81,41 @@ const rotulo = 'display:block;font-size:11.5px;color:var(--c-text-muted);margin-
 
 <template>
   <div style="flex:1;min-width:0;background:var(--c-bg-deep);display:flex;flex-direction:column;overflow-y:auto;">
-    <div style="padding:16px 24px;border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;gap:12px;flex-shrink:0;">
+    <!-- a barra não quebrava linha: em 360 o título passava por cima do botão "← Gerenciador
+         de anúncios" e os 24px fixos de padding comiam mais tela que o resto do app -->
+    <div class="r-wrap r-pad" style="padding:16px 24px;border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;gap:12px;flex-shrink:0;">
       <div style="width:34px;height:34px;border-radius:10px;background:var(--accent);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-ink)" stroke-width="1.9"><path d="M3 11v2a1 1 0 0 0 1 1h2v4h2v-4l10 4.5v-15L8 8H4a1 1 0 0 0-1 1Z" stroke-linecap="round" stroke-linejoin="round" /></svg>
       </div>
-      <div style="min-width:0;">
+      <div class="r-break" style="min-width:0;">
         <div style="font-weight:800;font-size:15px;">Conexão com o Facebook Ads</div>
         <div style="font-size:12px;color:var(--c-text-muted);">Credenciais do app na Meta · somente administradores</div>
       </div>
-      <div style="flex:1;" />
-      <NuxtLink to="/marketing" style="text-decoration:none;background:var(--c-surface-2);color:var(--c-text-secondary);font-size:12.5px;font-weight:700;padding:8px 13px;border-radius:9px;">← Gerenciador de anúncios</NuxtLink>
+      <!-- o espaçador só serve para empurrar o botão no desktop; com a barra quebrando
+           linha ele viraria um item que cresce e desalinharia o link -->
+      <div class="r-hide" style="flex:1;" />
+      <NuxtLink to="/marketing" class="r-tap r-noshrink" style="text-decoration:none;background:var(--c-surface-2);color:var(--c-text-secondary);font-size:12.5px;font-weight:700;padding:8px 13px;border-radius:9px;">← Gerenciador de anúncios</NuxtLink>
     </div>
 
-    <div style="padding:20px 24px;">
-      <div style="max-width:560px;">
+    <div class="r-pad" style="padding:20px 24px;">
+      <!-- o teto de 560px existia, mas sem centralizar: em 1600+ o formulário inteiro
+           ficava grudado na borda esquerda com mil pixels de vazio à direita -->
+      <div class="r-center" style="max-width:560px;">
         <div style="font-size:12px;color:var(--c-text-muted);margin-bottom:16px;line-height:1.5;">
           O token e o app secret ficam criptografados no banco e nunca voltam para a tela — deixe em branco para manter o que já está salvo.
         </div>
 
-        <div v-if="status" :style="{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 12px', borderRadius: '10px', marginBottom: '16px', fontSize: '12px', background: pronto ? 'rgba(35,197,98,.08)' : 'rgba(255,170,0,.08)', border: '1px solid ' + (pronto ? 'rgba(35,197,98,.3)' : 'rgba(255,170,0,.3)') }">
+        <!-- sem quebra de linha, em 360 a frase de status e o carimbo "testada X atrás"
+             disputavam a mesma linha e o carimbo ficava ilegível no canto -->
+        <div v-if="status" class="r-wrap" :style="{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 12px', borderRadius: '10px', marginBottom: '16px', fontSize: '12px', background: pronto ? 'rgba(35,197,98,.08)' : 'rgba(255,170,0,.08)', border: '1px solid ' + (pronto ? 'rgba(35,197,98,.3)' : 'rgba(255,170,0,.3)') }">
           <span>{{ pronto ? '●' : '○' }}</span>
-          <span>{{ pronto ? 'Credencial preenchida' : 'Falta token de acesso ou conta de anúncios' }}</span>
+          <span class="r-min0">{{ pronto ? 'Credencial preenchida' : 'Falta token de acesso ou conta de anúncios' }}</span>
           <span v-if="status.checked_at" style="margin-left:auto;color:var(--c-text-faint);font-size:11px;">testada {{ quando(status.checked_at) }} atrás</span>
         </div>
 
-        <div v-if="status?.last_error" style="background:rgba(255,77,77,.08);border:1px solid rgba(255,77,77,.3);border-radius:10px;padding:10px 12px;font-size:11.5px;color:var(--c-danger-soft);margin-bottom:16px;white-space:pre-wrap;">Último erro: {{ status.last_error }}</div>
+        <!-- a mensagem vem crua da Graph API (URL/JSON sem espaço) e o pre-wrap sozinho
+             não quebra token longo: a caixa passava dos 560px e empurrava a página -->
+        <div v-if="status?.last_error" class="r-break" style="background:rgba(255,77,77,.08);border:1px solid rgba(255,77,77,.3);border-radius:10px;padding:10px 12px;font-size:11.5px;color:var(--c-danger-soft);margin-bottom:16px;white-space:pre-wrap;">Último erro: {{ status.last_error }}</div>
 
         <div style="display:flex;flex-direction:column;gap:13px;">
           <div>
@@ -120,12 +130,14 @@ const rotulo = 'display:block;font-size:11.5px;color:var(--c-text-muted);margin-
             <label :style="rotulo">ID da página do Facebook (obrigatório para criar anúncio)</label>
             <input v-model="form.page_id" placeholder="123456789" :style="campo">
           </div>
-          <div style="display:flex;gap:12px;">
-            <div style="flex:1;">
+          <!-- 222px de largura intrínseca do campo (fonte de 16px do celular) + 120px fixos
+               + gap não cabem nos ~312px de 360: a linha estourava e a página rolava no X -->
+          <div class="r-xs-stack" style="display:flex;gap:12px;">
+            <div class="r-min0" style="flex:1;">
               <label :style="rotulo">App ID (opcional)</label>
               <input v-model="form.app_id" :style="campo">
             </div>
-            <div style="width:120px;">
+            <div class="r-xs-full" style="width:120px;">
               <label :style="rotulo">Versão da API</label>
               <input v-model="form.graph_version" placeholder="v23.0" :style="campo">
             </div>
@@ -154,13 +166,16 @@ const rotulo = 'display:block;font-size:11.5px;color:var(--c-text-muted);margin-
           </div>
         </div>
 
-        <div v-if="resultado" :style="{ marginTop: '14px', padding: '10px 12px', borderRadius: '10px', fontSize: '12px', whiteSpace: 'pre-wrap', background: resultado.ok ? 'rgba(35,197,98,.08)' : 'rgba(255,77,77,.08)', border: '1px solid ' + (resultado.ok ? 'rgba(35,197,98,.3)' : 'rgba(255,77,77,.3)'), color: resultado.ok ? 'var(--c-text-secondary)' : 'var(--c-danger-soft)' }">
+        <!-- mesmo caso do "Último erro": o texto da Meta traz trace_id e URL colados -->
+        <div v-if="resultado" class="r-break" :style="{ marginTop: '14px', padding: '10px 12px', borderRadius: '10px', fontSize: '12px', whiteSpace: 'pre-wrap', background: resultado.ok ? 'rgba(35,197,98,.08)' : 'rgba(255,77,77,.08)', border: '1px solid ' + (resultado.ok ? 'rgba(35,197,98,.3)' : 'rgba(255,77,77,.3)'), color: resultado.ok ? 'var(--c-text-secondary)' : 'var(--c-danger-soft)' }">
           {{ resultado.ok ? '✓ ' : '✗ ' }}{{ resultado.texto }}
         </div>
 
-        <div style="display:flex;gap:10px;margin-top:16px;">
-          <button :disabled="salvando" :style="{ background: 'var(--accent)', border: 'none', color: 'var(--accent-ink)', fontFamily: 'inherit', fontWeight: 700, fontSize: '13px', padding: '10px 18px', borderRadius: '10px', cursor: salvando ? 'default' : 'pointer', opacity: salvando ? .6 : 1 }" @click="salvar">{{ salvando ? 'Salvando…' : 'Salvar e testar' }}</button>
-          <button :disabled="testando || !status?.tem_token" style="background:none;border:1px solid var(--c-surface-3);color:var(--c-text-secondary);font-family:inherit;font-size:13px;padding:10px 16px;border-radius:10px;cursor:pointer;" @click="testar">{{ testando ? 'Testando…' : 'Testar conexão' }}</button>
+        <!-- os dois botões somavam ~270px nos 312px de 360, sem folga de toque e com ~37px
+             de altura; no celular empilham e ficam com o alvo de 44px -->
+        <div class="r-xs-stack r-xs-gap-sm" style="display:flex;gap:10px;margin-top:16px;">
+          <button :disabled="salvando" class="r-tap" :style="{ background: 'var(--accent)', border: 'none', color: 'var(--accent-ink)', fontFamily: 'inherit', fontWeight: 700, fontSize: '13px', padding: '10px 18px', borderRadius: '10px', cursor: salvando ? 'default' : 'pointer', opacity: salvando ? .6 : 1 }" @click="salvar">{{ salvando ? 'Salvando…' : 'Salvar e testar' }}</button>
+          <button :disabled="testando || !status?.tem_token" class="r-tap" style="background:none;border:1px solid var(--c-surface-3);color:var(--c-text-secondary);font-family:inherit;font-size:13px;padding:10px 16px;border-radius:10px;cursor:pointer;" @click="testar">{{ testando ? 'Testando…' : 'Testar conexão' }}</button>
         </div>
 
         <div style="margin-top:22px;font-size:11.5px;color:var(--c-text-faint);line-height:1.6;">

@@ -281,61 +281,69 @@ function stateColor(s: string) {
 
 <template>
   <div style="flex:1;min-width:0;background:var(--c-bg-deep);display:flex;flex-direction:column;overflow-y:auto;">
-    <div class="r-wrap" style="padding:16px clamp(12px,4vw,30px);border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;gap:11px;flex-shrink:0;">
-      <div style="width:34px;height:34px;border-radius:10px;background:var(--accent);display:flex;align-items:center;justify-content:center;">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="var(--c-bg-deep)"><path d="M12 3c-4.97 0-9 3.58-9 8 0 2.5 1.3 4.7 3.3 6.1L5.5 21l3.6-1.5c.9.25 1.9.4 2.9.4 4.97 0 9-3.58 9-8s-4.03-8.9-9-8.9Z" /></svg>
-      </div>
-      <div>
-        <div style="font-weight:800;font-size:15px;">Números do WhatsApp</div>
-        <div style="font-size:12px;color:var(--c-text-muted);">Principal atende anúncios · números de prospecção fazem disparo · somente administradores</div>
+    <!-- em 1600px+ o título corria a tela toda enquanto o conteúdo é uma coluna de 560px:
+         o bloco interno acompanha a mesma coluna em vez de ficar colado na borda. -->
+    <div style="padding:16px clamp(12px,4vw,30px);border-bottom:1px solid var(--c-surface-1);flex-shrink:0;">
+      <div class="r-wrap r-page" style="--r-page:560px;display:flex;align-items:center;gap:11px;">
+        <div style="width:34px;height:34px;border-radius:10px;background:var(--accent);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="var(--c-bg-deep)"><path d="M12 3c-4.97 0-9 3.58-9 8 0 2.5 1.3 4.7 3.3 6.1L5.5 21l3.6-1.5c.9.25 1.9.4 2.9.4 4.97 0 9-3.58 9-8s-4.03-8.9-9-8.9Z" /></svg>
+        </div>
+        <div class="r-min0">
+          <div style="font-weight:800;font-size:15px;">Números do WhatsApp</div>
+          <div style="font-size:12px;color:var(--c-text-muted);">Principal atende anúncios · números de prospecção fazem disparo · somente administradores</div>
+        </div>
       </div>
     </div>
 
-    <div style="flex:1;display:flex;align-items:flex-start;justify-content:center;padding:28px 24px 60px;">
+    <div class="r-pad" style="flex:1;display:flex;align-items:flex-start;justify-content:center;padding:28px 24px 60px;">
       <div style="width:560px;max-width:100%;display:flex;flex-direction:column;gap:16px;">
         <div v-if="loading" style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:40px;text-align:center;color:var(--c-text-muted);font-size:14px;">Carregando…</div>
 
         <template v-else>
           <!-- cartões de cada número -->
-          <div v-for="acc in accounts" :key="acc.id" style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:22px;">
-            <div style="display:flex;align-items:center;gap:12px;">
-              <div style="width:44px;height:44px;border-radius:12px;background:rgba(var(--accent-rgb),.12);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
-                <span :style="{ width: '12px', height: '12px', borderRadius: '50%', background: stateColor(acc.state) }" />
-              </div>
-              <div style="flex:1;min-width:0;">
-                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                  <span style="font-weight:800;font-size:15.5px;">{{ acc.name }}</span>
-                  <span :style="{ fontSize: '10.5px', fontWeight: 700, padding: '2px 8px', borderRadius: '20px', background: acc.role === 'primary' ? 'rgba(124,108,245,.18)' : 'rgba(var(--accent-rgb),.14)', color: acc.role === 'primary' ? 'var(--c-ai-soft)' : 'var(--accent)' }">
-                    {{ acc.role === 'primary' ? 'Principal · anúncios + IA' : 'Prospecção' }}
-                  </span>
-                  <span :style="{ fontSize: '10.5px', fontWeight: 700, padding: '2px 8px', borderRadius: '20px', background: acc.provider === 'cloud' ? 'rgba(37,211,102,.16)' : 'var(--c-surface-2)', color: acc.provider === 'cloud' ? 'var(--accent)' : 'var(--c-text-faint)' }">
-                    {{ acc.provider === 'cloud' ? '✓ API oficial' : 'Não-oficial' }}
-                  </span>
-                  <span v-if="acc.provider === 'cloud' && acc.coexistence" style="font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px;background:var(--c-surface-2);color:var(--c-text-muted);">
-                    Coexistência
-                  </span>
-                  <span v-if="!acc.is_active" style="font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px;background:rgba(255,77,77,.12);color:var(--c-danger-soft);">
-                    Desligado
-                  </span>
+          <div v-for="acc in accounts" :key="acc.id" class="r-xs-pad-sm" style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:22px;">
+            <!-- ≤820 a barra de ações não cabia no cartão e jogava a página inteira para a
+                 rolagem horizontal: ícone+nome ficam na 1ª linha e as ações descem inteiras. -->
+            <div class="r-wrap" style="display:flex;align-items:center;gap:12px;">
+              <div class="r-min0" style="display:flex;align-items:center;gap:12px;flex:1;">
+                <div style="width:44px;height:44px;border-radius:12px;background:rgba(var(--accent-rgb),.12);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                  <span :style="{ width: '12px', height: '12px', borderRadius: '50%', background: stateColor(acc.state) }" />
                 </div>
-                <div style="font-size:12.5px;color:var(--c-text-muted);margin-top:2px;">
-                  <span :style="{ color: stateColor(acc.state) }">{{ stateLabel(acc.state) }}</span>
-                  <template v-if="acc.phone"> · <b style="color:var(--c-text-secondary);">+{{ acc.phone }}</b></template>
-                  <template v-if="acc.role === 'outreach' && acc.state === 'open'">
-                    · enviados hoje: {{ acc.sent_today }}<template v-if="acc.warmup_day < 5"> · 🔥 aquecendo (dia {{ acc.warmup_day }})</template>
-                  </template>
+                <div style="flex:1;min-width:0;">
+                  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <span style="font-weight:800;font-size:15.5px;">{{ acc.name }}</span>
+                    <span :style="{ fontSize: '10.5px', fontWeight: 700, padding: '2px 8px', borderRadius: '20px', background: acc.role === 'primary' ? 'rgba(124,108,245,.18)' : 'rgba(var(--accent-rgb),.14)', color: acc.role === 'primary' ? 'var(--c-ai-soft)' : 'var(--accent)' }">
+                      {{ acc.role === 'primary' ? 'Principal · anúncios + IA' : 'Prospecção' }}
+                    </span>
+                    <span :style="{ fontSize: '10.5px', fontWeight: 700, padding: '2px 8px', borderRadius: '20px', background: acc.provider === 'cloud' ? 'rgba(37,211,102,.16)' : 'var(--c-surface-2)', color: acc.provider === 'cloud' ? 'var(--accent)' : 'var(--c-text-faint)' }">
+                      {{ acc.provider === 'cloud' ? '✓ API oficial' : 'Não-oficial' }}
+                    </span>
+                    <span v-if="acc.provider === 'cloud' && acc.coexistence" style="font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px;background:var(--c-surface-2);color:var(--c-text-muted);">
+                      Coexistência
+                    </span>
+                    <span v-if="!acc.is_active" style="font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px;background:rgba(255,77,77,.12);color:var(--c-danger-soft);">
+                      Desligado
+                    </span>
+                  </div>
+                  <div style="font-size:12.5px;color:var(--c-text-muted);margin-top:2px;">
+                    <span :style="{ color: stateColor(acc.state) }">{{ stateLabel(acc.state) }}</span>
+                    <template v-if="acc.phone"> · <b style="color:var(--c-text-secondary);">+{{ acc.phone }}</b></template>
+                    <template v-if="acc.role === 'outreach' && acc.state === 'open'">
+                      · enviados hoje: {{ acc.sent_today }}<template v-if="acc.warmup_day < 5"> · 🔥 aquecendo (dia {{ acc.warmup_day }})</template>
+                    </template>
+                  </div>
                 </div>
               </div>
-              <div style="display:flex;gap:8px;flex-shrink:0;">
-                <button v-if="acc.role !== 'primary'" title="Passar a falar por este número (troca entre API oficial e Evolution)" style="background:rgba(124,108,245,.16);border:none;color:var(--c-ai-soft);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 14px;border-radius:9px;cursor:pointer;" @click="makePrimary(acc)">Tornar principal</button>
-                <button v-if="acc.provider === 'cloud'" style="background:var(--c-surface-2);border:none;color:var(--c-text);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 14px;border-radius:9px;cursor:pointer;" @click="openCloudForm(acc)">Credenciais</button>
-                <button v-if="acc.provider !== 'cloud' && acc.state !== 'open' && connectingId !== acc.id" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 14px;border-radius:9px;cursor:pointer;" @click="openConnect(acc)">Conectar</button>
+              <div class="r-actions r-full" style="display:flex;gap:8px;flex-shrink:0;">
+                <button v-if="acc.role !== 'primary'" class="r-tap" title="Passar a falar por este número (troca entre API oficial e Evolution)" style="background:rgba(124,108,245,.16);border:none;color:var(--c-ai-soft);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 14px;border-radius:9px;cursor:pointer;" @click="makePrimary(acc)">Tornar principal</button>
+                <button v-if="acc.provider === 'cloud'" class="r-tap" style="background:var(--c-surface-2);border:none;color:var(--c-text);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 14px;border-radius:9px;cursor:pointer;" @click="openCloudForm(acc)">Credenciais</button>
+                <button v-if="acc.provider !== 'cloud' && acc.state !== 'open' && connectingId !== acc.id" class="r-tap" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 14px;border-radius:9px;cursor:pointer;" @click="openConnect(acc)">Conectar</button>
                 <!-- oficial: não há sessão para derrubar, é ligar/desligar o número na Meta -->
-                <button v-if="acc.provider === 'cloud' && !acc.is_active" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 14px;border-radius:9px;cursor:pointer;" @click="setActive(acc, true)">Ligar</button>
-                <button v-else-if="acc.provider === 'cloud'" style="background:rgba(255,77,77,.1);border:1px solid rgba(255,77,77,.25);color:var(--c-danger-soft);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 12px;border-radius:9px;cursor:pointer;" @click="setActive(acc, false)">Desligar</button>
-                <button v-if="acc.provider !== 'cloud' && acc.role !== 'primary'" :title="acc.avatars_only ? 'Voltar a usar este número para conversas' : 'Manter conectado só para puxar foto de perfil — não recebe nem envia mensagem'" :style="{ background: acc.avatars_only ? 'rgba(124,108,245,.16)' : 'var(--c-surface-2)', border: 'none', color: acc.avatars_only ? 'var(--c-ai-soft)' : 'var(--c-text)', fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 700, padding: '8px 14px', borderRadius: '9px', cursor: 'pointer' }" @click="setAvatarsOnly(acc, !acc.avatars_only)">{{ acc.avatars_only ? 'Só fotos ✓' : 'Só fotos' }}</button>
-                <button v-if="acc.provider !== 'cloud' && acc.state === 'open'" style="background:rgba(255,77,77,.1);border:1px solid rgba(255,77,77,.25);color:var(--c-danger-soft);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 12px;border-radius:9px;cursor:pointer;" @click="disconnect(acc)">Desconectar</button>
-                <button v-if="acc.role !== 'primary'" title="Remover número" style="background:none;border:1px solid var(--c-surface-3);color:var(--c-text-faint);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 11px;border-radius:9px;cursor:pointer;" @click="removeAccount(acc)">✕</button>
+                <button v-if="acc.provider === 'cloud' && !acc.is_active" class="r-tap" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 14px;border-radius:9px;cursor:pointer;" @click="setActive(acc, true)">Ligar</button>
+                <button v-else-if="acc.provider === 'cloud'" class="r-tap" style="background:rgba(255,77,77,.1);border:1px solid rgba(255,77,77,.25);color:var(--c-danger-soft);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 12px;border-radius:9px;cursor:pointer;" @click="setActive(acc, false)">Desligar</button>
+                <button v-if="acc.provider !== 'cloud' && acc.role !== 'primary'" class="r-tap" :title="acc.avatars_only ? 'Voltar a usar este número para conversas' : 'Manter conectado só para puxar foto de perfil — não recebe nem envia mensagem'" :style="{ background: acc.avatars_only ? 'rgba(124,108,245,.16)' : 'var(--c-surface-2)', border: 'none', color: acc.avatars_only ? 'var(--c-ai-soft)' : 'var(--c-text)', fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 700, padding: '8px 14px', borderRadius: '9px', cursor: 'pointer' }" @click="setAvatarsOnly(acc, !acc.avatars_only)">{{ acc.avatars_only ? 'Só fotos ✓' : 'Só fotos' }}</button>
+                <button v-if="acc.provider !== 'cloud' && acc.state === 'open'" class="r-tap" style="background:rgba(255,77,77,.1);border:1px solid rgba(255,77,77,.25);color:var(--c-danger-soft);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 12px;border-radius:9px;cursor:pointer;" @click="disconnect(acc)">Desconectar</button>
+                <button v-if="acc.role !== 'primary'" class="r-tap" title="Remover número" style="background:none;border:1px solid var(--c-surface-3);color:var(--c-text-faint);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 11px;border-radius:9px;cursor:pointer;" @click="removeAccount(acc)">✕</button>
               </div>
             </div>
 
@@ -349,19 +357,21 @@ function stateColor(s: string) {
             <!-- painel de conexão (QR + código) deste número -->
             <div v-if="acc.provider !== 'cloud' && connectingId === acc.id" style="margin-top:18px;border-top:1px solid var(--c-surface-1);padding-top:18px;">
               <div style="font-size:13px;color:var(--c-text-muted);line-height:1.5;margin-bottom:12px;">No WhatsApp do número: <b style="color:var(--c-text-secondary);">Aparelhos conectados → Conectar um aparelho</b> e leia o QR.</div>
-              <div style="margin:0 auto;width:230px;height:230px;background:var(--c-on-accent);border-radius:14px;display:flex;align-items:center;justify-content:center;overflow:hidden;">
+              <div style="margin:0 auto;width:min(230px,100%);aspect-ratio:1;height:auto;background:var(--c-on-accent);border-radius:14px;display:flex;align-items:center;justify-content:center;overflow:hidden;">
                 <img v-if="qr" :src="qr" alt="QR" style="width:100%;height:100%;object-fit:contain;">
                 <span v-else style="color:var(--c-text-faint);font-size:13px;">{{ qrLoading ? 'Gerando QR…' : 'Aguardando QR…' }}</span>
               </div>
               <div style="display:flex;gap:8px;margin-top:14px;">
-                <button style="flex:1;background:var(--c-surface-2);border:none;color:var(--c-text);font-family:inherit;font-size:12.5px;font-weight:600;padding:10px;border-radius:10px;cursor:pointer;" @click="loadQr">Gerar novo QR</button>
-                <button style="flex:1;background:var(--c-surface-2);border:none;color:var(--c-text-muted);font-family:inherit;font-size:12.5px;font-weight:600;padding:10px;border-radius:10px;cursor:pointer;" @click="closeConnect">Fechar</button>
+                <button class="r-tap" style="flex:1;background:var(--c-surface-2);border:none;color:var(--c-text);font-family:inherit;font-size:12.5px;font-weight:600;padding:10px;border-radius:10px;cursor:pointer;" @click="loadQr">Gerar novo QR</button>
+                <button class="r-tap" style="flex:1;background:var(--c-surface-2);border:none;color:var(--c-text-muted);font-family:inherit;font-size:12.5px;font-weight:600;padding:10px;border-radius:10px;cursor:pointer;" @click="closeConnect">Fechar</button>
               </div>
               <div style="margin-top:14px;">
                 <div style="font-size:12px;font-weight:700;color:var(--c-text-secondary);margin-bottom:8px;">Ou conecte com o número (código)</div>
-                <div style="display:flex;gap:8px;">
-                  <input v-model="pairNumber" placeholder="5511987654321" style="flex:1;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:10px 12px;color:var(--c-text);font-family:inherit;font-size:13.5px;outline:none;" @keydown.enter="getPairCode">
-                  <button :disabled="pairLoading" style="background:var(--c-ai);border:none;color:var(--c-on-accent);font-family:inherit;font-size:13px;font-weight:700;padding:0 16px;border-radius:10px;cursor:pointer;white-space:nowrap;" @click="getPairCode">{{ pairLoading ? '…' : 'Gerar código' }}</button>
+                <!-- o input não encolhe abaixo da largura intrínseca (16px de fonte no celular):
+                     sem o r-min0 a dupla campo+botão passava dos 268px úteis do cartão em 360px. -->
+                <div class="r-xs-stack" style="display:flex;gap:8px;">
+                  <input v-model="pairNumber" class="r-min0" placeholder="5511987654321" style="flex:1;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:10px 12px;color:var(--c-text);font-family:inherit;font-size:13.5px;outline:none;" @keydown.enter="getPairCode">
+                  <button class="r-tap" :disabled="pairLoading" style="background:var(--c-ai);border:none;color:var(--c-on-accent);font-family:inherit;font-size:13px;font-weight:700;padding:0 16px;border-radius:10px;cursor:pointer;white-space:nowrap;" @click="getPairCode">{{ pairLoading ? '…' : 'Gerar código' }}</button>
                 </div>
                 <div v-if="pairError" style="margin-top:8px;font-size:12.5px;color:var(--c-danger-soft);">{{ pairError }}</div>
                 <div v-if="pairCode" style="margin-top:12px;text-align:center;background:var(--c-surface-2);border-radius:11px;padding:12px;font-size:25px;font-weight:800;letter-spacing:4px;color:var(--accent);font-family:monospace;">{{ pairCode }}</div>
@@ -371,40 +381,41 @@ function stateColor(s: string) {
             <!-- principal conectado: sincronizar / importar conversas (só no canal não-oficial:
                  a API oficial não permite buscar histórico — ele chega uma vez, na coexistência) -->
             <div v-if="acc.provider !== 'cloud' && acc.role === 'primary' && acc.state === 'open'" style="margin-top:18px;border-top:1px solid var(--c-surface-1);padding-top:18px;">
-              <button :disabled="syncing" :style="{ width: '100%', background: 'var(--accent)', border: 'none', color: 'var(--accent-ink)', fontFamily: 'inherit', fontSize: '13.5px', fontWeight: 700, padding: '12px', borderRadius: '11px', cursor: syncing ? 'default' : 'pointer', opacity: syncing ? 0.7 : 1 }" @click="syncWpp">
+              <button class="r-tap" :disabled="syncing" :style="{ width: '100%', background: 'var(--accent)', border: 'none', color: 'var(--accent-ink)', fontFamily: 'inherit', fontSize: '13.5px', fontWeight: 700, padding: '12px', borderRadius: '11px', cursor: syncing ? 'default' : 'pointer', opacity: syncing ? 0.7 : 1 }" @click="syncWpp">
                 {{ syncing ? 'Sincronizando…' : 'Sincronizar conversas do WhatsApp' }}
               </button>
               <div v-if="syncMsg" style="margin-top:9px;font-size:12.5px;color:var(--c-ai-soft);text-align:center;">{{ syncMsg }}</div>
-              <div style="margin-top:14px;display:flex;gap:8px;">
-                <input v-model="impNumber" placeholder="Importar nº específico: 5511987654321" style="flex:1;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:10px 12px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;" @keydown.enter="importOne">
-                <button :disabled="importing" style="background:var(--c-surface-2);border:none;color:var(--c-text);font-family:inherit;font-size:13px;font-weight:700;padding:0 16px;border-radius:10px;cursor:pointer;white-space:nowrap;" @click="importOne">{{ importing ? '…' : 'Importar' }}</button>
+              <div class="r-xs-stack" style="margin-top:14px;display:flex;gap:8px;">
+                <input v-model="impNumber" class="r-min0" placeholder="Importar nº específico: 5511987654321" style="flex:1;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:10px 12px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;" @keydown.enter="importOne">
+                <button class="r-tap" :disabled="importing" style="background:var(--c-surface-2);border:none;color:var(--c-text);font-family:inherit;font-size:13px;font-weight:700;padding:0 16px;border-radius:10px;cursor:pointer;white-space:nowrap;" @click="importOne">{{ importing ? '…' : 'Importar' }}</button>
               </div>
               <div v-if="impMsg" style="margin-top:8px;font-size:12.5px;color:var(--c-ai-soft);">{{ impMsg }}</div>
             </div>
           </div>
 
           <!-- adicionar número de prospecção -->
-          <div style="background:var(--c-bg);border:1px dashed var(--c-surface-3);border-radius:18px;padding:20px;">
+          <div class="r-xs-pad-sm" style="background:var(--c-bg);border:1px dashed var(--c-surface-3);border-radius:18px;padding:20px;">
             <template v-if="!addOpen">
-              <button style="width:100%;background:var(--c-surface-2);border:none;color:var(--c-text);font-family:inherit;font-size:13.5px;font-weight:700;padding:12px;border-radius:11px;cursor:pointer;" @click="addOpen = true">+ Adicionar número de prospecção</button>
+              <button class="r-tap" style="width:100%;background:var(--c-surface-2);border:none;color:var(--c-text);font-family:inherit;font-size:13.5px;font-weight:700;padding:12px;border-radius:11px;cursor:pointer;" @click="addOpen = true">+ Adicionar número de prospecção</button>
             </template>
             <template v-else>
               <div style="font-size:14px;font-weight:800;margin-bottom:10px;">Novo número de prospecção</div>
               <input v-model="newName" placeholder="Apelido (ex.: Prospecção 1)" style="width:100%;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:11px 12px;color:var(--c-text);font-family:inherit;font-size:13.5px;outline:none;box-sizing:border-box;" @keydown.enter="addAccount">
               <div style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12.5px;color:var(--c-text-muted);flex-wrap:wrap;">
                 Teto diário de envios:
-                <input v-model.number="newCap" type="number" min="1" max="1000" style="width:80px;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:8px;padding:7px 9px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;">
+                <!-- com a fonte de 16px que o celular força, 80px fixos escondiam o 4º dígito do teto -->
+                <input v-model.number="newCap" type="number" min="1" max="1000" style="width:clamp(84px,26vw,110px);background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:8px;padding:7px 9px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;">
                 <span style="font-size:11.5px;">(começa baixo e sobe com o aquecimento)</span>
               </div>
               <div style="display:flex;gap:8px;margin-top:14px;">
-                <button :disabled="adding || !newName.trim()" :style="{ flex: 1, background: 'var(--accent)', border: 'none', color: 'var(--accent-ink)', fontFamily: 'inherit', fontSize: '13.5px', fontWeight: 700, padding: '11px', borderRadius: '10px', cursor: (adding || !newName.trim()) ? 'default' : 'pointer', opacity: (adding || !newName.trim()) ? 0.6 : 1 }" @click="addAccount">{{ adding ? 'Criando…' : 'Criar e conectar' }}</button>
-                <button style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);font-family:inherit;font-size:13px;font-weight:600;padding:0 16px;border-radius:10px;cursor:pointer;" @click="addOpen = false">Cancelar</button>
+                <button class="r-tap" :disabled="adding || !newName.trim()" :style="{ flex: 1, background: 'var(--accent)', border: 'none', color: 'var(--accent-ink)', fontFamily: 'inherit', fontSize: '13.5px', fontWeight: 700, padding: '11px', borderRadius: '10px', cursor: (adding || !newName.trim()) ? 'default' : 'pointer', opacity: (adding || !newName.trim()) ? 0.6 : 1 }" @click="addAccount">{{ adding ? 'Criando…' : 'Criar e conectar' }}</button>
+                <button class="r-tap" style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);font-family:inherit;font-size:13px;font-weight:600;padding:0 16px;border-radius:10px;cursor:pointer;" @click="addOpen = false">Cancelar</button>
               </div>
             </template>
           </div>
 
           <!-- conectar número pela API OFICIAL (Cloud API da Meta) -->
-          <div style="background:var(--c-bg);border:1px solid rgba(37,211,102,.25);border-radius:18px;padding:20px;">
+          <div class="r-xs-pad-sm" style="background:var(--c-bg);border:1px solid rgba(37,211,102,.25);border-radius:18px;padding:20px;">
             <template v-if="!cloudOpen">
               <div style="display:flex;align-items:center;gap:9px;margin-bottom:6px;">
                 <span style="font-size:14px;font-weight:800;">API oficial do WhatsApp (Meta)</span>
@@ -413,7 +424,7 @@ function stateColor(s: string) {
               <div style="font-size:12.5px;color:var(--c-text-muted);line-height:1.55;margin-bottom:12px;">
                 Sem risco de bloqueio, com recibos e templates. Exige conta na Meta (Business verificado + WhatsApp Business Account). Com <b style="color:var(--c-text-secondary);">coexistência</b>, o mesmo número continua funcionando no app WhatsApp Business do celular e traz até ~6 meses de histórico.
               </div>
-              <button style="width:100%;background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:13.5px;font-weight:700;padding:12px;border-radius:11px;cursor:pointer;" @click="openCloudForm()">+ Conectar número pela API oficial</button>
+              <button class="r-tap" style="width:100%;background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:13.5px;font-weight:700;padding:12px;border-radius:11px;cursor:pointer;" @click="openCloudForm()">+ Conectar número pela API oficial</button>
             </template>
 
             <template v-else>
@@ -429,8 +440,8 @@ function stateColor(s: string) {
               </div>
 
               <div style="display:flex;align-items:center;gap:14px;margin-top:11px;flex-wrap:wrap;font-size:12.5px;color:var(--c-text-muted);">
-                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
-                  <input v-model="cloudForm.coexistence" type="checkbox"> número também usado no app WhatsApp Business
+                <label class="r-tap" style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                  <input v-model="cloudForm.coexistence" type="checkbox" style="width:20px;height:20px;flex-shrink:0;"> número também usado no app WhatsApp Business
                 </label>
                 <label style="display:flex;align-items:center;gap:6px;">
                   Papel:
@@ -448,11 +459,11 @@ function stateColor(s: string) {
                 <div style="font-size:12px;font-weight:700;color:var(--c-text-secondary);margin-bottom:9px;">Cole no painel da Meta (WhatsApp → Configuração → Webhook):</div>
                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px;">
                   <code style="flex:1;min-width:0;font-size:11.5px;color:var(--accent);overflow-wrap:anywhere;">{{ cloudWebhook.url }}</code>
-                  <button style="background:var(--c-surface-3);border:none;color:var(--c-text);font-family:inherit;font-size:11.5px;font-weight:700;padding:6px 10px;border-radius:8px;cursor:pointer;" @click="copy(cloudWebhook.url)">copiar</button>
+                  <button class="r-tap" style="background:var(--c-surface-3);border:none;color:var(--c-text);font-family:inherit;font-size:11.5px;font-weight:700;padding:6px 10px;border-radius:8px;cursor:pointer;" @click="copy(cloudWebhook.url)">copiar</button>
                 </div>
                 <div style="display:flex;align-items:center;gap:8px;">
                   <code style="flex:1;min-width:0;font-size:11.5px;color:var(--c-text-secondary);overflow-wrap:anywhere;">Token de verificação: {{ cloudWebhook.token }}</code>
-                  <button style="background:var(--c-surface-3);border:none;color:var(--c-text);font-family:inherit;font-size:11.5px;font-weight:700;padding:6px 10px;border-radius:8px;cursor:pointer;" @click="copy(cloudWebhook.token)">copiar</button>
+                  <button class="r-tap" style="background:var(--c-surface-3);border:none;color:var(--c-text);font-family:inherit;font-size:11.5px;font-weight:700;padding:6px 10px;border-radius:8px;cursor:pointer;" @click="copy(cloudWebhook.token)">copiar</button>
                 </div>
                 <div style="margin-top:9px;font-size:11.5px;color:var(--c-text-faint);line-height:1.5;">
                   Assine os campos <b>messages</b> e, na coexistência, também <b>smb_message_echoes</b>, <b>history</b> e <b>smb_app_state_sync</b>.
@@ -460,8 +471,8 @@ function stateColor(s: string) {
               </div>
 
               <div style="display:flex;gap:8px;margin-top:14px;">
-                <button :disabled="cloudSaving" :style="{ flex: 1, background: 'var(--accent)', border: 'none', color: 'var(--accent-ink)', fontFamily: 'inherit', fontSize: '13.5px', fontWeight: 700, padding: '11px', borderRadius: '10px', cursor: cloudSaving ? 'default' : 'pointer', opacity: cloudSaving ? 0.6 : 1 }" @click="saveCloud">{{ cloudSaving ? 'Salvando…' : 'Salvar credenciais' }}</button>
-                <button style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);font-family:inherit;font-size:13px;font-weight:600;padding:0 16px;border-radius:10px;cursor:pointer;" @click="cloudOpen = false">Fechar</button>
+                <button class="r-tap" :disabled="cloudSaving" :style="{ flex: 1, background: 'var(--accent)', border: 'none', color: 'var(--accent-ink)', fontFamily: 'inherit', fontSize: '13.5px', fontWeight: 700, padding: '11px', borderRadius: '10px', cursor: cloudSaving ? 'default' : 'pointer', opacity: cloudSaving ? 0.6 : 1 }" @click="saveCloud">{{ cloudSaving ? 'Salvando…' : 'Salvar credenciais' }}</button>
+                <button class="r-tap" style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);font-family:inherit;font-size:13px;font-weight:600;padding:0 16px;border-radius:10px;cursor:pointer;" @click="cloudOpen = false">Fechar</button>
               </div>
             </template>
           </div>

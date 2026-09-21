@@ -28,6 +28,7 @@ const visivel = ref(false)
     >
     <button
       type="button"
+      class="r-tap"
       :title="visivel ? 'Ocultar senha' : 'Mostrar senha'"
       :aria-label="visivel ? 'Ocultar senha' : 'Mostrar senha'"
       :aria-pressed="visivel"

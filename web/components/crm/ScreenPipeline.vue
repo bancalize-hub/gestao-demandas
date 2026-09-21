@@ -251,23 +251,23 @@ const cols = computed(() => crm.stages.map((st) => {
 </script>
 
 <template>
-  <div style="flex:1;display:flex;flex-direction:column;min-width:0;background:var(--c-bg-deep);">
-    <div style="padding:22px clamp(12px,4vw,30px) 0;">
+  <div class="r-sm-scroll-y" style="flex:1;display:flex;flex-direction:column;min-width:0;background:var(--c-bg-deep);">
+    <div class="r-page" style="padding:22px clamp(12px,4vw,30px) 0;">
       <div class="r-wrap" style="display:flex;align-items:center;justify-content:space-between;">
         <div>
           <div style="font-size:23px;font-weight:800;letter-spacing:-.3px;">Funil de vendas</div>
           <div style="display:flex;align-items:center;gap:14px;font-size:12px;color:var(--c-text-muted);margin-top:5px;flex-wrap:wrap;">
             <span>Arraste os cards entre as etapas</span>
-            <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:8px;height:8px;border-radius:50%;background:var(--c-orange-strong);" />Quente <span style="opacity:.7;">≤2d</span></span>
-            <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:8px;height:8px;border-radius:50%;background:var(--c-warn);" />Morno <span style="opacity:.7;">3–5d</span></span>
-            <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:8px;height:8px;border-radius:50%;background:var(--c-info);" />Frio <span style="opacity:.7;">&gt;5d</span></span>
+            <span class="r-xs-hide" style="display:inline-flex;align-items:center;gap:5px;"><span style="width:8px;height:8px;border-radius:50%;background:var(--c-orange-strong);" />Quente <span style="opacity:.7;">≤2d</span></span>
+            <span class="r-xs-hide" style="display:inline-flex;align-items:center;gap:5px;"><span style="width:8px;height:8px;border-radius:50%;background:var(--c-warn);" />Morno <span style="opacity:.7;">3–5d</span></span>
+            <span class="r-xs-hide" style="display:inline-flex;align-items:center;gap:5px;"><span style="width:8px;height:8px;border-radius:50%;background:var(--c-info);" />Frio <span style="opacity:.7;">&gt;5d</span></span>
           </div>
         </div>
-        <div style="display:flex;gap:10px;align-items:center;">
-          <div style="display:flex;align-items:center;gap:8px;background:var(--c-surface-2);border-radius:11px;padding:9px 13px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--c-text-muted)" stroke-width="2"><circle cx="11" cy="11" r="7" /><path d="m20 20-3-3" stroke-linecap="round" /></svg><input placeholder="Buscar negócio" style="background:transparent;border:none;outline:none;color:var(--c-text);font-family:inherit;font-size:13px;width:130px;"></div>
-          <button :title="coolingOnly ? 'Mostrando só leads esfriando' : 'Mostrar só leads esfriando (morno/frio)'" :style="`border:none;font-family:inherit;font-size:13px;font-weight:600;padding:10px 14px;border-radius:11px;cursor:pointer;display:flex;align-items:center;gap:7px;${coolingOnly ? 'background:var(--c-warn);color:var(--c-warn-bg);' : 'background:var(--c-surface-2);color:var(--c-text);'}`" @click="coolingOnly = !coolingOnly"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 4v8.5a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z" stroke-linejoin="round" /></svg>{{ coolingOnly ? 'Esfriando ✓' : 'Esfriando' }}</button>
-          <button style="background:var(--c-surface-2);border:none;color:var(--c-text);font-family:inherit;font-size:13px;font-weight:600;padding:10px 14px;border-radius:11px;cursor:pointer;display:flex;align-items:center;gap:7px;" @click="openStagesModal"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M3 12h18M3 18h18" stroke-linecap="round" /></svg>Editar etapas</button>
-          <button class="wabtn" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:13.5px;font-weight:700;padding:10px 17px;border-radius:11px;cursor:pointer;display:flex;align-items:center;gap:7px;" @click="openNew"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>Novo negócio</button>
+        <div class="r-actions" style="display:flex;gap:10px;align-items:center;">
+          <div class="r-min0" style="display:flex;align-items:center;gap:8px;background:var(--c-surface-2);border-radius:11px;padding:9px 13px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--c-text-muted)" stroke-width="2"><circle cx="11" cy="11" r="7" /><path d="m20 20-3-3" stroke-linecap="round" /></svg><input class="r-field" placeholder="Buscar negócio" style="background:transparent;border:none;outline:none;color:var(--c-text);font-family:inherit;font-size:13px;width:130px;"></div>
+          <button class="r-btn-nowrap" :title="coolingOnly ? 'Mostrando só leads esfriando' : 'Mostrar só leads esfriando (morno/frio)'" :style="`border:none;font-family:inherit;font-size:13px;font-weight:600;padding:10px 14px;border-radius:11px;cursor:pointer;display:flex;align-items:center;gap:7px;${coolingOnly ? 'background:var(--c-warn);color:var(--c-warn-bg);' : 'background:var(--c-surface-2);color:var(--c-text);'}`" @click="coolingOnly = !coolingOnly"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 4v8.5a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z" stroke-linejoin="round" /></svg>{{ coolingOnly ? 'Esfriando ✓' : 'Esfriando' }}</button>
+          <button class="r-btn-nowrap" style="background:var(--c-surface-2);border:none;color:var(--c-text);font-family:inherit;font-size:13px;font-weight:600;padding:10px 14px;border-radius:11px;cursor:pointer;display:flex;align-items:center;gap:7px;" @click="openStagesModal"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M3 12h18M3 18h18" stroke-linecap="round" /></svg>Editar etapas</button>
+          <button class="wabtn r-btn-nowrap" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:13.5px;font-weight:700;padding:10px 17px;border-radius:11px;cursor:pointer;display:flex;align-items:center;gap:7px;" @click="openNew"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>Novo negócio</button>
         </div>
       </div>
 
@@ -278,31 +278,37 @@ const cols = computed(() => crm.stages.map((st) => {
         <input v-model="dateFrom" type="date" :max="dateTo || undefined" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:8px;padding:6px 9px;color:var(--c-text);font-family:inherit;font-size:12.5px;outline:none;color-scheme:dark;">
         <span style="font-size:12.5px;color:var(--c-text-muted);">até</span>
         <input v-model="dateTo" type="date" :min="dateFrom || undefined" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:8px;padding:6px 9px;color:var(--c-text);font-family:inherit;font-size:12.5px;outline:none;color-scheme:dark;">
-        <button class="datebtn" @click="presetToday">Hoje</button>
-        <button class="datebtn" @click="presetYesterday">Ontem</button>
-        <button class="datebtn" @click="preset7d">7 dias</button>
-        <button class="datebtn" @click="presetMonth">Este mês</button>
-        <button v-if="dateActive" class="datebtn" style="color:var(--c-danger-soft);" @click="clearDate">✕ Limpar</button>
-        <span style="flex:1;" />
+        <button class="datebtn r-tap" @click="presetToday">Hoje</button>
+        <button class="datebtn r-tap" @click="presetYesterday">Ontem</button>
+        <button class="datebtn r-tap" @click="preset7d">7 dias</button>
+        <button class="datebtn r-tap" @click="presetMonth">Este mês</button>
+        <button v-if="dateActive" class="datebtn r-tap" style="color:var(--c-danger-soft);" @click="clearDate">✕ Limpar</button>
+        <span class="r-hide" style="flex:1;" />
         <span v-if="dateActive" style="font-size:12px;color:var(--accent-soft);font-weight:600;">Filtrando: {{ dateLabel }}</span>
         <span v-else style="font-size:12px;color:var(--c-text-muted);">Período total</span>
       </div>
 
-      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:14px;">
-        <div style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:14px;padding:16px 18px;"><div style="font-size:12.5px;color:var(--c-text-muted);">{{ dateActive ? 'Valor no período' : 'Valor total do pipeline' }}</div><div style="font-size:25px;font-weight:800;margin-top:5px;">{{ stats.totalPipeline }}</div><div style="font-size:11.5px;color:var(--c-text-muted);margin-top:4px;font-weight:600;">{{ dateActive ? 'conversas iniciadas no período' : 'somando todas as etapas' }}</div></div>
-        <div style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:14px;padding:16px 18px;"><div style="font-size:12.5px;color:var(--c-text-muted);">Conversas</div><div style="font-size:25px;font-weight:800;margin-top:5px;">{{ stats.conversas }}</div><div style="font-size:11.5px;color:var(--c-text-muted);margin-top:4px;font-weight:600;">{{ dateActive ? `iniciadas em ${dateLabel}` : 'total no CRM' }}</div></div>
+      <div class="r-xs-col-1" style="display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:14px;">
+        <div style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:14px;padding:16px 18px;"><div style="font-size:12.5px;color:var(--c-text-muted);">{{ dateActive ? 'Valor no período' : 'Valor total do pipeline' }}</div><div class="r-num" style="--r-num:25px;font-size:25px;font-weight:800;margin-top:5px;">{{ stats.totalPipeline }}</div><div style="font-size:11.5px;color:var(--c-text-muted);margin-top:4px;font-weight:600;">{{ dateActive ? 'conversas iniciadas no período' : 'somando todas as etapas' }}</div></div>
+        <div style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:14px;padding:16px 18px;"><div style="font-size:12.5px;color:var(--c-text-muted);">Conversas</div><div class="r-num" style="--r-num:25px;font-size:25px;font-weight:800;margin-top:5px;">{{ stats.conversas }}</div><div style="font-size:11.5px;color:var(--c-text-muted);margin-top:4px;font-weight:600;">{{ dateActive ? `iniciadas em ${dateLabel}` : 'total no CRM' }}</div></div>
       </div>
     </div>
 
-    <div style="flex:1;overflow-x:auto;overflow-y:hidden;padding:22px clamp(12px,4vw,30px) 26px;">
-      <div style="display:flex;gap:16px;height:100%;min-width:max-content;">
-        <div v-for="col in cols" :key="col.id" style="width:280px;display:flex;flex-direction:column;background:var(--c-bg-deep);border-radius:14px;padding:13px;flex-shrink:0;">
+    <!--
+      No celular a tela inteira rola no Y (raiz com r-sm-scroll-y): sem isso o cabeçalho
+      (título + filtros + KPIs) comia toda a altura dos 100dvh travados pelo layout e
+      sobrava menos de um card para o funil. Aqui a faixa deixa de disputar altura
+      (.kanban-wrap, abaixo) e cada etapa vira um cartão de 86vw com encaixe no dedo.
+    -->
+    <div class="kanban-wrap r-kanban" style="flex:1;overflow-x:auto;overflow-y:hidden;padding:22px clamp(12px,4vw,30px) 26px;">
+      <div class="r-sm-h-auto" style="display:flex;gap:16px;height:100%;min-width:max-content;">
+        <div v-for="col in cols" :key="col.id" class="r-kanban-col" style="width:280px;display:flex;flex-direction:column;background:var(--c-bg-deep);border-radius:14px;padding:13px;flex-shrink:0;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:13px;padding:0 3px;">
             <div style="display:flex;align-items:center;gap:8px;"><span :style="{ width: '9px', height: '9px', borderRadius: '50%', background: col.dot }" /><span style="font-weight:700;font-size:13.5px;">{{ col.title }}</span><span style="font-size:12px;color:var(--c-text-muted);">{{ col.count }}</span></div>
             <span style="font-size:12px;color:var(--c-text-muted);font-weight:600;">{{ col.sum }}</span>
           </div>
           <div
-            :style="col.bodyStyle"
+            :style="col.bodyStyle" class="r-kanban-body"
             @dragover.prevent="crm.setDragOver(`pipeline:${col.id}`)"
             @drop.prevent="crm.dropTo('pipeline', col.id)"
           >
@@ -314,13 +320,13 @@ const cols = computed(() => crm.stages.map((st) => {
               @click="openCard(card)"
             >
               <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-                <div style="font-weight:700;font-size:14px;">{{ card.name }}</div>
-                <button v-if="card.kind === 'conv'" class="wachat" title="Abrir conversa no WhatsApp" style="background:rgba(var(--accent-rgb),.15);border:none;border-radius:7px;padding:3px 6px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;" @click.stop="openChat(card)"><svg width="15" height="15" viewBox="0 0 24 24" fill="var(--accent)"><path d="M12.04 2c-5.46 0-9.91 4.45-9.91 9.91 0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38c1.45.79 3.08 1.21 4.74 1.21 5.46 0 9.91-4.45 9.91-9.91S17.5 2 12.04 2zm5.8 14.01c-.24.68-1.42 1.31-1.96 1.36-.5.05-.95.24-3.2-.67-2.7-1.06-4.42-3.82-4.56-4-.13-.18-1.1-1.46-1.1-2.79s.7-1.98.94-2.25c.24-.27.53-.34.7-.34.18 0 .35 0 .5.01.16.01.38-.06.59.45.24.58.81 2 .88 2.14.07.14.12.31.02.49-.09.18-.14.29-.28.45-.14.16-.29.36-.42.48-.14.14-.28.29-.12.57.16.27.71 1.17 1.53 1.9 1.05.94 1.94 1.23 2.21 1.37.27.14.43.12.59-.07.16-.18.68-.79.86-1.06.18-.27.36-.23.61-.14.24.09 1.55.73 1.82.87.27.14.45.2.51.31.07.11.07.64-.17 1.31z" /></svg></button>
+                <div class="r-break" style="font-weight:700;font-size:14px;">{{ card.name }}</div>
+                <button v-if="card.kind === 'conv'" class="wachat r-tap" title="Abrir conversa no WhatsApp" style="background:rgba(var(--accent-rgb),.15);border:none;border-radius:7px;padding:3px 6px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;" @click.stop="openChat(card)"><svg width="15" height="15" viewBox="0 0 24 24" fill="var(--accent)"><path d="M12.04 2c-5.46 0-9.91 4.45-9.91 9.91 0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38c1.45.79 3.08 1.21 4.74 1.21 5.46 0 9.91-4.45 9.91-9.91S17.5 2 12.04 2zm5.8 14.01c-.24.68-1.42 1.31-1.96 1.36-.5.05-.95.24-3.2-.67-2.7-1.06-4.42-3.82-4.56-4-.13-.18-1.1-1.46-1.1-2.79s.7-1.98.94-2.25c.24-.27.53-.34.7-.34.18 0 .35 0 .5.01.16.01.38-.06.59.45.24.58.81 2 .88 2.14.07.14.12.31.02.49-.09.18-.14.29-.28.45-.14.16-.29.36-.42.48-.14.14-.28.29-.12.57.16.27.71 1.17 1.53 1.9 1.05.94 1.94 1.23 2.21 1.37.27.14.43.12.59-.07.16-.18.68-.79.86-1.06.18-.27.36-.23.61-.14.24.09 1.55.73 1.82.87.27.14.45.2.51.31.07.11.07.64-.17 1.31z" /></svg></button>
                 <span v-if="card.hot" style="font-size:10px;font-weight:700;color:var(--c-orange);background:rgba(255,122,69,.15);padding:2px 7px;border-radius:6px;flex-shrink:0;">🔥</span>
                 <svg v-if="card.won" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" style="flex-shrink:0;"><path d="m5 13 4 4L19 7" stroke-linecap="round" stroke-linejoin="round" /></svg>
-                <button v-if="card.kind === 'deal'" class="delbtn" title="Excluir" style="background:none;border:none;color:var(--c-text-faint);cursor:pointer;padding:0;flex-shrink:0;display:flex;" @click.stop="delDeal(Number(card.id))"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+                <button v-if="card.kind === 'deal'" class="delbtn r-tap r-touch-show" title="Excluir" style="background:none;border:none;color:var(--c-text-faint);cursor:pointer;padding:0;flex-shrink:0;display:flex;" @click.stop="delDeal(Number(card.id))"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
               </div>
-              <div style="font-size:12px;color:var(--c-text-muted);margin-top:2px;">{{ card.sub }}</div>
+              <div class="r-break" style="font-size:12px;color:var(--c-text-muted);margin-top:2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">{{ card.sub }}</div>
               <div v-if="card.temp" style="display:flex;align-items:center;gap:6px;margin-top:9px;flex-wrap:wrap;">
                 <span :style="{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '10.5px', fontWeight: 700, color: card.temp.color, background: `${card.temp.color}22`, padding: '2px 8px', borderRadius: '6px' }"><span :style="{ width: '7px', height: '7px', borderRadius: '50%', background: card.temp.color }" />{{ card.temp.label }}</span>
                 <span style="font-size:10.5px;color:var(--c-text-muted);">{{ sinceLabel(card.temp.days) }}</span>
@@ -330,10 +336,10 @@ const cols = computed(() => crm.stages.map((st) => {
                 <input
                   v-if="editingValueKey === `${card.kind}:${card.id}`"
                   v-model="valueDraft" v-focus inputmode="numeric" title="Enter ou clique fora p/ salvar · Esc cancela"
-                  style="width:96px;background:var(--c-bg-deep);border:1px solid var(--accent);border-radius:6px;padding:2px 7px;font-size:13.5px;font-weight:700;color:var(--accent);font-family:inherit;outline:none;"
+                  class="r-sm-auto-w" style="width:96px;background:var(--c-bg-deep);border:1px solid var(--accent);border-radius:6px;padding:2px 7px;font-size:13.5px;font-weight:700;color:var(--accent);font-family:inherit;outline:none;"
                   @click.stop @mousedown.stop @keydown.enter="($event.target as HTMLInputElement).blur()" @keydown.esc="editingValueKey = null" @blur="saveValue(card)"
                 >
-                <span v-else title="Clique para editar o valor" style="font-size:13.5px;font-weight:700;color:var(--accent);cursor:text;" @click.stop="startEditValue(card)">{{ fmtMoney(card.value) }}</span>
+                <span v-else class="r-tap-pad" title="Clique para editar o valor" style="display:inline-flex;align-items:center;font-size:13.5px;font-weight:700;color:var(--accent);cursor:text;" @click.stop="startEditValue(card)">{{ fmtMoney(card.value) }}</span>
                 <span :style="card.tagStyle">{{ card.tag }}</span>
               </div>
             </div>
@@ -343,11 +349,11 @@ const cols = computed(() => crm.stages.map((st) => {
     </div>
 
     <!-- modal: novo negócio -->
-    <div v-if="showNew" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:50;padding:24px;" @click.self="showNew = false">
-      <div style="width:460px;max-width:100%;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:26px;">
+    <div v-if="showNew" class="r-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:50;padding:24px;" @click.self="showNew = false">
+      <div class="r-sheet" style="width:460px;max-width:100%;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:26px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
           <div style="font-size:19px;font-weight:800;">{{ editId ? 'Editar negócio' : 'Novo negócio' }}</div>
-          <button style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:20px;line-height:1;" @click="showNew = false">×</button>
+          <button class="r-tap" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:20px;line-height:1;" @click="showNew = false">×</button>
         </div>
         <div style="font-size:13px;color:var(--c-text-muted);margin-bottom:20px;">Adicione um negócio ao funil.</div>
 
@@ -373,24 +379,24 @@ const cols = computed(() => crm.stages.map((st) => {
     </div>
 
     <!-- modal: editar etapas do funil -->
-    <div v-if="showStages" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:50;padding:24px;" @click.self="showStages = false">
-      <div style="width:480px;max-width:100%;max-height:90vh;display:flex;flex-direction:column;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:26px;">
+    <div v-if="showStages" class="r-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:50;padding:24px;" @click.self="showStages = false">
+      <div class="r-sheet" style="width:480px;max-width:100%;max-height:90vh;display:flex;flex-direction:column;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:26px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;flex-shrink:0;">
           <div style="font-size:19px;font-weight:800;">Etapas do funil</div>
-          <button style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:20px;line-height:1;" @click="showStages = false">×</button>
+          <button class="r-tap" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:20px;line-height:1;" @click="showStages = false">×</button>
         </div>
         <div style="font-size:13px;color:var(--c-text-muted);margin-bottom:18px;flex-shrink:0;">Estas etapas também são as etiquetas das conversas no chat. Defina um <b style="color:var(--c-ai-soft);">objetivo da IA</b> em cada etapa — as sugestões de resposta vão conduzir a conversa rumo a ele.</div>
         <div style="display:flex;flex-direction:column;gap:10px;overflow-y:auto;flex:1;min-height:0;margin:0 -4px;padding:2px 4px;">
           <div v-for="(s, i) in crm.stages" :key="s.id || s.key" style="display:flex;flex-direction:column;gap:8px;background:var(--c-surface-2);border-radius:10px;padding:10px;">
-            <div style="display:flex;align-items:center;gap:8px;">
+            <div class="r-wrap" style="display:flex;align-items:center;gap:8px;">
               <input type="color" :value="s.color" style="width:26px;height:26px;border:none;background:none;cursor:pointer;padding:0;flex-shrink:0;" @input="s.id && crm.updateStage(s.id, { color: ($event.target as HTMLInputElement).value })">
               <input :value="s.name" style="flex:1;background:var(--c-bg);border:1px solid var(--c-surface-3);border-radius:8px;padding:8px 10px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;" @change="s.id && crm.updateStage(s.id, { name: ($event.target as HTMLInputElement).value })">
-              <button title="Subir" :disabled="i === 0" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;padding:2px 4px;" @click="moveStage(i, -1)">▲</button>
-              <button title="Descer" :disabled="i === crm.stages.length - 1" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;padding:2px 4px;" @click="moveStage(i, 1)">▼</button>
-              <button title="Excluir" style="background:none;border:none;color:var(--c-danger);cursor:pointer;padding:2px 4px;" @click="s.id && confirm('Excluir a etapa? Os negócios dela vão para a primeira etapa.') && crm.removeStage(s.id)">✕</button>
+              <button title="Subir" class="r-tap" :disabled="i === 0" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;padding:2px 4px;" @click="moveStage(i, -1)">▲</button>
+              <button title="Descer" class="r-tap" :disabled="i === crm.stages.length - 1" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;padding:2px 4px;" @click="moveStage(i, 1)">▼</button>
+              <button title="Excluir" class="r-tap" style="background:none;border:none;color:var(--c-danger);cursor:pointer;padding:2px 4px;" @click="s.id && confirm('Excluir a etapa? Os negócios dela vão para a primeira etapa.') && crm.removeStage(s.id)">✕</button>
             </div>
             <textarea :value="s.goal ?? ''" rows="2" placeholder="Objetivo da IA nesta etapa (ex.: conduzir sutilmente o lead a agendar uma reunião)" style="background:var(--c-bg);border:1px solid var(--c-surface-3);border-radius:8px;padding:8px 10px;color:var(--c-text);font-family:inherit;font-size:12.5px;outline:none;resize:vertical;line-height:1.4;" @change="s.id && crm.updateStage(s.id, { goal: ($event.target as HTMLTextAreaElement).value })" />
-            <div style="display:flex;align-items:center;gap:8px;">
+            <div class="r-wrap" style="display:flex;align-items:center;gap:8px;">
               <span style="font-size:11.5px;color:var(--c-text-muted);display:flex;align-items:center;gap:5px;flex-shrink:0;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7.2-7.2A2 2 0 0 1 2.8 12V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.4.6l7.4 7.4a2 2 0 0 1 0 2.8Z" stroke-linejoin="round"/></svg>Etiqueta WhatsApp</span>
               <select v-if="waLabelsSupported" :value="s.wa_label_id ?? ''" style="flex:1;background:var(--c-bg);border:1px solid var(--c-surface-3);border-radius:8px;padding:7px 9px;color:var(--c-text);font-family:inherit;font-size:12.5px;outline:none;color-scheme:dark;" @change="s.id && crm.updateStage(s.id, { wa_label_id: ($event.target as HTMLSelectElement).value || null })">
                 <option value="">— Não sincronizar —</option>
@@ -409,6 +415,16 @@ const cols = computed(() => crm.stages.map((st) => {
 </template>
 
 <style scoped>
+/*
+  ≤820px a raiz passa a rolar no eixo Y (r-sm-scroll-y). Para a rolagem existir, a faixa
+  do kanban tem de PARAR de disputar a altura: com `flex:1` ela recebia só a sobra do
+  cabeçalho — no celular, zero — e o funil aparecia como uma janela de meio card.
+  Nenhum utilitário resolve isto: `height:auto` não vence o `flex-basis`.
+*/
+@media (max-width: 820px) {
+  .kanban-wrap { flex: 0 0 auto !important; }
+}
+
 .wabtn:hover { background: var(--accent-hi) !important; }
 .card:hover { filter: brightness(1.12); }
 .card .delbtn { opacity: 0; transition: opacity .15s; }

@@ -217,22 +217,33 @@ function estiloCard(c: Criativo) {
 
 <template>
   <div style="flex:1;min-width:0;background:var(--c-bg-deep);display:flex;flex-direction:column;overflow-y:auto;">
-    <div style="padding:16px 24px;border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;gap:12px;flex-shrink:0;">
+    <!-- r-wrap: sem quebra de linha, em 360px o link "← Gerenciador de anúncios" era
+         espremido e quebrava em três linhas dentro do próprio botão. O r-pad troca os
+         24px fixos pelo respiro que encolhe com a tela (e alinha com o corpo abaixo). -->
+    <div class="r-wrap r-pad" style="padding-block:16px;border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;gap:12px;flex-shrink:0;">
       <div style="width:34px;height:34px;border-radius:10px;background:var(--accent);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:17px;">🖼️</div>
       <div style="min-width:0;">
         <div style="font-weight:800;font-size:15px;">Criativos</div>
         <div style="font-size:12px;color:var(--c-text-muted);">As peças que vão para os anúncios do Facebook</div>
       </div>
-      <div style="flex:1;" />
-      <NuxtLink to="/marketing" style="text-decoration:none;background:var(--c-surface-2);color:var(--c-text-secondary);font-size:12.5px;font-weight:700;padding:8px 13px;border-radius:9px;">← Gerenciador de anúncios</NuxtLink>
+      <!-- o espaçador vira a quebra de linha no celular: solto numa barra que quebra,
+           ele engolia sozinho uma fileira inteira -->
+      <div class="r-break-line" style="flex:1;" />
+      <NuxtLink to="/marketing" class="r-tap" style="text-decoration:none;background:var(--c-surface-2);color:var(--c-text-secondary);font-size:12.5px;font-weight:700;padding:8px 13px;border-radius:9px;">← Gerenciador de anúncios</NuxtLink>
     </div>
 
-    <div style="padding:20px 24px;max-width:1100px;">
+    <!--
+      A coluna tinha teto de 1100px mas nenhuma centralização: em 1600px+ ficava colada na
+      borda esquerda, com ~500px de vazio à direita e desalinhada do cabeçalho. Em 360px os
+      48px de padding lateral comiam 13% da tela — o r-pad derruba isso para 12px.
+    -->
+    <div class="r-page r-pad" style="--r-page:1100px;padding-block:20px;">
       <!-- Contadores: também são o filtro. O número e o recorte são a mesma pergunta
            ("quantos validados eu tenho?" / "me mostra os validados"). O arquivo fica
            depois de um respiro, porque não é lugar de onde se escolhe peça. -->
       <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:6px;">
         <button
+          class="r-tap-h"
           :style="{ background: filtro === 'biblioteca' ? 'var(--c-surface-2)' : 'var(--c-bg-deepest)', border: '1px solid ' + (filtro === 'biblioteca' ? 'var(--c-surface-3)' : 'var(--c-surface-1)'), borderRadius: '10px', padding: '8px 14px', cursor: 'pointer', fontFamily: 'inherit', color: 'var(--c-text)', display: 'flex', alignItems: 'baseline', gap: '7px' }"
           @click="filtro = 'biblioteca'"
         >
@@ -244,7 +255,7 @@ function estiloCard(c: Criativo) {
             { k: 'validado', selo: SELOS.validado },
             { k: 'testando', selo: SELOS.testando },
             { k: 'naosubiu', selo: NAO_SUBIU },
-          ]" :key="s.k"
+          ]" :key="s.k" class="r-tap-h"
           :title="s.k === 'naosubiu' ? 'Nunca viraram anúncio — não estão em teste, estão parados' : ''"
           :style="{ background: filtro === s.k ? 'var(--c-surface-2)' : 'var(--c-bg-deepest)', border: '1px solid ' + (filtro === s.k ? s.selo.cor : 'var(--c-surface-1)'), borderRadius: '10px', padding: '8px 14px', cursor: 'pointer', fontFamily: 'inherit', color: 'var(--c-text)', display: 'flex', alignItems: 'baseline', gap: '7px' }"
           @click="filtro = filtro === s.k ? 'biblioteca' : (s.k as any)"
@@ -253,13 +264,16 @@ function estiloCard(c: Criativo) {
           <span style="font-size:11.5px;color:var(--c-text-muted);font-weight:700;">{{ s.selo.icone }} {{ s.selo.curto }}</span>
         </button>
 
-        <div style="width:1px;height:26px;background:var(--c-surface-1);margin:0 3px;" />
+        <!-- o risco vertical foi desenhado para uma barra de UMA linha; em 360px a barra
+             quebra em quatro fileiras e ele ficava órfão no começo de uma delas -->
+        <div class="r-hide" style="width:1px;height:26px;background:var(--c-surface-1);margin:0 3px;" />
 
         <!-- Diz "Reprovados", e não "Arquivados": é a MESMA palavra do selo do card e do
              botão que reprova. Com dois nomes para o mesmo estado, quem procura pelo
              veredito que acabou de dar não encontra o recorte — o arquivamento é a
              consequência, não o nome do estado. -->
         <button
+          class="r-tap-h"
           title="Reprovados — saem da biblioteca e são recusados na criação de anúncio, inclusive pela IA"
           :style="{ background: filtro === 'reprovado' ? 'var(--c-surface-2)' : 'var(--c-bg-deepest)', border: '1px solid ' + (filtro === 'reprovado' ? SELOS.reprovado.cor : 'var(--c-surface-1)'), borderRadius: '10px', padding: '8px 14px', cursor: 'pointer', fontFamily: 'inherit', color: 'var(--c-text)', display: 'flex', alignItems: 'baseline', gap: '7px' }"
           @click="filtro = filtro === 'reprovado' ? 'biblioteca' : 'reprovado'"
@@ -268,11 +282,13 @@ function estiloCard(c: Criativo) {
           <span style="font-size:11.5px;color:var(--c-text-muted);font-weight:700;">{{ SELOS.reprovado.icone }} {{ SELOS.reprovado.curto }}</span>
         </button>
 
-        <div style="flex:1;" />
+        <!-- mesmo motivo do cabeçalho: no celular o espaçador vira a quebra que joga o
+             seletor de período para a fileira de baixo, inteiro -->
+        <div class="r-break-line" style="flex:1;" />
 
         <div style="display:flex;align-items:center;gap:4px;background:var(--c-bg-deepest);border:1px solid var(--c-surface-1);border-radius:10px;padding:4px;">
           <button
-            v-for="p in periodos" :key="p.value"
+            v-for="p in periodos" :key="p.value" class="r-tap"
             :style="{ background: periodo === p.value ? 'var(--c-surface-2)' : 'transparent', border: 'none', color: periodo === p.value ? 'var(--c-text)' : 'var(--c-text-faint)', fontFamily: 'inherit', fontSize: '11.5px', fontWeight: 700, padding: '5px 10px', borderRadius: '7px', cursor: 'pointer' }"
             @click="periodo = p.value"
           >{{ p.label }}</button>
@@ -281,10 +297,12 @@ function estiloCard(c: Criativo) {
 
       <div style="font-size:11px;color:var(--c-text-faint);margin-bottom:16px;">{{ criativos.length }} criativo{{ criativos.length === 1 ? '' : 's' }} no total</div>
 
-      <div v-if="arquivadoAgora" style="background:var(--c-surface-1);border:1px solid var(--c-surface-3);border-radius:10px;padding:9px 12px;font-size:12px;margin-bottom:14px;display:flex;align-items:center;gap:10px;">
-        <span>⛔ <strong>{{ arquivadoAgora }}</strong> foi reprovado e saiu da biblioteca.</span>
-        <button style="background:none;border:none;color:var(--c-text-secondary);font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;text-decoration:underline;" @click="filtro = 'reprovado'; arquivadoAgora = ''">Ver reprovados</button>
-        <button style="margin-left:auto;background:none;border:none;color:var(--c-text-faint);cursor:pointer;font-size:15px;" @click="arquivadoAgora = ''">×</button>
+      <!-- r-wrap: a frase cresce com o nome do criativo e, sem quebra, em 360px ela
+           espremia o "Ver reprovados" em duas linhas e o × virava um alvo de ~15px -->
+      <div v-if="arquivadoAgora" class="r-wrap" style="background:var(--c-surface-1);border:1px solid var(--c-surface-3);border-radius:10px;padding:9px 12px;font-size:12px;margin-bottom:14px;display:flex;align-items:center;gap:10px;">
+        <span class="r-min0">⛔ <strong>{{ arquivadoAgora }}</strong> foi reprovado e saiu da biblioteca.</span>
+        <button class="r-tap" style="background:none;border:none;color:var(--c-text-secondary);font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;text-decoration:underline;" @click="filtro = 'reprovado'; arquivadoAgora = ''">Ver reprovados</button>
+        <button class="r-tap" style="margin-left:auto;background:none;border:none;color:var(--c-text-faint);cursor:pointer;font-size:15px;" @click="arquivadoAgora = ''">×</button>
       </div>
 
       <div v-if="filtro === 'reprovado'" style="background:rgba(255,77,77,.06);border:1px solid rgba(255,77,77,.25);border-radius:10px;padding:10px 12px;font-size:12px;color:var(--c-text-secondary);margin-bottom:16px;line-height:1.5;">
@@ -298,8 +316,11 @@ function estiloCard(c: Criativo) {
         <strong>Criativo reprovado é recusado na criação de anúncio</strong>, inclusive quando quem pede é a IA.
       </div>
 
+      <!-- r-xs-pad-sm: 22px de respiro em volta do ícone numa tela onde o que falta é
+           altura — em ≤480 a área de soltar arquivo cede quase metade disso -->
       <label
         v-if="filtro !== 'reprovado'"
+        class="r-xs-pad-sm"
         :style="`display:block;border:1.5px dashed ${arrastando ? 'var(--accent)' : 'var(--c-surface-3)'};border-radius:12px;padding:22px;text-align:center;cursor:pointer;margin-bottom:18px;background:${arrastando ? 'var(--c-surface-1)' : 'var(--c-bg-deepest)'};transition:background .12s,border-color .12s;`"
         @dragenter.prevent="arrastando++"
         @dragover.prevent
@@ -331,24 +352,38 @@ function estiloCard(c: Criativo) {
                 : 'Nenhum criativo validado.' }}
       </div>
 
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(250px,100%),1fr));gap:14px;">
+      <!--
+        Segue auto-FILL (galeria: a peça mantém o tamanho em vez de esticar para preencher
+        a fileira quando o filtro devolve poucas). O que muda é o mínimo no celular: com
+        250px a faixa de ~470–820px caía para UMA coluna de ~450px, uma miniatura gigante
+        por rolagem de tela — o --r-min do celular está na folha de estilo do próprio arquivo.
+      -->
+      <div class="grade-criativos r-grid-fill" style="--r-min:250px;gap:14px;">
         <div v-for="c in visiveis" :key="c.id" :style="estiloCard(c)">
+          <!--
+            A miniatura quadrada gasta em ALTURA toda a largura do card: em 360px são 312px
+            por peça, e a biblioteca de ~100 criativos virava dezenas de telas de rolagem —
+            em ≤480 ela passa a 4/3. O lazy/async é pelo mesmo motivo: a src é o arquivo
+            ORIGINAL (até 30 MB cada), e sem ele o celular baixa e decodifica todos de uma vez.
+          -->
           <img
-            :src="apiOrigin + c.url" :alt="c.name"
-            :style="`width:100%;aspect-ratio:1;object-fit:cover;background:var(--c-bg-deep);${c.status === 'reprovado' ? 'filter:grayscale(.85);opacity:.6;' : ''}`"
+            :src="apiOrigin + c.url" :alt="c.name" class="r-aspect"
+            loading="lazy" decoding="async"
+            :style="`--r-xs-aspect:4/3;width:100%;object-fit:cover;background:var(--c-bg-deep);${c.status === 'reprovado' ? 'filter:grayscale(.85);opacity:.6;' : ''}`"
           >
           <div style="padding:10px 12px;display:flex;flex-direction:column;gap:8px;">
             <div style="display:flex;align-items:center;gap:6px;">
               <strong style="font-size:13px;">{{ c.name }}</strong>
               <span :style="{ fontSize: '10.5px', fontWeight: 800, color: selo(c).cor }">{{ selo(c).icone }} {{ selo(c).rotulo }}</span>
-              <button title="Apagar" style="margin-left:auto;background:none;border:none;color:var(--c-text-faint);cursor:pointer;font-size:15px;" @click="apagar(c)">×</button>
+              <!-- ação destrutiva com alvo de ~18x20px: no dedo erra-se, e errar aqui apaga -->
+              <button title="Apagar" class="r-tap" style="margin-left:auto;background:none;border:none;color:var(--c-text-faint);cursor:pointer;font-size:15px;" @click="apagar(c)">×</button>
             </div>
 
             <!-- Veredito. Três botões e não um menu: a decisão é de um clique e precisa
                  ser lida sem abrir nada. -->
             <div style="display:flex;gap:4px;background:var(--c-bg-deep);border-radius:9px;padding:3px;">
               <button
-                v-for="s in ORDEM_SELOS" :key="s"
+                v-for="s in ORDEM_SELOS" :key="s" class="r-tap-h"
                 :title="s === 'reprovado' ? 'Não poderá ser usado em anúncio novo' : s === 'testando' && subiu(c) === false ? 'Esta peça ainda não virou anúncio — só entra em teste quando subir' : ''"
                 :style="{ flex: 1, background: c.status === s ? selo(c).cor : 'transparent', color: c.status === s ? 'var(--c-on-accent)' : 'var(--c-text-faint)', border: 'none', borderRadius: '7px', padding: '5px 4px', fontFamily: 'inherit', fontSize: '10.5px', fontWeight: 800, cursor: 'pointer' }"
                 @click="definirStatus(c, s)"
@@ -392,3 +427,18 @@ function estiloCard(c: Criativo) {
     </div>
   </div>
 </template>
+
+<style scoped>
+/*
+  O mínimo da grade só muda no celular. Com os 250px do desktop, a faixa de ~470px a 820px
+  (celular deitado, tablet em pé) não comportava a segunda coluna e mostrava uma peça por
+  fileira ocupando a tela inteira; com 210px ela abre duas colunas de ~220px, que ainda
+  cabem os três botões do veredito. Abaixo disso continua UMA coluna de propósito: o card
+  não é só miniatura, tem campo de texto e o trio de botões, que a 160px ficam inutilizáveis.
+*/
+@media (max-width: 820px) {
+  .grade-criativos {
+    --r-min: 210px !important;
+  }
+}
+</style>

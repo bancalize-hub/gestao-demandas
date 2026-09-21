@@ -305,6 +305,21 @@ function mostrarTodas() {
 const colunas = computed(() => COLUNAS.filter(c => !escondidas.value.includes(c.key)))
 const editorAberto = ref(false)
 
+/*
+  A explicação de cada métrica morava só no `title=`, que no dedo NÃO existe: nem toque
+  longo, nem hover. Num aparelho é onde mais falta — a coluna se chama "CPL real" e não há
+  como descobrir o que é. Tocar no cabeçalho abre a explicação numa faixa no rodapé.
+*/
+const dica = ref('')
+let dicaTimer: ReturnType<typeof setTimeout> | undefined
+function mostrarDica(texto?: string) {
+  if (! texto) { return }
+  dica.value = texto
+  clearTimeout(dicaTimer)
+  dicaTimer = setTimeout(() => { dica.value = '' }, 6000)
+}
+onBeforeUnmount(() => clearTimeout(dicaTimer))
+
 // ------------------------------------------------------------- as células ---
 interface Celula { txt: string; sub?: string | null; cor?: string; forte?: boolean }
 
@@ -459,8 +474,16 @@ const rodapeSemAtrib = computed(() => semAtribuicao.value
 
 <template>
   <div style="flex:1;min-width:0;background:var(--c-bg-deep);display:flex;flex-direction:column;overflow:hidden;">
-    <!-- cabeçalho -->
-    <div class="r-wrap" style="padding:16px clamp(12px,4vw,50px);border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;gap:12px;flex-shrink:0;">
+    <!--
+      cabeçalho
+
+      A margem lateral vira `max(...)` nas quatro faixas desta tela (cabeçalho, controles,
+      avisos e tabela): a partir de ~1900px ela cresce sozinha e segura o conteúdo em
+      1800px centralizados. Sem isso, em 2560px o nome da campanha ficava na borda
+      esquerda e "Custo/venda" na direita, e o olho perdia a linha entre os dois. 1800px é
+      a largura natural das 21 colunas — um teto menor faria a tabela rolar no desktop.
+    -->
+    <div class="r-wrap" style="padding:16px max(clamp(12px,4vw,50px), calc((100% - 1800px) / 2));border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;gap:12px;flex-shrink:0;">
       <div style="width:34px;height:34px;border-radius:10px;background:var(--accent);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-ink)" stroke-width="1.9"><path d="M3 11v2a1 1 0 0 0 1 1h2v4h2v-4l10 4.5v-15L8 8H4a1 1 0 0 0-1 1Z" stroke-linecap="round" stroke-linejoin="round" /></svg>
       </div>
@@ -468,71 +491,101 @@ const rodapeSemAtrib = computed(() => semAtribuicao.value
         <div style="font-weight:800;font-size:15px;">Gerenciador de anúncios</div>
         <div style="font-size:12px;color:var(--c-text-muted);">Campanhas do Facebook Ads cruzadas com os leads reais do CRM</div>
       </div>
-      <div style="flex:1;" />
-      <NuxtLink to="/marketing/memoria" style="text-decoration:none;background:var(--c-surface-2);color:var(--c-text-secondary);font-size:12.5px;font-weight:700;padding:8px 13px;border-radius:9px;">🧠 Memória</NuxtLink>
-      <NuxtLink to="/marketing/criativos" style="text-decoration:none;background:var(--c-surface-2);color:var(--c-text-secondary);font-size:12.5px;font-weight:700;padding:8px 13px;border-radius:9px;">🖼️ Criativos</NuxtLink>
-      <NuxtLink to="/marketing/otimizacao" style="text-decoration:none;background:var(--c-surface-2);color:var(--c-text-secondary);font-size:12.5px;font-weight:700;padding:8px 13px;border-radius:9px;">🎯 Otimização</NuxtLink>
+      <!-- o espaçador vira a quebra de linha no celular: solto na barra que quebra, ele abria um buraco e desalinhava o resto -->
+      <div class="r-break-line" style="flex:1;" />
+      <!--
+        Os três atalhos somam ~330px e não cabiam nos 331px úteis de um 360px: o cabeçalho
+        quebrava em três fileiras e empurrava a tabela para fora da tela. Viram uma tira que
+        o dedo arrasta, e cada um passa a ter alvo de 44px.
+      -->
+      <div class="r-swipe r-scroll-hint r-min0" style="--r-hint-bg:var(--c-bg-deep);display:flex;align-items:center;gap:8px;">
+        <NuxtLink to="/marketing/memoria" class="r-tap" style="text-decoration:none;background:var(--c-surface-2);color:var(--c-text-secondary);font-size:12.5px;font-weight:700;padding:8px 13px;border-radius:9px;">🧠 Memória</NuxtLink>
+        <NuxtLink to="/marketing/criativos" class="r-tap" style="text-decoration:none;background:var(--c-surface-2);color:var(--c-text-secondary);font-size:12.5px;font-weight:700;padding:8px 13px;border-radius:9px;">🖼️ Criativos</NuxtLink>
+        <NuxtLink to="/marketing/otimizacao" class="r-tap" style="text-decoration:none;background:var(--c-surface-2);color:var(--c-text-secondary);font-size:12.5px;font-weight:700;padding:8px 13px;border-radius:9px;">🎯 Otimização</NuxtLink>
+      </div>
     </div>
 
     <!-- controles: período, calendário e editor de colunas -->
-    <div style="padding:10px clamp(12px,4vw,50px);border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;gap:6px;flex-shrink:0;flex-wrap:wrap;">
-      <button
-        v-for="p in periodos" :key="p.value"
-        :style="{ background: periodo === p.value ? 'var(--c-surface-0)' : 'transparent', border: '1px solid ' + (periodo === p.value ? 'var(--c-surface-3)' : 'transparent'), color: periodo === p.value ? 'var(--c-text)' : 'var(--c-text-faint)', fontFamily: 'inherit', fontSize: '11.5px', fontWeight: 700, padding: '5px 11px', borderRadius: '7px', cursor: 'pointer' }"
-        @click="periodo = p.value"
-      >{{ p.label }}</button>
-      <button
-        :style="{ background: custom ? 'var(--c-surface-0)' : 'transparent', border: '1px solid ' + (custom ? 'var(--c-surface-3)' : 'transparent'), color: custom ? 'var(--c-text)' : 'var(--c-text-faint)', fontFamily: 'inherit', fontSize: '11.5px', fontWeight: 700, padding: '5px 11px', borderRadius: '7px', cursor: 'pointer' }"
-        title="Escolher as datas no calendário"
-        @click="periodo = 'custom'"
-      >📅 Datas</button>
+    <div style="padding:10px max(clamp(12px,4vw,50px), calc((100% - 1800px) / 2));border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;gap:6px;flex-shrink:0;flex-wrap:wrap;">
+      <!--
+        Os seis botões de período eram alvos de ~25px empilhando em três fileiras no
+        celular. Agrupados, viram uma tira que rola com o dedo, e o r-tap dá os 44px
+        mínimos de toque sem mexer no desktop.
+      -->
+      <!-- `r-scroll-hint` não é enfeite: o `r-swipe` esconde a barra de rolagem, e sem a
+           sombra de "tem mais para o lado" o botão 📅 Datas — único caminho para o período
+           personalizado — some da tela em 360px sem deixar pista de que existe. -->
+      <div class="r-swipe r-scroll-hint r-min0" style="--r-hint-bg:var(--c-bg-deep);display:flex;align-items:center;gap:6px;">
+        <button
+          v-for="p in periodos" :key="p.value"
+          class="r-tap"
+          :style="{ background: periodo === p.value ? 'var(--c-surface-0)' : 'transparent', border: '1px solid ' + (periodo === p.value ? 'var(--c-surface-3)' : 'transparent'), color: periodo === p.value ? 'var(--c-text)' : 'var(--c-text-faint)', fontFamily: 'inherit', fontSize: '11.5px', fontWeight: 700, padding: '5px 11px', borderRadius: '7px', cursor: 'pointer' }"
+          @click="periodo = p.value"
+        >{{ p.label }}</button>
+        <button
+          class="r-tap"
+          :style="{ background: custom ? 'var(--c-surface-0)' : 'transparent', border: '1px solid ' + (custom ? 'var(--c-surface-3)' : 'transparent'), color: custom ? 'var(--c-text)' : 'var(--c-text-faint)', fontFamily: 'inherit', fontSize: '11.5px', fontWeight: 700, padding: '5px 11px', borderRadius: '7px', cursor: 'pointer' }"
+          title="Escolher as datas no calendário"
+          @click="periodo = 'custom'"
+        >📅 Datas</button>
+      </div>
 
-      <div style="width:1px;height:18px;background:var(--c-surface-2);margin:0 4px;" />
+      <!-- r-hide: numa barra que quebra linha, o divisor caía sozinho no começo de uma fileira e virava um risco solto -->
+      <div class="r-hide" style="width:1px;height:18px;background:var(--c-surface-2);margin:0 4px;" />
       <button
+        class="r-tap"
         :style="{ background: soAtivas ? 'var(--c-surface-0)' : 'transparent', border: '1px solid ' + (soAtivas ? 'var(--c-surface-3)' : 'transparent'), color: soAtivas ? 'var(--c-text)' : 'var(--c-text-faint)', fontFamily: 'inherit', fontSize: '11.5px', fontWeight: 700, padding: '5px 11px', borderRadius: '7px', cursor: 'pointer' }"
         :title="soAtivas ? 'Mostrando só as campanhas no ar — clique para ver todas' : `Esconder as pausadas (${ativas} de ${campanhas.length} no ar)`"
         @click="soAtivas = !soAtivas"
       >🟢 Só ativas</button>
 
       <!-- calendário: as duas pontas entram no cálculo -->
-      <div v-if="custom" style="display:flex;align-items:center;gap:6px;background:var(--c-surface-0);border:1px solid var(--c-surface-3);border-radius:8px;padding:3px 8px;">
-        <input v-model="dataDe" type="date" style="background:transparent;border:none;color:var(--c-text);font-family:inherit;font-size:11.5px;outline:none;color-scheme:dark light;">
+      <!-- no celular a fonte dos dois campos vira 16px (regra global anti-zoom) e o par não cabia mais lado a lado: com o r-wrap ele empilha em vez de vazar -->
+      <div v-if="custom" class="r-wrap r-min0" style="display:flex;align-items:center;gap:6px;background:var(--c-surface-0);border:1px solid var(--c-surface-3);border-radius:8px;padding:3px 8px;">
+        <input v-model="dataDe" type="date" class="r-tap-h" style="background:transparent;border:none;color:var(--c-text);font-family:inherit;font-size:11.5px;outline:none;color-scheme:dark light;">
         <span style="font-size:11px;color:var(--c-text-faint);">até</span>
-        <input v-model="dataAte" type="date" style="background:transparent;border:none;color:var(--c-text);font-family:inherit;font-size:11.5px;outline:none;color-scheme:dark light;">
+        <input v-model="dataAte" type="date" class="r-tap-h" style="background:transparent;border:none;color:var(--c-text);font-family:inherit;font-size:11.5px;outline:none;color-scheme:dark light;">
       </div>
       <span v-if="custom && !intervaloPronto" style="font-size:11px;color:var(--c-warn-soft);">escolha as duas datas</span>
 
-      <div style="flex:1;" />
+      <!-- o espaçador vira a quebra de linha: ao quebrar, ele engolia o resto da fileira e jogava "⚙ Colunas" e "↻ Atualizar" para uma linha própria -->
+      <div class="r-break-line" style="flex:1;" />
 
-      <template v-if="Object.keys(metricasMap).length">
+      <!-- os três pedaços do resumo eram itens soltos da barra: quebravam separados e deixavam um "·" órfão no fim de uma fileira -->
+      <div v-if="Object.keys(metricasMap).length" style="display:flex;align-items:center;gap:6px;min-width:0;">
         <span style="font-size:11px;color:var(--c-text-faint);">Gasto: <b style="color:var(--c-text);">{{ brl(gastoTotal()) }}</b></span>
         <span style="font-size:11px;color:var(--c-text-faint);">·</span>
         <span style="font-size:11px;color:var(--c-text-faint);">{{ ativas }} ativas de {{ campanhas.length }}</span>
-        <span style="font-size:11px;color:var(--c-text-faint);">·</span>
-      </template>
+        <span class="r-hide" style="font-size:11px;color:var(--c-text-faint);">·</span>
+      </div>
 
       <!-- editor de colunas -->
       <div style="position:relative;">
         <button
+          class="r-tap"
           :style="{ background: escondidas.length ? 'var(--c-surface-0)' : 'transparent', border: '1px solid var(--c-surface-3)', color: escondidas.length ? 'var(--c-text)' : 'var(--c-text-faint)', fontFamily: 'inherit', fontSize: '11.5px', fontWeight: 700, padding: '5px 11px', borderRadius: '7px', cursor: 'pointer' }"
           title="Escolher quais colunas aparecem na tabela"
           @click="editorAberto = !editorAberto"
-        >⚙ Colunas<span v-if="escondidas.length"> ({{ colunas.length }}/{{ COLUNAS.length }})</span></button>
+        ><!-- espaço RÍGIDO: o `.r-tap` torna o botão inline-flex no celular, cada filho vira
+             item de flex e o espaço comum no começo do <span> é descartado — o rótulo lia
+             "⚙ Colunas(17/21)" justo no estado em que ele precisa ser entendido -->⚙ Colunas<span v-if="escondidas.length">&nbsp;({{ colunas.length }}/{{ COLUNAS.length }})</span></button>
 
         <template v-if="editorAberto">
           <div style="position:fixed;inset:0;z-index:60;" @click="editorAberto = false" />
-          <div style="position:absolute;right:0;top:calc(100% + 6px);z-index:61;width:260px;max-height:70vh;overflow-y:auto;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:12px;box-shadow:0 16px 44px rgba(0,0,0,.35);padding:10px;">
+          <div class="mk-col-pop" style="position:absolute;right:0;top:calc(100% + 6px);z-index:61;width:260px;max-height:70dvh;overflow-y:auto;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:12px;box-shadow:0 16px 44px rgba(0,0,0,.35);padding:10px;">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
               <div style="font-size:12px;font-weight:800;">Colunas da tabela</div>
               <div style="flex:1;" />
-              <button style="background:none;border:none;color:var(--accent);font-family:inherit;font-size:11px;font-weight:700;cursor:pointer;padding:0;" @click="mostrarTodas">Mostrar todas</button>
+              <button class="r-tap" style="background:none;border:none;color:var(--accent);font-family:inherit;font-size:11px;font-weight:700;cursor:pointer;padding:0;" @click="mostrarTodas">Mostrar todas</button>
             </div>
             <template v-for="g in (['campanha', 'facebook', 'crm'] as const)" :key="g">
               <div style="font-size:10px;font-weight:700;color:var(--c-text-faint);text-transform:uppercase;letter-spacing:.4px;margin:9px 0 4px;">
                 {{ g === 'campanha' ? 'A campanha' : g === 'facebook' ? 'Facebook' : 'CRM (leads reais)' }}
               </div>
+              <!-- r-tap-h e não r-tap: a linha precisa continuar sendo uma linha de lista (o r-tap a tornaria inline-flex centralizada); os 22px de altura eram loteria no dedo -->
               <label
                 v-for="col in COLUNAS.filter(c => c.grupo === g)" :key="col.key"
+                class="r-tap-h"
                 :style="{ display: 'flex', alignItems: 'center', gap: '8px', padding: '5px 6px', borderRadius: '7px', fontSize: '12px', cursor: col.fixa ? 'default' : 'pointer', opacity: col.fixa ? .5 : 1 }"
                 :title="col.fixa ? 'Esta coluna não pode ser escondida' : col.dica"
               >
@@ -545,16 +598,17 @@ const rodapeSemAtrib = computed(() => semAtribuicao.value
       </div>
 
       <button
+        class="r-tap"
         :style="{ background: 'transparent', border: '1px solid var(--c-surface-3)', color: 'var(--c-text-faint)', fontFamily: 'inherit', fontSize: '11.5px', fontWeight: 700, padding: '5px 10px', borderRadius: '7px', cursor: loadingPainel ? 'default' : 'pointer', opacity: loadingPainel ? .5 : 1 }"
         :disabled="loadingPainel"
         @click="carregarPainel"
       >{{ loadingPainel ? '…' : '↻ Atualizar' }}</button>
     </div>
 
-    <div v-if="erroPainel" style="padding:11px clamp(12px,4vw,50px);background:rgba(255,170,0,.12);border-bottom:1px solid rgba(255,170,0,.35);font-size:12.5px;font-weight:600;color:var(--c-warn-soft);flex-shrink:0;">
+    <div v-if="erroPainel" style="padding:11px max(clamp(12px,4vw,50px), calc((100% - 1800px) / 2));background:rgba(255,170,0,.12);border-bottom:1px solid rgba(255,170,0,.35);font-size:12.5px;font-weight:600;color:var(--c-warn-soft);flex-shrink:0;">
       ⚠ O Facebook não respondeu: {{ erroPainel }}
     </div>
-    <div v-if="erroStats" style="padding:11px clamp(12px,4vw,50px);background:rgba(255,170,0,.12);border-bottom:1px solid rgba(255,170,0,.35);font-size:12.5px;font-weight:600;color:var(--c-warn-soft);flex-shrink:0;">
+    <div v-if="erroStats" style="padding:11px max(clamp(12px,4vw,50px), calc((100% - 1800px) / 2));background:rgba(255,170,0,.12);border-bottom:1px solid rgba(255,170,0,.35);font-size:12.5px;font-weight:600;color:var(--c-warn-soft);flex-shrink:0;">
       ⚠ Leads, reuniões e vendas fora do ar: {{ erroStats }}
     </div>
 
@@ -567,7 +621,7 @@ const rodapeSemAtrib = computed(() => semAtribuicao.value
     </div>
 
     <!-- tabela -->
-    <div v-else style="flex:1;overflow:auto;min-height:0;">
+    <div v-else class="r-table-wrap" style="flex:1;overflow:auto;min-height:0;">
       <!--
         A margem lateral vai neste invólucro, não no `padding` do container que rola:
         com a tabela mais larga que a tela, o padding-direito de um elemento de scroll é
@@ -575,27 +629,40 @@ const rodapeSemAtrib = computed(() => semAtribuicao.value
         Sendo `inline-block`, ele encolhe até o tamanho da tabela e leva as duas margens
         junto; o `min-width:100%` mantém o recuo mesmo quando a tabela é estreita.
       -->
-      <div style="display:inline-block;min-width:100%;box-sizing:border-box;padding:0 clamp(12px,4vw,50px);">
-        <table style="width:100%;border-collapse:collapse;font-size:12.5px;white-space:nowrap;">
+      <div style="display:inline-block;min-width:100%;box-sizing:border-box;padding:0 max(clamp(12px,4vw,50px), calc((100% - 1800px) / 2));">
+        <!--
+          São 21 colunas (~1800px): a tabela rola no eixo X em qualquer tela menor que isso,
+          e a coluna "Campanha" rolava junto — da terceira coluna em diante não dava mais
+          para saber de qual campanha era o número. O r-table-sticky-1 prende a primeira
+          coluna; o r-table-sticky-head prende o cabeçalho.
+
+          Os dois exigem `border-collapse:separate`: com `collapse` o Safari ignora o
+          `position:sticky` de th/td e não pinta o fundo — era por isso que as linhas
+          passavam por baixo do cabeçalho e do TOTAL no iPhone. Em modelo separado a borda
+          declarada no <tr> não é desenhada, então ela mora agora em cada célula.
+        -->
+        <table class="mk-table r-table-sticky-head r-table-sticky-1" style="width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px;white-space:nowrap;--r-sticky-bg:var(--c-bg-deep);">
         <thead>
-          <tr style="position:sticky;top:0;z-index:2;background:var(--c-bg-deepest);border-bottom:1px solid var(--c-surface-1);">
+          <tr style="background:var(--c-bg-deepest);--r-sticky-bg:var(--c-bg-deepest);">
             <th
               v-for="col in colunas" :key="col.key"
-              :style="{ padding: '10px 12px', textAlign: col.key === 'campanha' ? 'left' : col.key === 'status' ? 'center' : 'right', fontSize: '10.5px', fontWeight: 700, whiteSpace: 'nowrap', color: col.cor || 'var(--c-text-faint)' }"
+              :style="{ padding: '10px 12px', textAlign: col.key === 'campanha' ? 'left' : col.key === 'status' ? 'center' : 'right', fontSize: '10.5px', fontWeight: 700, whiteSpace: 'nowrap', color: col.cor || 'var(--c-text-faint)', borderBottom: '1px solid var(--c-surface-1)', cursor: col.dica ? 'help' : 'default' }"
               :title="col.dica"
-            >{{ col.label }}</th>
+              @click="mostrarDica(col.dica)"
+            >{{ col.label }}<span v-if="col.dica" class="r-only-mobile" style="opacity:.55;margin-left:3px;">ⓘ</span></th>
           </tr>
         </thead>
         <tbody>
           <tr
             v-for="{ campanha: c, cels } in grade" :key="c.id"
-            style="border-bottom:1px solid var(--c-surface-1);transition:background .1s;"
+            class="mk-row"
+            style="transition:background .1s;"
             @mouseenter="e => (e.currentTarget as HTMLElement).style.background = 'var(--c-surface-0)'"
             @mouseleave="e => (e.currentTarget as HTMLElement).style.background = ''"
           >
             <template v-for="col in colunas" :key="col.key">
               <!-- nome + objetivo -->
-              <td v-if="col.key === 'campanha'" style="padding:11px 12px;vertical-align:middle;">
+              <td v-if="col.key === 'campanha'" style="padding:11px 12px;vertical-align:middle;border-bottom:1px solid var(--c-surface-1);">
                 <div style="display:flex;align-items:center;gap:10px;">
                   <img
                     v-if="c.miniatura" :src="c.miniatura" alt="" loading="lazy"
@@ -603,11 +670,14 @@ const rodapeSemAtrib = computed(() => semAtribuicao.value
                     @error="e => ((e.target as HTMLImageElement).style.display = 'none')"
                   >
                   <div style="min-width:0;">
-                    <div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px;">{{ c.name }}</div>
+                    <!-- 280px fixos + miniatura + paddings pediam ~350px: em 360px a primeira coluna tomava a tela toda. O teto agora encolhe junto (52vw) e as reticências continuam. -->
+                    <div class="r-clamp-w mk-nome" style="--r-w:280px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ c.name }}</div>
                     <div style="display:flex;align-items:center;gap:7px;margin-top:2px;">
                       <span v-if="objTxt(c.objective)" style="font-size:10.5px;color:var(--c-text-faint);">{{ objTxt(c.objective) }}</span>
+                      <!-- r-tap-inline: duplicar cria campanha de verdade na conta e o alvo tinha ~14px; a área clicável cresce por ::after, sem esticar a altura da linha -->
                       <button
                         :disabled="duplicando[c.id]"
+                        class="r-tap-inline"
                         title="Duplicar a campanha com os conjuntos e anúncios. A cópia nasce pausada."
                         style="background:none;border:none;color:var(--c-text-faint);font-family:inherit;font-size:10.5px;font-weight:700;cursor:pointer;padding:0;text-decoration:underline;text-underline-offset:2px;"
                         @click="duplicar(c)"
@@ -618,9 +688,10 @@ const rodapeSemAtrib = computed(() => semAtribuicao.value
               </td>
 
               <!-- status (clicável: liga/desliga) -->
-              <td v-else-if="col.key === 'status'" style="padding:11px 12px;text-align:center;vertical-align:middle;">
+              <td v-else-if="col.key === 'status'" style="padding:11px 12px;text-align:center;vertical-align:middle;border-bottom:1px solid var(--c-surface-1);">
                 <button
                   :disabled="salvandoSts[c.id]"
+                  class="r-tap"
                   :title="isAtiva(c) ? 'Clique para pausar' : 'Clique para ativar'"
                   :style="{ background: 'transparent', border: '1px solid ' + statusCor(c), color: statusCor(c), fontFamily: 'inherit', fontSize: '10.5px', fontWeight: 700, padding: '3px 9px', borderRadius: '6px', cursor: salvandoSts[c.id] ? 'default' : 'pointer', opacity: salvandoSts[c.id] ? .5 : 1 }"
                   @click="toggleSts(c)"
@@ -628,19 +699,22 @@ const rodapeSemAtrib = computed(() => semAtribuicao.value
               </td>
 
               <!-- orçamento (clicável: edita) -->
-              <td v-else-if="col.key === 'orcamento'" style="padding:11px 12px;text-align:right;vertical-align:middle;white-space:nowrap;">
+              <td v-else-if="col.key === 'orcamento'" style="padding:11px 12px;text-align:right;vertical-align:middle;white-space:nowrap;border-bottom:1px solid var(--c-surface-1);">
                 <div v-if="c.id in editandoOrc" style="display:flex;align-items:center;gap:4px;justify-content:flex-end;">
                   <span style="font-size:11px;color:var(--c-text-faint);">R$</span>
                   <input
                     v-model="editandoOrc[c.id]" type="text" inputmode="decimal"
+                    class="mk-orc-input"
                     style="width:72px;background:var(--c-surface-0);border:1px solid var(--c-ai);border-radius:5px;padding:3px 6px;color:var(--c-text);font-family:inherit;font-size:12px;outline:none;text-align:right;"
                     @keydown.enter="salvarOrc(c)" @keydown.escape="delete editandoOrc[c.id]"
                   >
-                  <button :disabled="salvandoOrc[c.id]" style="background:var(--c-ai);border:none;color:var(--c-on-accent);font-family:inherit;font-size:11px;font-weight:700;padding:3px 7px;border-radius:5px;cursor:pointer;" @click="salvarOrc(c)">{{ salvandoOrc[c.id] ? '…' : 'OK' }}</button>
-                  <button style="background:none;border:none;color:var(--c-text-faint);font-family:inherit;font-size:12px;cursor:pointer;padding:2px 4px;" @click="delete editandoOrc[c.id]">✕</button>
+                  <button :disabled="salvandoOrc[c.id]" class="r-tap" style="background:var(--c-ai);border:none;color:var(--c-on-accent);font-family:inherit;font-size:11px;font-weight:700;padding:3px 7px;border-radius:5px;cursor:pointer;" @click="salvarOrc(c)">{{ salvandoOrc[c.id] ? '…' : 'OK' }}</button>
+                  <!-- OK e ✕ ficam a 4px um do outro: com alvo de ~19px, confirmar e cancelar a verba eram o mesmo toque -->
+                  <button class="r-tap" style="background:none;border:none;color:var(--c-text-faint);font-family:inherit;font-size:12px;cursor:pointer;padding:2px 4px;" @click="delete editandoOrc[c.id]">✕</button>
                 </div>
                 <div
                   v-else-if="orcDiario(c) && orcEditavel(c)"
+                  class="r-tap"
                   :title="c.orcamento_nivel === 'conjunto' ? 'Orçamento do conjunto — clique para editar' : 'Clique para editar'"
                   style="cursor:pointer;display:inline-flex;align-items:center;gap:5px;padding:3px 7px;border-radius:5px;border:1px solid transparent;"
                   @mouseenter="e => (e.currentTarget as HTMLElement).style.borderColor = 'var(--c-surface-3)'"
@@ -658,7 +732,7 @@ const rodapeSemAtrib = computed(() => semAtribuicao.value
               </td>
 
               <!-- todo o resto: número, com a taxa embaixo quando houver -->
-              <td v-else style="padding:11px 12px;text-align:right;vertical-align:middle;font-variant-numeric:tabular-nums;">
+              <td v-else style="padding:11px 12px;text-align:right;vertical-align:middle;font-variant-numeric:tabular-nums;border-bottom:1px solid var(--c-surface-1);">
                 <span :style="{ color: cels[col.key].cor, fontWeight: cels[col.key].forte ? 700 : 400 }">{{ cels[col.key].txt }}</span>
                 <div v-if="cels[col.key].sub" style="font-size:10px;color:var(--c-text-faint);margin-top:1px;">{{ cels[col.key].sub }}</div>
               </td>
@@ -666,10 +740,10 @@ const rodapeSemAtrib = computed(() => semAtribuicao.value
           </tr>
 
           <!-- totais -->
-          <tr style="background:var(--c-bg-deepest);border-top:2px solid var(--c-surface-1);position:sticky;bottom:0;">
+          <tr class="mk-total" style="background:var(--c-bg-deepest);--r-sticky-bg:var(--c-bg-deepest);">
             <td
               v-for="col in colunas" :key="col.key"
-              :style="{ padding: '10px 12px', textAlign: col.key === 'campanha' ? 'left' : 'right', fontVariantNumeric: 'tabular-nums', fontSize: col.key === 'campanha' ? '11px' : '12.5px', fontWeight: 800, color: rodape[col.key].cor || 'var(--c-text)' }"
+              :style="{ padding: '10px 12px', textAlign: col.key === 'campanha' ? 'left' : 'right', fontVariantNumeric: 'tabular-nums', fontSize: col.key === 'campanha' ? '11px' : '12.5px', fontWeight: 800, color: rodape[col.key].cor || 'var(--c-text)', borderTop: '2px solid var(--c-surface-1)' }"
             >
               <template v-if="!['status', 'orcamento'].includes(col.key)">
                 {{ rodape[col.key].txt }}
@@ -679,10 +753,10 @@ const rodapeSemAtrib = computed(() => semAtribuicao.value
           </tr>
 
           <!-- leads sem campanha correspondente -->
-          <tr v-if="rodapeSemAtrib && semAtribuicao?.leads" style="background:var(--c-bg-deepest);border-top:1px solid var(--c-surface-1);">
+          <tr v-if="rodapeSemAtrib && semAtribuicao?.leads" style="background:var(--c-bg-deepest);--r-sticky-bg:var(--c-bg-deepest);">
             <td
               v-for="col in colunas" :key="col.key"
-              :style="{ padding: '10px 12px', textAlign: col.key === 'campanha' ? 'left' : 'right', fontVariantNumeric: 'tabular-nums', fontSize: col.key === 'campanha' ? '11px' : '12.5px', fontWeight: 700, color: rodapeSemAtrib[col.key].cor || 'var(--c-text)' }"
+              :style="{ padding: '10px 12px', textAlign: col.key === 'campanha' ? 'left' : 'right', fontVariantNumeric: 'tabular-nums', fontSize: col.key === 'campanha' ? '11px' : '12.5px', fontWeight: 700, color: rodapeSemAtrib[col.key].cor || 'var(--c-text)', borderTop: '1px solid var(--c-surface-1)' }"
               :title="col.key === 'campanha' ? 'Leads com anúncio que não corresponde a nenhuma campanha listada — campanha arquivada ou fora da lista' : undefined"
             >
               <template v-if="!['status', 'orcamento'].includes(col.key)">
@@ -694,10 +768,90 @@ const rodapeSemAtrib = computed(() => semAtribuicao.value
           </tbody>
         </table>
 
-        <div v-if="gastoForaDaLista() > 0.005" style="padding:10px 0;font-size:11px;color:var(--c-text-faint);white-space:normal;">
+        <!-- o invólucro tem a largura da TABELA (~1800px): sem teto, este aviso se esticava até lá e só era legível rolando a tela para o lado -->
+        <div v-if="gastoForaDaLista() > 0.005" style="padding:10px 0;font-size:11px;color:var(--c-text-faint);white-space:normal;max-width:min(640px,90vw);">
           Mais {{ brl(gastoForaDaLista()) }} gastos no período por campanhas que não estão na lista (arquivadas ou excluídas).
         </div>
       </div>
     </div>
+
+    <!-- Explicação da métrica no dedo: `r-above-nav` para não cair atrás da barra de
+         navegação do celular, `r-toast` para não passar da largura da tela. -->
+    <div
+      v-if="dica"
+      class="r-toast r-above-nav"
+      style="position:fixed;left:50%;transform:translateX(-50%);bottom:14px;z-index:70;max-width:min(520px,calc(100vw - 24px));background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:12px;box-shadow:0 14px 40px rgba(0,0,0,.4);padding:11px 14px;font-size:12.5px;line-height:1.45;color:var(--c-text-secondary);white-space:normal;cursor:pointer;"
+      @click="dica = ''"
+    >{{ dica }}</div>
   </div>
 </template>
+
+<style scoped>
+/*
+  O painel "⚙ Colunas" é `absolute` dentro do próprio botão. No celular a barra de
+  filtros quebra linha e joga esse botão para o começo de uma fileira nova: o `right:0`
+  abria os 260px para a esquerda e metade do painel ficava fora da tela, inalcançável
+  (a raiz da tela tem `overflow:hidden`, então não há rolagem de resgate).
+
+  Preso à JANELA ele volta a caber inteiro. O `.r-pop` sozinho não resolve aqui porque
+  os 10px dele seriam medidos a partir do botão, não da borda da tela.
+*/
+@media (max-width: 820px) {
+  .mk-col-pop {
+    position: fixed !important;
+    left: 10px !important;
+    right: 10px !important;
+    top: auto !important;
+    /* A barra de navegação do CRM vira barra INFERIOR no celular (58px + safe area) e não
+       tem z-index: com `bottom:12px` as últimas caixas de seleção do painel ficavam
+       desenhadas por cima dos botões do menu. `.r-above-nav` já calcula essa folga. */
+    bottom: calc(var(--r-bottom, 12px) + 58px + env(safe-area-inset-bottom, 0px)) !important;
+    width: auto !important;
+    max-width: calc(100vw - 20px) !important;
+    max-height: 70dvh !important;
+  }
+
+  /*
+    Os 72px do campo cabem "999,99" a 12px. No celular a regra global anti-zoom sobe a
+    fonte para 16px e "R$ 1.234,56" passava a ser cortado pela esquerda — quem edita a
+    verba deixava de ver o que estava digitando.
+  */
+  .mk-orc-input {
+    width: 112px !important;
+  }
+}
+
+/*
+  A coluna "Campanha" agora fica presa enquanto a tabela rola, ou seja, ocupa a tela o
+  tempo todo: com os 52vw do r-clamp-w ela levava 3/4 de um 360px e sobravam ~100px para
+  os vinte números. Aqui ele encurta mais, com as mesmas reticências.
+*/
+@media (max-width: 480px) {
+  .mk-nome {
+    max-width: 38vw !important;
+  }
+}
+
+/*
+  A linha TOTAL fica presa no rodapé da tabela. O `position:sticky` vivia no <tr>, que o
+  Safari ignora: as linhas de campanha passavam por cima do total. Aqui ele vai nas
+  células, que é onde funciona nos dois navegadores.
+*/
+.mk-total td {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  background: var(--c-bg-deepest);
+}
+
+/*
+  No desktop a linha inteira acende no hover, e a primeira coluna ganhou fundo opaco
+  próprio (é o que a mantém legível quando a tabela rola no eixo X) — sem isto ela
+  ficaria como o único pedaço apagado da linha sob o ponteiro.
+*/
+@media (min-width: 821px) {
+  .mk-table tr.mk-row:hover td:first-child {
+    background: var(--c-surface-0) !important;
+  }
+}
+</style>

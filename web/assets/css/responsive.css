@@ -277,13 +277,28 @@ html {
   campanha/empresa/número sai da tela e as 20 colunas de número viram anônimas.
   Precisa de fundo OPACO próprio, senão o conteúdo passa por baixo.
 */
-.r-table-sticky-1 th:first-child,
-.r-table-sticky-1 td:first-child,
 .r-sticky-col {
   position: sticky !important;
   left: 0 !important;
   z-index: 2 !important;
   background: var(--r-sticky-bg, var(--c-bg-deep)) !important;
+}
+
+/*
+  De 481px para cima. Prender a primeira coluna num celular estreito é o contrário de
+  ajudar: a coluna de nome da campanha come ~209px dos ~331px úteis de um 360px — 63% da
+  tela, o tempo todo, para as outras vinte colunas dividirem 122px. Pior no editor de
+  verba, que mede ~236px e nunca caberia no que sobra. Abaixo disso a primeira coluna
+  rola junto com as outras e a tela inteira volta a ser útil.
+*/
+@media (min-width: 481px) {
+  .r-table-sticky-1 th:first-child,
+  .r-table-sticky-1 td:first-child {
+    position: sticky !important;
+    left: 0 !important;
+    z-index: 2 !important;
+    background: var(--r-sticky-bg, var(--c-bg-deep)) !important;
+  }
 }
 
 /*
@@ -745,6 +760,37 @@ html {
   .r-only-mobile { display: none !important; }
 }
 
+/*
+  Teto de altura do modal SEM corte de largura: tela baixa não é exclusividade do celular
+  em pé. Celular deitado (852×393, 932×430) e janela curta no desktop passam de 820px de
+  LARGURA e ficavam sem o `max-height` do bloco ≤820 — cartão alto transbordava para fora
+  da tela, sem rolagem, com o ✕ e o botão de salvar fisicamente inalcançáveis.
+  Por isso a altura mora aqui fora; o `width: 100vw - 20px` continua sendo só do celular.
+*/
+.r-modal {
+  max-height: 88dvh;
+  overflow-y: auto;
+}
+
+/*
+  Esconde só na faixa em que as três colunas do chat realmente não cabem (rail 76 +
+  lista 340 + ficha 312 = 728px de cromo). De 1025px para cima sobra largura de verdade
+  para a conversa, e apagar a ficha ali tirava do ar coisa que funcionava: valor do
+  negócio, etapa, link do Meet, respostas rápidas e templates aprovados.
+*/
+@media (min-width: 821px) and (max-width: 1024px) {
+  .r-tablet-hide { display: none !important; }
+}
+
+/*
+  `min-width: 0` restrito ao tablet/notebook pequeno. No celular ele costuma ser o
+  contrário do que se quer: zera a largura hipotética do item flex, a linha deixa de
+  estourar e o pai com `flex-wrap` nunca quebra — o conteúdo é espremido em vez de descer.
+*/
+@media (min-width: 821px) and (max-width: 1200px) {
+  .r-tablet-min0 { min-width: 0 !important; }
+}
+
 /* ==========================================================================
    4. Corte md — ≤ 1200px (tablet deitado / notebook pequeno)
    ========================================================================== */
@@ -807,7 +853,15 @@ html {
     perde a linha e a grade fica com colunas ocas. `.r-page` já faz isso em qualquer
     largura; `.r-wide-cap` é para quem só precisa do teto no desktop grande.
   */
+  /*
+    `width:100%` não é decoração: num container `flex-direction:column` o eixo transversal
+    é o horizontal, e margem transversal `auto` CANCELA o `align-self:stretch` (Flexbox
+    §9.4). Sem a largura explícita, o item passa a ser dimensionado por `fit-content` e a
+    caixa encolhe até o conteúdo — foi assim que o composer do chat virou uma pílula de
+    ~470px centralizada no rodapé em 1920px.
+  */
   .r-wide-cap {
+    width: 100% !important;
     max-width: var(--r-page, 1440px) !important;
     margin-inline: auto !important;
   }

@@ -187,19 +187,23 @@ function remove() {
   <div style="flex:1;display:flex;flex-direction:column;min-width:0;background:var(--c-bg-deep);">
     <!-- ================= CARDS DAS LISTAS ================= -->
     <template v-if="vendo === null">
-      <div style="padding:22px clamp(12px,4vw,30px);display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--c-surface-1);flex-wrap:wrap;gap:10px;">
-        <div>
-          <div style="font-size:23px;font-weight:800;letter-spacing:-.3px;">Contatos</div>
-          <div style="font-size:13.5px;color:var(--c-text-muted);margin-top:3px;">{{ listas.length }} listas · {{ totalGeral }} contatos na agenda</div>
-        </div>
-        <div style="display:flex;gap:8px;">
-          <button style="background:var(--c-surface-2);border:none;color:var(--c-text);font-family:inherit;font-size:13px;font-weight:700;padding:9px 15px;border-radius:10px;cursor:pointer;" @click="novaLista">+ Lista vazia</button>
-          <button class="wabtn" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:13px;font-weight:700;padding:9px 15px;border-radius:10px;cursor:pointer;" @click="abrirImport">📄 Importar lista</button>
+      <!-- O teto de largura entra no MIOLO, nao no bloco: a borda de baixo precisa continuar
+           cruzando a tela inteira no ultrawide, mas titulo e botoes tem de alinhar com a grade. -->
+      <div style="padding:22px clamp(12px,4vw,30px);border-bottom:1px solid var(--c-surface-1);">
+        <div class="r-page" style="--r-page:1440px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+          <div>
+            <div style="font-size:23px;font-weight:800;letter-spacing:-.3px;">Contatos</div>
+            <div style="font-size:13.5px;color:var(--c-text-muted);margin-top:3px;">{{ listas.length }} listas · {{ totalGeral }} contatos na agenda</div>
+          </div>
+          <div class="r-wrap" style="display:flex;gap:8px;">
+            <button class="r-tap" style="background:var(--c-surface-2);border:none;color:var(--c-text);font-family:inherit;font-size:13px;font-weight:700;padding:9px 15px;border-radius:10px;cursor:pointer;" @click="novaLista">+ Lista vazia</button>
+            <button class="wabtn r-tap" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:13px;font-weight:700;padding:9px 15px;border-radius:10px;cursor:pointer;" @click="abrirImport">📄 Importar lista</button>
+          </div>
         </div>
       </div>
 
       <div style="flex:1;overflow-y:auto;padding:22px clamp(12px,4vw,30px) 30px;">
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(250px,100%),1fr));gap:14px;">
+        <div class="r-page" style="--r-page:1440px;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(250px,100%),1fr));gap:14px;">
           <!-- todos -->
           <div class="lcard" style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:16px;padding:18px;cursor:pointer;display:flex;flex-direction:column;gap:10px;" @click="abrirLista('todos')">
             <div style="display:flex;align-items:center;gap:10px;">
@@ -214,10 +218,14 @@ function remove() {
 
           <!-- listas -->
           <div v-for="l in listas" :key="l.id" class="lcard" style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:16px;padding:18px;cursor:pointer;display:flex;flex-direction:column;gap:10px;position:relative;" @click="abrirLista(l.id)">
-            <button v-if="l.kind !== 'google'" class="ldel" title="Apagar lista" style="position:absolute;top:10px;right:12px;background:none;border:none;color:var(--c-text-faint);cursor:pointer;font-size:16px;line-height:1;" @click.stop="apagarLista(l)">×</button>
+            <button v-if="l.kind !== 'google'" class="ldel r-tap" title="Apagar lista" style="position:absolute;top:10px;right:12px;background:none;border:none;color:var(--c-text-faint);cursor:pointer;font-size:16px;line-height:1;" @click.stop="apagarLista(l)">×</button>
             <div style="display:flex;align-items:center;gap:10px;">
               <span style="font-size:24px;">{{ iconeDaLista(l.kind) }}</span>
-              <div style="flex:1;min-width:0;padding-right:14px;">
+              <!-- 14px aqui é o desktop: o × para em ~21px da borda e não encosta no nome.
+                   Os 50px que o dedo precisa moram no @media scoped lá embaixo (.lmeta),
+                   senão o cartão do Google — que nem renderiza o × — perde 18px do nome
+                   em toda largura só para reservar espaço ao lado de nada. -->
+              <div class="lmeta" style="flex:1;min-width:0;padding-right:14px;">
                 <div style="font-size:15px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ l.name }}</div>
                 <div style="font-size:11.5px;color:var(--c-text-faint);margin-top:2px;line-height:1.35;">{{ descricaoDaLista(l.kind, l.auto) }}</div>
               </div>
@@ -237,25 +245,29 @@ function remove() {
 
     <!-- ================= CONTATOS DE UMA LISTA ================= -->
     <template v-else>
-      <div style="padding:18px clamp(12px,4vw,30px);display:flex;align-items:center;gap:14px;border-bottom:1px solid var(--c-surface-1);flex-wrap:wrap;">
-        <button class="lback" title="Voltar às listas" style="background:var(--c-surface-2);border:none;color:var(--c-text);width:34px;height:34px;border-radius:10px;cursor:pointer;font-size:15px;flex-shrink:0;" @click="voltarParaListas">←</button>
-        <div style="flex:1;min-width:0;">
-          <div style="font-size:20px;font-weight:800;letter-spacing:-.3px;display:flex;align-items:center;gap:8px;">
-            <span v-if="listaAtiva">{{ iconeDaLista(kindDaLista) }}</span>{{ nomeDaLista }}
+      <div style="padding:18px clamp(12px,4vw,30px);border-bottom:1px solid var(--c-surface-1);">
+        <div class="r-page" style="--r-page:1440px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+          <button class="lback r-tap" title="Voltar às listas" style="background:var(--c-surface-2);border:none;color:var(--c-text);width:34px;height:34px;border-radius:10px;cursor:pointer;font-size:15px;flex-shrink:0;" @click="voltarParaListas">←</button>
+          <div style="flex:1;min-width:0;">
+            <div class="r-break" style="font-size:20px;font-weight:800;letter-spacing:-.3px;display:flex;align-items:center;gap:8px;">
+              <span v-if="listaAtiva">{{ iconeDaLista(kindDaLista) }}</span>{{ nomeDaLista }}
+            </div>
+            <div style="font-size:12.5px;color:var(--c-text-muted);margin-top:2px;">
+              {{ crm.contacts.length }} contatos<template v-if="listaAtiva"> · {{ descricaoDaLista(kindDaLista, listaAtivaObj?.auto) }}</template>
+            </div>
           </div>
-          <div style="font-size:12.5px;color:var(--c-text-muted);margin-top:2px;">
-            {{ crm.contacts.length }} contatos<template v-if="listaAtiva"> · {{ descricaoDaLista(kindDaLista, listaAtivaObj?.auto) }}</template>
-          </div>
+          <button class="wabtn r-tap" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:13px;font-weight:700;padding:9px 15px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:6px;flex-shrink:0;" @click="openNew">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>Novo contato
+          </button>
         </div>
-        <button class="wabtn" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:13px;font-weight:700;padding:9px 15px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:6px;flex-shrink:0;" @click="openNew">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>Novo contato
-        </button>
       </div>
 
       <div style="padding:16px clamp(12px,4vw,30px) 0;">
-        <div style="display:flex;align-items:center;gap:9px;background:var(--c-surface-2);border-radius:11px;padding:9px 13px;max-width:420px;">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--c-text-muted)" stroke-width="2"><circle cx="11" cy="11" r="7" /><path d="m20 20-3-3" stroke-linecap="round" /></svg>
-          <input v-model="search" placeholder="Buscar por nome, telefone ou e-mail" style="flex:1;background:transparent;border:none;outline:none;color:var(--c-text);font-family:inherit;font-size:13.5px;">
+        <div class="r-page" style="--r-page:1440px;">
+          <div style="display:flex;align-items:center;gap:9px;background:var(--c-surface-2);border-radius:11px;padding:9px 13px;max-width:420px;">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--c-text-muted)" stroke-width="2"><circle cx="11" cy="11" r="7" /><path d="m20 20-3-3" stroke-linecap="round" /></svg>
+            <input v-model="search" placeholder="Buscar por nome, telefone ou e-mail" style="flex:1;background:transparent;border:none;outline:none;color:var(--c-text);font-family:inherit;font-size:13.5px;">
+          </div>
         </div>
       </div>
 
@@ -266,7 +278,7 @@ function remove() {
           <template v-else-if="listaAtiva">Esta lista ainda está vazia.</template>
           <template v-else>Nenhum contato. Importe uma planilha, puxe do CRM ou conecte o Google na Agenda.</template>
         </div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(280px,100%),1fr));gap:12px;">
+        <div class="r-page" style="--r-page:1440px;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(280px,100%),1fr));gap:12px;">
           <div v-for="c in filtered" :key="c.id" class="ccard" style="display:flex;align-items:center;gap:13px;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:13px;padding:13px 15px;cursor:pointer;" :title="c.phone ? 'Abrir conversa' : 'Sem telefone'" @click="crm.openContactChat(c)">
             <div :style="{ width: '46px', height: '46px', borderRadius: '50%', flexShrink: 0, background: colorFor(c.name || String(c.id)), display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '15px', overflow: 'hidden' }">
               <img v-if="c.avatar && !broken.has(c.id)" :src="c.avatar" referrerpolicy="no-referrer" style="width:100%;height:100%;object-fit:cover;" @error="broken.add(c.id)">
@@ -277,7 +289,7 @@ function remove() {
               <div v-if="c.phone" style="font-size:12.5px;color:var(--c-text-muted);margin-top:2px;">{{ c.phone }}</div>
               <div v-if="c.email" style="font-size:12px;color:var(--c-text-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ c.email }}</div>
             </div>
-            <button class="cedit" title="Editar contato" style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);width:32px;height:32px;border-radius:9px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;" @click.stop="openEdit(c)">
+            <button class="cedit r-tap" title="Editar contato" style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);width:32px;height:32px;border-radius:9px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;" @click.stop="openEdit(c)">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" stroke-linecap="round" stroke-linejoin="round" /></svg>
             </button>
           </div>
@@ -286,11 +298,13 @@ function remove() {
     </template>
 
     <!-- Modal -->
-    <div v-if="open" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:50;padding:24px;" @click.self="open = false">
-      <div style="width:400px;max-width:100%;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:24px;">
+    <div v-if="open" class="r-overlay-scroll" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:50;padding:24px;" @click.self="open = false">
+      <!-- r-modal: o cartao nao tinha teto de altura nem rolagem; em paisagem o rodape
+           (Salvar/Excluir) ficava fora da tela e nao havia como alcanca-lo. -->
+      <div class="r-modal" style="width:400px;max-width:100%;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:24px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
           <div style="font-size:18px;font-weight:800;">{{ editingId ? 'Editar contato' : 'Novo contato' }}</div>
-          <button style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:20px;line-height:1;" @click="open = false">×</button>
+          <button class="r-tap" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:20px;line-height:1;" @click="open = false">×</button>
         </div>
         <label class="lbl">Nome</label>
         <input v-model="form.name" class="inp" placeholder="Nome do contato">
@@ -299,25 +313,25 @@ function remove() {
         <label class="lbl">E-mail</label>
         <input v-model="form.email" class="inp" placeholder="email@exemplo.com">
         <div style="display:flex;align-items:center;gap:10px;margin-top:18px;">
-          <button v-if="editingId" style="background:transparent;border:1px solid var(--c-danger-bg);color:var(--c-danger-soft);font-family:inherit;font-size:13px;font-weight:600;padding:9px 13px;border-radius:9px;cursor:pointer;" @click="remove">Excluir</button>
+          <button v-if="editingId" class="r-tap" style="background:transparent;border:1px solid var(--c-danger-bg);color:var(--c-danger-soft);font-family:inherit;font-size:13px;font-weight:600;padding:9px 13px;border-radius:9px;cursor:pointer;" @click="remove">Excluir</button>
           <div style="flex:1;" />
-          <button style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);font-family:inherit;font-size:13px;padding:9px 15px;border-radius:9px;cursor:pointer;" @click="open = false">Cancelar</button>
-          <button class="wabtn" :disabled="saving || !form.name.trim()" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:13px;font-weight:700;padding:9px 18px;border-radius:9px;cursor:pointer;" @click="save">{{ saving ? 'Salvando…' : 'Salvar' }}</button>
+          <button class="r-tap" style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);font-family:inherit;font-size:13px;padding:9px 15px;border-radius:9px;cursor:pointer;" @click="open = false">Cancelar</button>
+          <button class="wabtn r-tap" :disabled="saving || !form.name.trim()" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:13px;font-weight:700;padding:9px 18px;border-radius:9px;cursor:pointer;" @click="save">{{ saving ? 'Salvando…' : 'Salvar' }}</button>
         </div>
       </div>
     </div>
 
     <!-- Importar lista: planilha (CSV) ou leads que já estão no CRM -->
-    <div v-if="importOpen" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:50;padding:24px;" @click.self="importOpen = false">
-      <div style="width:460px;max-width:100%;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:24px;">
+    <div v-if="importOpen" class="r-overlay-scroll" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:50;padding:24px;" @click.self="importOpen = false">
+      <div class="r-modal" style="width:460px;max-width:100%;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:24px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
           <div style="font-size:18px;font-weight:800;">Importar lista</div>
-          <button style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:20px;line-height:1;" @click="importOpen = false">×</button>
+          <button class="r-tap" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:20px;line-height:1;" @click="importOpen = false">×</button>
         </div>
 
         <div style="display:flex;gap:6px;margin-bottom:16px;">
-          <button :style="{ flex:1,fontSize:'12.5px',fontWeight:700,padding:'8px',borderRadius:'9px',border:'none',cursor:'pointer',fontFamily:'inherit',background: importTab==='planilha' ? 'var(--accent)' : 'var(--c-surface-2)', color: importTab==='planilha' ? 'var(--accent-ink)' : 'var(--c-text-muted)' }" @click="importTab = 'planilha'">📄 Planilha</button>
-          <button :style="{ flex:1,fontSize:'12.5px',fontWeight:700,padding:'8px',borderRadius:'9px',border:'none',cursor:'pointer',fontFamily:'inherit',background: importTab==='crm' ? 'var(--accent)' : 'var(--c-surface-2)', color: importTab==='crm' ? 'var(--accent-ink)' : 'var(--c-text-muted)' }" @click="importTab = 'crm'">💬 Do CRM</button>
+          <button class="r-tap" :style="{ flex:1,fontSize:'12.5px',fontWeight:700,padding:'8px',borderRadius:'9px',border:'none',cursor:'pointer',fontFamily:'inherit',background: importTab==='planilha' ? 'var(--accent)' : 'var(--c-surface-2)', color: importTab==='planilha' ? 'var(--accent-ink)' : 'var(--c-text-muted)' }" @click="importTab = 'planilha'">📄 Planilha</button>
+          <button class="r-tap" :style="{ flex:1,fontSize:'12.5px',fontWeight:700,padding:'8px',borderRadius:'9px',border:'none',cursor:'pointer',fontFamily:'inherit',background: importTab==='crm' ? 'var(--accent)' : 'var(--c-surface-2)', color: importTab==='crm' ? 'var(--accent-ink)' : 'var(--c-text-muted)' }" @click="importTab = 'crm'">💬 Do CRM</button>
         </div>
 
         <label v-if="!(importTab === 'crm' && impSoAnuncio)" class="lbl">Nome da lista</label>
@@ -332,7 +346,7 @@ function remove() {
         </template>
 
         <template v-else>
-          <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:12.5px;color:var(--c-text-secondary);cursor:pointer;">
+          <label class="r-tap-h" style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:12.5px;color:var(--c-text-secondary);cursor:pointer;">
             <input v-model="impSoAnuncio" type="checkbox" style="cursor:pointer;">
             📣 Só quem veio de anúncio (clique-para-WhatsApp)
           </label>
@@ -368,8 +382,8 @@ function remove() {
         <div v-if="impErro" style="margin-top:12px;font-size:12.5px;color:var(--c-danger-soft);">{{ impErro }}</div>
 
         <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px;">
-          <button style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);font-family:inherit;font-size:13px;padding:9px 15px;border-radius:9px;cursor:pointer;" @click="importOpen = false">Cancelar</button>
-          <button class="wabtn" :disabled="impSalvando || (!impNome.trim() && !(importTab === 'crm' && impSoAnuncio))" :style="{ background:'var(--accent)',border:'none',color:'var(--accent-ink)',fontFamily:'inherit',fontSize:'13px',fontWeight:700,padding:'9px 18px',borderRadius:'9px',cursor:'pointer',opacity:(impSalvando || (!impNome.trim() && !(importTab === 'crm' && impSoAnuncio)))?0.6:1 }" @click="importar">{{ impSalvando ? 'Importando…' : 'Importar' }}</button>
+          <button class="r-tap" style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);font-family:inherit;font-size:13px;padding:9px 15px;border-radius:9px;cursor:pointer;" @click="importOpen = false">Cancelar</button>
+          <button class="wabtn r-tap" :disabled="impSalvando || (!impNome.trim() && !(importTab === 'crm' && impSoAnuncio))" :style="{ background:'var(--accent)',border:'none',color:'var(--accent-ink)',fontFamily:'inherit',fontSize:'13px',fontWeight:700,padding:'9px 18px',borderRadius:'9px',cursor:'pointer',opacity:(impSalvando || (!impNome.trim() && !(importTab === 'crm' && impSoAnuncio)))?0.6:1 }" @click="importar">{{ impSalvando ? 'Importando…' : 'Importar' }}</button>
         </div>
       </div>
     </div>
@@ -383,6 +397,16 @@ function remove() {
 .lcard:hover { background: var(--c-surface-0) !important; border-color: var(--c-surface-3) !important; }
 .lback:hover { background: var(--c-surface-3) !important; }
 .ldel:hover { color: var(--c-danger) !important; }
+
+/*
+  No dedo o × vira um alvo de 44px (.r-tap): encostado no canto ele para de disputar o toque
+  com o corpo do cartao, que abre a lista. A folga do texto acompanha, senao o nome da lista
+  passa por baixo do alvo.
+*/
+@media (max-width: 820px), (pointer: coarse) {
+  .ldel { top: 4px !important; right: 4px !important; }
+  .lmeta { padding-right: 50px !important; }
+}
 .lbl { display:block; font-size:11.5px; color:var(--c-text-muted); font-weight:600; margin:11px 0 5px; }
 .inp { width:100%; box-sizing:border-box; background:var(--c-surface-2); border:1px solid var(--c-surface-3); color:var(--c-text); font-family:inherit; font-size:13.5px; padding:9px 11px; border-radius:9px; outline:none; }
 .inp:focus { border-color:var(--accent); }

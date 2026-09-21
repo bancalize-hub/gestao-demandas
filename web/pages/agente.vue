@@ -263,11 +263,17 @@ onBeforeUnmount(stopPolling)
 </script>
 
 <template>
-  <div style="display:flex;height:100%;min-height:0;background:var(--c-bg-deepest);color:var(--c-text);font-family:'JetBrains Mono',ui-monospace,monospace;position:relative;overflow:hidden;">
-    <!-- sessões: fixa no desktop, gaveta no mobile -->
+  <div style="flex:1;min-width:0;display:flex;height:100%;min-height:0;background:var(--c-bg-deepest);color:var(--c-text);font-family:'JetBrains Mono',ui-monospace,monospace;position:relative;overflow:hidden;">
+    <!--
+      sessões: fixa no desktop, gaveta no mobile.
+
+      A largura passou a ser relativa no modo gaveta: 260px fixos deixavam so ~100px de
+      pano de fundo para fechar tocando fora em 360px, e apertavam o titulo da sessao a
+      toa entre 480 e 820px, onde ha espaco de sobra.
+    -->
     <aside
       :style="{
-        width: '260px', flexShrink: 0, background: 'var(--c-bg-deepest)', borderRight: '1px solid var(--c-surface-1)',
+        width: isMobile ? 'min(86vw, 320px)' : '260px', flexShrink: 0, background: 'var(--c-bg-deepest)', borderRight: '1px solid var(--c-surface-1)',
         display: 'flex', flexDirection: 'column', zIndex: 40,
         position: isMobile ? 'absolute' : 'relative', top: 0, bottom: 0, left: 0,
         transform: (isMobile && !drawer) ? 'translateX(-100%)' : 'translateX(0)',
@@ -276,19 +282,20 @@ onBeforeUnmount(stopPolling)
     >
       <div style="padding:16px 16px 10px;display:flex;align-items:center;justify-content:space-between;">
         <div style="font-weight:800;font-size:15px;color:var(--c-text);">🤖 Agente</div>
-        <button style="background:var(--accent);border:none;color:var(--accent-ink);font-weight:700;font-size:12px;padding:6px 10px;border-radius:8px;cursor:pointer;" @click="newSession">+ Nova</button>
+        <button class="r-tap" style="background:var(--accent);border:none;color:var(--accent-ink);font-weight:700;font-size:12px;padding:6px 10px;border-radius:8px;cursor:pointer;" @click="newSession">+ Nova</button>
       </div>
       <div style="font-size:10.5px;color:var(--c-text-faint);padding:0 16px 10px;line-height:1.4;">Opera a VPS via Claude Code. Sem aprovação por ação — tudo é registrado.</div>
       <div style="flex:1;overflow-y:auto;padding:4px 8px;min-height:0;">
-        <div v-for="s in sessions" :key="s.id" :style="{ display:'flex',alignItems:'center',gap:'6px',padding:'8px 10px',borderRadius:'9px',cursor:'pointer',marginBottom:'3px',background: s.id===activeId ? 'var(--c-surface-0)' : 'transparent' }" @click="openSession(s.id)">
+        <!-- gap maior no celular: apagar (irreversivel) ficava a milimetros da area que abre a sessao. -->
+        <div v-for="s in sessions" :key="s.id" :style="{ display:'flex',alignItems:'center',gap: isMobile ? '10px' : '6px',padding:'8px 10px',borderRadius:'9px',cursor:'pointer',marginBottom:'3px',background: s.id===activeId ? 'var(--c-surface-0)' : 'transparent' }" @click="openSession(s.id)">
           <div style="flex:1;min-width:0;">
             <div style="font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--c-text);">{{ s.title }}</div>
             <div style="font-size:10px;color:var(--c-text-faint);margin-top:2px;">{{ quando(s.updated_at) }}<template v-if="s.id === activeId && running"> · <span style="color:var(--accent);">rodando {{ decorrido }}</span></template></div>
           </div>
-          <button title="Apagar" style="background:none;border:none;color:var(--c-text-faint);cursor:pointer;font-size:14px;flex-shrink:0;" @click.stop="delSession(s)">×</button>
+          <button title="Apagar" class="r-tap r-tap-pad" style="background:none;border:none;color:var(--c-text-faint);cursor:pointer;font-size:14px;flex-shrink:0;" @click.stop="delSession(s)">×</button>
         </div>
       </div>
-      <button style="margin:10px;background:none;border:1px solid var(--c-surface-3);color:var(--c-text-muted);font-family:inherit;font-size:12px;padding:8px;border-radius:9px;cursor:pointer;" @click="navigateTo('/')">← Voltar ao CRM</button>
+      <button class="r-tap" style="margin:10px;background:none;border:1px solid var(--c-surface-3);color:var(--c-text-muted);font-family:inherit;font-size:12px;padding:8px;border-radius:9px;cursor:pointer;" @click="navigateTo('/')">← Voltar ao CRM</button>
     </aside>
 
     <!-- backdrop da gaveta -->
@@ -298,7 +305,8 @@ onBeforeUnmount(stopPolling)
     <main style="flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;">
       <!-- topbar (mostra botão de menu no mobile) -->
       <div v-if="isMobile" style="display:flex;align-items:center;gap:12px;padding:11px 14px;border-bottom:1px solid var(--c-surface-1);background:var(--c-bg-deepest);flex-shrink:0;">
-        <button style="background:var(--c-surface-0);border:none;color:var(--c-text);font-size:18px;width:36px;height:36px;border-radius:9px;cursor:pointer;" @click="drawer = true">☰</button>
+        <!-- r-tap: 36px era o unico caminho para abrir a gaveta e trocar de sessao no celular. -->
+        <button class="r-tap" style="background:var(--c-surface-0);border:none;color:var(--c-text);font-size:18px;width:36px;height:36px;border-radius:9px;cursor:pointer;" @click="drawer = true">☰</button>
         <div style="font-weight:700;font-size:14px;color:var(--c-text);">🤖 Agente</div>
         <div v-if="running" style="margin-left:auto;font-size:11px;color:var(--accent);">● {{ decorrido }}</div>
       </div>
@@ -306,11 +314,15 @@ onBeforeUnmount(stopPolling)
       <div v-if="!activeId" style="margin:auto;text-align:center;color:var(--c-text-faint);padding:24px;">
         <div style="font-size:40px;margin-bottom:10px;">🤖</div>
         <div style="font-size:14px;">Crie ou abra uma sessão para conversar com o agente.</div>
-        <button style="margin-top:16px;background:var(--accent);border:none;color:var(--accent-ink);font-weight:700;font-size:13px;padding:9px 16px;border-radius:9px;cursor:pointer;" @click="newSession">+ Nova sessão</button>
+        <button class="r-tap" style="margin-top:16px;background:var(--accent);border:none;color:var(--accent-ink);font-weight:700;font-size:13px;padding:9px 16px;border-radius:9px;cursor:pointer;" @click="newSession">+ Nova sessão</button>
       </div>
 
       <template v-else>
-        <div ref="scroller" style="flex:1;overflow-y:auto;min-height:0;padding:18px clamp(12px, 4vw, 40px);display:flex;flex-direction:column;gap:14px;">
+        <!--
+          r-page: sem teto, em 2560px cada bloco de saida e o balao do pedido (88%) viravam
+          linhas de ~2 mil px de fonte monoespacada - o olho perde a volta da linha.
+        -->
+        <div ref="scroller" class="r-page" style="--r-page:1100px;flex:1;overflow-y:auto;min-height:0;padding:18px clamp(12px, 4vw, 40px);display:flex;flex-direction:column;gap:14px;">
           <template v-for="m in messages" :key="m.id">
             <!-- pedido do usuário -->
             <div v-if="m.role==='user'" style="align-self:flex-end;max-width:88%;background:var(--c-info-bg);border:1px solid var(--c-info-border);border-radius:12px 12px 3px 12px;padding:10px 14px;font-size:13px;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;">{{ m.content }}</div>
@@ -328,10 +340,22 @@ onBeforeUnmount(stopPolling)
                     <span v-if="b.cmd" style="color:var(--accent);font-weight:700;flex-shrink:0;">$</span>
                     <span v-else style="color:var(--c-ai-soft);font-weight:700;font-size:11.5px;flex-shrink:0;">{{ b.tool }}</span>
                     <span style="flex:1;min-width:0;font-size:12px;color:var(--c-text);white-space:pre-wrap;word-break:break-all;">{{ b.cmd || b.arg }}</span>
-                    <button v-if="b.cmd" :title="copiado === chaveBloco(m.id, i) ? 'Copiado' : 'Copiar comando'" style="background:none;border:none;color:var(--c-text-faint);cursor:pointer;font-size:11px;flex-shrink:0;" @click="copiar(b.cmd!, chaveBloco(m.id, i))">{{ copiado === chaveBloco(m.id, i) ? '✓' : '⧉' }}</button>
+                    <button v-if="b.cmd" class="r-tap-pad" :title="copiado === chaveBloco(m.id, i) ? 'Copiado' : 'Copiar comando'" style="background:none;border:none;color:var(--c-text-faint);cursor:pointer;font-size:11px;flex-shrink:0;" @click="copiar(b.cmd!, chaveBloco(m.id, i))">{{ copiado === chaveBloco(m.id, i) ? '✓' : '⧉' }}</button>
                   </div>
-                  <div v-if="b.saida" :style="{ padding: '10px 12px', fontSize: '11.5px', lineHeight: 1.5, color: 'var(--c-text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere', overflowY: 'auto', maxHeight: expandido[chaveBloco(m.id, i)] ? 'none' : '220px' }">{{ b.saida }}</div>
-                  <button v-if="linhas(b.saida) > 12" style="width:100%;background:var(--c-bg-deep);border:none;border-top:1px solid var(--c-surface-1);color:var(--c-text-muted);font-family:inherit;font-size:11px;padding:6px;cursor:pointer;" @click="expandido[chaveBloco(m.id, i)] = !expandido[chaveBloco(m.id, i)]">
+                  <!--
+                    r-term no lugar de `pre-wrap` + `break-word`: saida de terminal e alinhada
+                    por coluna (`ls -l`, `df -h`, `git diff`), e quebrar no meio da palavra em
+                    360px transformava justamente o conteudo da tela num bloco picotado. Agora
+                    preserva as colunas e rola no eixo X. O r-maxh sai quando o bloco esta
+                    aberto, senao o teto (!important) venceria o `maxHeight:none` do "mostrar tudo".
+                  -->
+                  <div
+                    v-if="b.saida"
+                    :class="expandido[chaveBloco(m.id, i)] ? 'r-term' : 'r-term saida-recolhida'"
+                    :style="{ padding: '10px 12px', fontSize: '11.5px', lineHeight: 1.5, color: 'var(--c-text-secondary)', overflowY: 'auto', maxHeight: expandido[chaveBloco(m.id, i)] ? 'none' : '220px' }"
+                  >{{ b.saida }}</div>
+                  <!-- r-tap-h e nao r-tap: o botao ja ocupa a largura toda e precisa continuar em bloco. -->
+                  <button v-if="linhas(b.saida) > 12" class="r-tap-h" style="width:100%;background:var(--c-bg-deep);border:none;border-top:1px solid var(--c-surface-1);color:var(--c-text-muted);font-family:inherit;font-size:11px;padding:6px;cursor:pointer;" @click="expandido[chaveBloco(m.id, i)] = !expandido[chaveBloco(m.id, i)]">
                     {{ expandido[chaveBloco(m.id, i)] ? 'recolher' : `mostrar tudo (${linhas(b.saida)} linhas)` }}
                   </button>
                 </div>
@@ -342,7 +366,12 @@ onBeforeUnmount(stopPolling)
           <!-- execução em andamento -->
           <div v-if="running" style="align-self:stretch;display:flex;flex-direction:column;gap:8px;">
             <div style="display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--accent);">
-              <span style="width:7px;height:7px;border-radius:50%;background:var(--accent);animation:pulso 1.2s infinite;" />
+              <!--
+                A animacao saiu do style inline para uma classe: o compilador do Vue renomeia
+                os @keyframes de um bloco `scoped` (pulso -> pulso-<hash>) e NAO reescreve o
+                style inline do template, entao o ponto nunca piscou em largura nenhuma.
+              -->
+              <span class="ponto-vivo" style="width:7px;height:7px;border-radius:50%;background:var(--accent);" />
               executando · {{ decorrido }}
             </div>
             <template v-for="(b, i) in blocosAoVivo" :key="'live' + i">
@@ -354,22 +383,23 @@ onBeforeUnmount(stopPolling)
                   <span v-else style="color:var(--c-ai-soft);font-weight:700;font-size:11.5px;flex-shrink:0;">{{ b.tool }}</span>
                   <span style="flex:1;min-width:0;font-size:12px;color:var(--c-text);white-space:pre-wrap;word-break:break-all;">{{ b.cmd || b.arg }}</span>
                 </div>
-                <div v-if="b.saida" style="padding:10px 12px;font-size:11.5px;line-height:1.5;color:var(--c-text-secondary);white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;max-height:220px;overflow-y:auto;">{{ b.saida }}</div>
+                <!-- mesmo r-term do historico: durante a execucao a saida vinha recortada E picotada. -->
+                <div v-if="b.saida" class="r-term saida-recolhida" style="max-height:220px;padding:10px 12px;font-size:11.5px;line-height:1.5;color:var(--c-text-secondary);overflow-y:auto;">{{ b.saida }}</div>
               </div>
             </template>
-            <div v-if="!liveOutput" style="font-size:12px;color:var(--c-text-faint);">⏳ iniciando…<span style="color:var(--accent);animation:blink 1s infinite;">▋</span></div>
+            <div v-if="!liveOutput" style="font-size:12px;color:var(--c-text-faint);">⏳ iniciando…<span class="cursor-vivo" style="color:var(--accent);">▋</span></div>
           </div>
 
           <!-- falha do job (antes só sumia) -->
-          <div v-if="jobError" style="align-self:stretch;background:rgba(255,77,77,.08);border:1px solid rgba(255,77,77,.3);border-radius:12px;padding:12px 14px;font-size:12px;color:var(--c-danger-soft);white-space:pre-wrap;word-break:break-word;">⚠️ {{ jobError }}</div>
+          <div v-if="jobError" class="r-break" style="align-self:stretch;background:rgba(255,77,77,.08);border:1px solid rgba(255,77,77,.3);border-radius:12px;padding:12px 14px;font-size:12px;color:var(--c-danger-soft);white-space:pre-wrap;word-break:break-word;">⚠️ {{ jobError }}</div>
         </div>
 
         <!-- input -->
         <div style="border-top:1px solid var(--c-surface-1);padding:12px clamp(12px,4vw,16px);background:var(--c-bg-deepest);flex-shrink:0;">
-          <div style="display:flex;gap:10px;align-items:flex-end;">
+          <div class="r-page" style="--r-page:1100px;display:flex;gap:10px;align-items:flex-end;">
             <textarea v-model="input" rows="1" :disabled="running" :placeholder="running ? 'O agente está trabalhando…' : 'Diga o que o agente deve fazer na VPS…  (Enter envia, Shift+Enter quebra linha)'" style="flex:1;min-width:0;resize:none;max-height:160px;background:var(--c-bg-deep);border:1px solid var(--c-surface-3);border-radius:11px;color:var(--c-text);font-family:inherit;font-size:13px;padding:11px 13px;outline:none;line-height:1.4;" @keydown="onKey" @input="(e:any)=>{e.target.style.height='auto';e.target.style.height=Math.min(e.target.scrollHeight,160)+'px'}" />
-            <button v-if="running" style="background:var(--c-danger);border:none;color:var(--c-on-accent);font-family:inherit;font-weight:700;font-size:13px;padding:12px 16px;border-radius:11px;cursor:pointer;flex-shrink:0;" @click="stopJob">⛔ Parar</button>
-            <button v-else :disabled="sending || !input.trim()" :style="{ background:'var(--accent)',border:'none',color:'var(--accent-ink)',fontFamily:'inherit',fontWeight:700,fontSize:'13px',padding:'12px 18px',borderRadius:'11px',cursor:(sending||!input.trim())?'default':'pointer',opacity:(sending||!input.trim())?0.5:1,flexShrink:0 }" @click="send">Enviar</button>
+            <button v-if="running" class="r-tap" style="background:var(--c-danger);border:none;color:var(--c-on-accent);font-family:inherit;font-weight:700;font-size:13px;padding:12px 16px;border-radius:11px;cursor:pointer;flex-shrink:0;" @click="stopJob">⛔ Parar</button>
+            <button v-else class="r-tap" :disabled="sending || !input.trim()" :style="{ background:'var(--accent)',border:'none',color:'var(--accent-ink)',fontFamily:'inherit',fontWeight:700,fontSize:'13px',padding:'12px 18px',borderRadius:'11px',cursor:(sending||!input.trim())?'default':'pointer',opacity:(sending||!input.trim())?0.5:1,flexShrink:0 }" @click="send">Enviar</button>
           </div>
         </div>
       </template>
@@ -380,4 +410,19 @@ onBeforeUnmount(stopPolling)
 <style scoped>
 @keyframes blink { 0%,50% { opacity: 1 } 50.01%,100% { opacity: 0 } }
 @keyframes pulso { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
+
+/* Precisam morar aqui: `animation` no style inline do template nao enxerga o nome
+   reescrito dos @keyframes deste bloco `scoped`. */
+.ponto-vivo { animation: pulso 1.2s infinite }
+.cursor-vivo { animation: blink 1s infinite }
+
+/*
+  Saída de comando recolhida no celular: 220px fixos comiam quase metade de uma tela de
+  640px de altura e empurravam a pergunta seguinte para fora. O teto vira o MENOR entre
+  220px e 35% da altura real — regra local porque o utilitário do catálogo (`.r-maxh`)
+  só oferece 88dvh, que nesta caixa nunca morde.
+*/
+@media (max-width: 820px) {
+  .saida-recolhida { max-height: min(220px, 35dvh) !important; }
+}
 </style>

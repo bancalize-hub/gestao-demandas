@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { type CalEvent, useCrmStore } from '~/stores/crm'
 
@@ -18,7 +18,6 @@ const DAY_NAMES = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB']
 const MONTHS = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
 const START_HOUR = 7
 const END_HOUR = 21
-const HOUR_H = 58 // px por hora
 
 const HOURS = Array.from({ length: END_HOUR - START_HOUR }, (_, i) => START_HOUR + i)
 
@@ -136,8 +135,10 @@ function eventsForDay(day: Date): Positioned[] {
     const e = ev.ends_at ? new Date(ev.ends_at) : new Date(s.getTime() + 3600_000)
     const startH = s.getHours() + s.getMinutes() / 60
     const endH = e.getHours() + e.getMinutes() / 60
-    const top = Math.max(0, (startH - START_HOUR) * HOUR_H)
-    const height = Math.max(26, (Math.min(endH, END_HOUR) - Math.max(startH, START_HOUR)) * HOUR_H - 3)
+    const top = Math.max(0, (startH - START_HOUR) * HOUR_H.value)
+    // Piso de 44px no toque (26 no mouse): com 26px uma reunião de 30 min virava uma tira
+    // em que o dedo não separava o cartão do lápis de editar que mora dentro dele.
+    const height = Math.max(isMobile.value ? 44 : 26, (Math.min(endH, END_HOUR) - Math.max(startH, START_HOUR)) * HOUR_H.value - 3)
     doDia.push({
       ev, top, height, color: colorFor(ev), label: `${hm(ev.starts_at)} – ${hm(ev.ends_at)}`,
       left: 0, width: 100, ini: s.getTime(), fim: Math.max(e.getTime(), s.getTime() + 15 * 60_000),
@@ -286,6 +287,20 @@ const focusedDay = ref(new Date()) // dia em foco na visão "dia"
   ainda troca no seletor, e aí a grade rola na horizontal (ver gridMinW).
 */
 const isMobile = useIsMobile()
+/*
+  Altura da hora na grade, em px. No celular ela sobe porque 58px fazem a reunião de
+  30 min virar um cartão de 26px — alvo curto demais para o dedo. Mora aqui embaixo, e
+  não junto de START_HOUR, porque depende do `isMobile` declarado na linha acima.
+*/
+const HOUR_H = computed(() => isMobile.value ? 82 : 58)
+
+/*
+  Gaveta do painel da direita. Em ≤820px não há 300px de sobra para ele, e antes a tela
+  simplesmente o escondia — levando junto o liga/desliga de cada agenda, a chave de
+  agendamento, o "adicionar minha agenda" e as ações rápidas do dia, que não existem em
+  nenhum outro lugar. Agora ele sai do fluxo (.r-drawer) e abre por um botão do topo.
+*/
+const painelAberto = ref(false)
 const { user: usuarioLogado } = useAuth()
 // Só admin mexe na agenda dos OUTROS (o backend também exige, via middleware `admin`);
 // o botão some para quem não pode, em vez de aparecer e dar 403 na cara.
@@ -299,9 +314,14 @@ async function alternarAgenda(c: { user_id: number, agenda_ativa: boolean, email
     banner.value = { type: 'erro', text: `Não foi possível mudar o agendamento de ${c.email || c.name}.` }
   }
 }
-onMounted(() => {
-  if (isMobile.value && viewMode.value === 'semana') viewMode.value = 'dia'
-})
+/*
+  Um watch, e não só um onMounted: quem abre a agenda com o celular deitado (>820px)
+  fica em "semana" e, ao girar para o retrato, cairia justamente nas sete colunas de
+  92px em 360px que o comentário acima quer evitar. O `immediate` cobre a abertura.
+*/
+watch(isMobile, (estreito) => {
+  if (estreito && viewMode.value === 'semana') viewMode.value = 'dia'
+}, { immediate: true })
 
 // Status de uma reunião (só vale p/ eventos com cliente vinculado / Meet).
 type EvStatus = 'compareceu' | 'faltou' | 'aovivo' | 'pendente' | 'futura' | 'simples'
@@ -427,15 +447,20 @@ const gridDays = computed(() => viewMode.value === 'dia' ? [focusedDay.value] : 
   colunas passam de 92px de sobra), mas na tela estreita a coluna para de ser
   espremida até virar risco e a grade rola na horizontal.
 */
-const COL_MIN = 92
-const gridCols = computed(() => `54px repeat(${gridDays.value.length},minmax(${COL_MIN}px,1fr))`)
+/*
+  120px no celular: em 92px sobram ~80px úteis na coluna, onde o chip de evento de dia
+  inteiro (e o título do bloqueio) já entrava direto em reticências. A grade rola na
+  horizontal de qualquer jeito, então o arrasto extra compra leitura.
+*/
+const COL_MIN = computed(() => isMobile.value ? 120 : 92)
+const gridCols = computed(() => `54px repeat(${gridDays.value.length},minmax(${COL_MIN.value}px,1fr))`)
 /*
   Largura mínima repetida no cabeçalho E no invólucro das linhas. Sem isso, a
   grade transborda mas o invólucro `position:relative` fica com a largura do
   container — e a camada de eventos (`position:absolute;inset:0`) se ancora na
   largura errada, deslocando todo evento em relação à coluna do dia.
 */
-const gridMinW = computed(() => 54 + gridDays.value.length * COL_MIN)
+const gridMinW = computed(() => 54 + gridDays.value.length * COL_MIN.value)
 
 // Rótulo do período conforme a visão.
 const periodLabel = computed(() => {
@@ -561,7 +586,7 @@ onBeforeUnmount(() => { if (relogio) clearInterval(relogio) })
 const nowTop = computed(() => {
   const h = agora.value.getHours() + agora.value.getMinutes() / 60
   if (h < START_HOUR || h > END_HOUR) return null
-  return (h - START_HOUR) * HOUR_H
+  return (h - START_HOUR) * HOUR_H.value
 })
 const nowLabel = computed(() => agora.value.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }))
 
@@ -655,12 +680,13 @@ async function excluirDoDetalhe(ev: CalEvent) {
       <!-- Cabeçalho -->
       <div class="r-wrap" style="padding:22px clamp(12px,4vw,30px);display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--c-surface-1);">
         <div>
-          <div style="display:flex;align-items:center;gap:12px;">
+          <div class="r-wrap" style="display:flex;align-items:center;gap:12px;">
             <div style="font-size:23px;font-weight:800;letter-spacing:-.3px;">Agenda</div>
             <!-- Relógio + próxima reunião: dá a hora e o que vem a seguir sem ler a grade -->
             <span style="font-size:12.5px;font-weight:700;color:var(--c-danger);background:var(--c-surface-1);padding:4px 10px;border-radius:8px;font-variant-numeric:tabular-nums;">🕐 {{ nowLabel }}</span>
             <button
               v-if="proxima"
+              class="r-full"
               style="background:var(--c-surface-1);border:none;color:var(--c-text-secondary);font-family:inherit;font-size:12.5px;font-weight:600;padding:4px 10px;border-radius:8px;cursor:pointer;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
               :title="`Ver detalhes de ${proxima.title}`"
               @click="openDetails(proxima!)"
@@ -688,26 +714,31 @@ async function excluirDoDetalhe(ev: CalEvent) {
             >{{ periodCounts.pendente }} aguardando apuração</span>
           </div>
         </div>
-        <div v-if="crm.hasCalendars" style="display:flex;gap:10px;align-items:center;">
+        <div v-if="crm.hasCalendars" class="r-wrap" style="display:flex;gap:10px;align-items:center;">
           <!-- Seletor de visão -->
-          <div style="display:flex;background:var(--c-surface-2);border-radius:10px;overflow:hidden;">
-            <button v-for="v in (['dia','semana','mes'] as const)" :key="v" class="seg" :style="`border:none;font-family:inherit;font-size:12.5px;font-weight:600;padding:8px 13px;cursor:pointer;${viewMode === v ? 'background:var(--accent);color:var(--accent-ink);' : 'background:transparent;color:var(--c-text-muted);'}`" @click="setView(v)">{{ v === 'dia' ? 'Dia' : v === 'semana' ? 'Semana' : 'Mês' }}</button>
+          <div class="r-full" style="display:flex;background:var(--c-surface-2);border-radius:10px;overflow:hidden;">
+            <button v-for="v in (['dia','semana','mes'] as const)" :key="v" class="seg seg-visao r-tap-h" :style="`border:none;font-family:inherit;font-size:12.5px;font-weight:600;padding:8px 13px;cursor:pointer;${viewMode === v ? 'background:var(--accent);color:var(--accent-ink);' : 'background:transparent;color:var(--c-text-muted);'}`" @click="setView(v)">{{ v === 'dia' ? 'Dia' : v === 'semana' ? 'Semana' : 'Mês' }}</button>
           </div>
           <div style="display:flex;background:var(--c-surface-2);border-radius:10px;overflow:hidden;">
-            <button class="seg" style="border:none;background:transparent;color:var(--c-text-muted);padding:8px 11px;cursor:pointer;" @click="nav(-1)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 6-6 6 6 6" /></svg></button>
-            <button class="seg" style="border:none;background:transparent;color:var(--c-text-muted);padding:8px 11px;cursor:pointer;" @click="nav(1)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 6 6-6 6" /></svg></button>
+            <button class="seg r-tap" style="border:none;background:transparent;color:var(--c-text-muted);padding:8px 11px;cursor:pointer;" @click="nav(-1)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 6-6 6 6 6" /></svg></button>
+            <button class="seg r-tap" style="border:none;background:transparent;color:var(--c-text-muted);padding:8px 11px;cursor:pointer;" @click="nav(1)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 6 6-6 6" /></svg></button>
           </div>
-          <button class="seg" style="border:none;background:var(--c-surface-2);border-radius:10px;color:var(--c-text-muted);font-family:inherit;font-size:12.5px;font-weight:600;padding:8px 13px;cursor:pointer;" @click="setView('semana'); goToday()">Hoje</button>
-          <button class="wabtn" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:13px;font-weight:700;padding:9px 15px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:6px;" @click="openNew()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>Evento</button>
+          <button class="seg r-tap-h" style="border:none;background:var(--c-surface-2);border-radius:10px;color:var(--c-text-muted);font-family:inherit;font-size:12.5px;font-weight:600;padding:8px 13px;cursor:pointer;" @click="setView(isMobile ? 'dia' : 'semana'); goToday()">Hoje</button>
+          <button class="wabtn r-tap-h" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:13px;font-weight:700;padding:9px 15px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:6px;" @click="openNew()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>Evento</button>
+          <!-- Só no celular: quem abre a gaveta com as agendas e a lista de hoje. Sem este
+               botão o painel da direita não teria como ser chamado no aparelho. -->
+          <button class="seg r-only-mobile r-tap" title="Agendas e eventos de hoje" style="border:none;background:var(--c-surface-2);border-radius:10px;color:var(--c-text-muted);padding:8px 11px;cursor:pointer;" @click="painelAberto = true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M6 12h12M10 18h4" stroke-linecap="round" /></svg></button>
         </div>
       </div>
 
       <!-- Legenda das cores -->
-      <div v-if="crm.hasCalendars" style="display:flex;flex-wrap:wrap;gap:14px;padding:10px clamp(12px,4vw,30px);border-bottom:1px solid var(--c-surface-1);">
+      <!-- Em 360px os cinco itens viram três linhas (~72px) entre um cabeçalho já quebrado
+           e a grade; abaixo de 480px a legenda sai e a agenda fica com a tela. -->
+      <div v-if="crm.hasCalendars" class="r-xs-hide" style="display:flex;flex-wrap:wrap;gap:14px;padding:10px clamp(12px,4vw,30px);border-bottom:1px solid var(--c-surface-1);">
         <span v-for="l in LEGEND" :key="l.label" style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--c-text-muted);font-weight:600;"><span :style="{ width: '9px', height: '9px', borderRadius: '3px', background: l.color }" />{{ l.label }}</span>
       </div>
 
-      <div v-if="banner" :style="`margin:14px 30px 0;padding:10px 14px;border-radius:10px;font-size:13px;font-weight:600;${banner.type === 'ok' ? 'background:var(--c-accent-surf);color:var(--accent-soft);border:1px solid rgba(var(--accent-rgb),.3);' : 'background:var(--c-danger-bg);color:var(--c-danger-soft);border:1px solid rgba(255,107,107,.3);'}`">
+      <div v-if="banner" :style="`margin:14px clamp(12px,4vw,30px) 0;padding:10px 14px;border-radius:10px;font-size:13px;font-weight:600;${banner.type === 'ok' ? 'background:var(--c-accent-surf);color:var(--accent-soft);border:1px solid rgba(var(--accent-rgb),.3);' : 'background:var(--c-danger-bg);color:var(--c-danger-soft);border:1px solid rgba(255,107,107,.3);'}`">
         {{ banner.text }}
       </div>
 
@@ -724,10 +755,10 @@ async function excluirDoDetalhe(ev: CalEvent) {
       </div>
 
       <!-- Grade da semana / dia -->
-      <div v-else-if="viewMode !== 'mes'" ref="gradeRef" style="flex:1;overflow:auto;padding:0 clamp(12px,4vw,30px) 24px;">
+      <div v-else-if="viewMode !== 'mes'" ref="gradeRef" class="r-scroll-hint" style="--r-hint-bg:var(--c-bg-deep);flex:1;overflow:auto;padding:0 clamp(12px,4vw,30px) 24px;">
         <!-- Cabeçalho dos dias -->
         <div :style="`display:grid;grid-template-columns:${gridCols};position:sticky;top:0;background:var(--c-bg-deep);z-index:3;padding-top:14px;min-width:${gridMinW}px;`">
-          <div />
+          <div class="col-hora" />
           <div v-for="d in gridDays" :key="d.toISOString()" style="text-align:center;padding-bottom:12px;">
             <div :style="`font-size:11.5px;${isToday(d) ? 'color:var(--accent);font-weight:700;' : 'color:var(--c-text-muted);'}`">{{ DAY_NAMES[d.getDay()] }}</div>
             <div v-if="isToday(d)" style="width:34px;height:34px;border-radius:50%;background:var(--accent);color:var(--accent-ink);font-size:17px;font-weight:800;display:flex;align-items:center;justify-content:center;margin:2px auto 0;">{{ d.getDate() }}</div>
@@ -740,20 +771,24 @@ async function excluirDoDetalhe(ev: CalEvent) {
         <!-- Linhas de hora + colunas -->
         <div :style="`position:relative;min-width:${gridMinW}px;`">
           <div v-for="h in HOURS" :key="h" :style="`display:grid;grid-template-columns:${gridCols};`">
-            <div :style="`font-size:11px;color:var(--c-text-muted);text-align:right;padding:0 10px;height:${HOUR_H}px;border-top:1px solid var(--c-surface-0);`">{{ String(h).padStart(2, '0') }}:00</div>
+            <div class="col-hora" :style="`font-size:11px;color:var(--c-text-muted);text-align:right;padding:0 10px;height:${HOUR_H}px;border-top:1px solid var(--c-surface-0);`">{{ String(h).padStart(2, '0') }}:00</div>
             <div v-for="d in gridDays" :key="h + d.toISOString()" style="border-top:1px solid var(--c-surface-0);border-left:1px solid var(--c-surface-0);cursor:pointer;" @click="openNew(d)" @dragover.prevent @drop.prevent="onSlotDrop(d, h, $event)" />
           </div>
 
           <!-- Camada dos eventos posicionados -->
           <div :style="`position:absolute;inset:0;display:grid;grid-template-columns:${gridCols};pointer-events:none;`">
             <!-- Coluna das horas: a etiqueta do horário atual, colada na linha -->
-            <div style="position:relative;">
+            <div class="col-hora-agora" style="position:relative;">
               <div
                 v-if="nowTop !== null"
                 :style="`position:absolute;right:6px;top:${nowTop - 9}px;background:var(--c-danger);color:#fff;font-size:10.5px;font-weight:800;padding:2px 6px;border-radius:6px;line-height:1.3;z-index:2;`"
               >{{ nowLabel }}</div>
             </div>
-            <div v-for="d in gridDays" :key="`col${d.toISOString()}`" style="position:relative;">
+            <!-- `z-index:0` cria contexto de empilhamento: sem ele o z-index 2 da linha do
+                 "agora" lá dentro sobe para o contexto da página e passa POR CIMA da régua
+                 de horas presa (`.col-hora`, z-index 1), riscando os rótulos 07:00-21:00
+                 quando a coluna de hoje desliza por baixo dela no celular. -->
+            <div v-for="d in gridDays" :key="`col${d.toISOString()}`" style="position:relative;z-index:0;">
               <!-- Linha do "agora": só no dia de hoje, descendo com o relógio -->
               <div
                 v-if="isToday(d) && nowTop !== null"
@@ -761,17 +796,20 @@ async function excluirDoDetalhe(ev: CalEvent) {
               >
                 <span :style="`position:absolute;left:-5px;top:-6px;width:10px;height:10px;border-radius:50%;background:var(--c-danger);`" />
               </div>
+              <!-- `:draggable="!isMobile"`: a API HTML5 de arrastar não dispara no toque (nem no
+                   iOS nem no Android), então no celular o `cursor:grab` prometia um gesto que
+                   nunca respondia. Lá o caminho de remarcar é o cartão → "🕑 Editar / remarcar". -->
               <div
                 v-for="p in eventsForDay(d)" :key="p.ev.id" :class="['evcard', { attended: p.ev.attended, live: evStatus(p.ev) === 'aovivo' }]"
-                draggable="true"
-                :style="`pointer-events:auto;position:absolute;left:calc(${p.left}% + 3px);width:calc(${p.width}% - 6px);top:${p.top}px;height:${p.height}px;border-radius:7px;padding:5px 8px;overflow:hidden;cursor:grab;` + (p.ev.attended
+                :draggable="!isMobile"
+                :style="`pointer-events:auto;position:absolute;left:calc(${p.left}% + 3px);width:calc(${p.width}% - 6px);top:${p.top}px;height:${p.height}px;border-radius:7px;padding:5px 8px;overflow:hidden;cursor:${isMobile ? 'pointer' : 'grab'};` + (p.ev.attended
                   ? 'background:linear-gradient(135deg,var(--accent-hi),var(--accent-deep));border-left:5px solid var(--accent-hi);box-shadow:0 2px 14px rgba(var(--accent-rgb),.55);'
                   : `background:${p.color.bg};border-left:3px solid ${p.color.bar};${evStatus(p.ev) === 'aovivo' ? 'box-shadow:0 0 0 2px var(--c-info);' : ''}`)"
                 :title="p.ev.conversation_name ? `Abrir ficha de ${p.ev.conversation_name}` : 'Abrir evento'"
                 @click="openDetails(p.ev)"
                 @dragstart="onEventDragStart(p.ev, $event)"
               >
-                <button class="editpin" title="Editar evento" :style="`position:absolute;top:3px;right:3px;background:rgba(11,20,26,${p.ev.attended ? '.28' : '.6'});border:none;border-radius:6px;padding:2px;cursor:pointer;display:flex;color:${p.ev.attended ? 'var(--accent-ink)' : p.color.fg};`" @click.stop="openEdit(p.ev)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+                <button class="editpin r-touch-show" title="Editar evento" :style="`position:absolute;top:3px;right:3px;background:rgba(11,20,26,${p.ev.attended ? '.28' : '.6'});border:none;border-radius:6px;padding:2px;cursor:pointer;display:flex;color:${p.ev.attended ? 'var(--accent-ink)' : p.color.fg};`" @click.stop="openEdit(p.ev)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
                 <div :style="`font-size:12px;font-weight:${p.ev.attended ? 800 : 700};color:${p.ev.attended ? 'var(--accent-ink)' : p.color.fg};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:16px;`">{{ p.ev.attended ? '✓ ' : (p.ev.no_show ? '✗ ' : (evStatus(p.ev) === 'aovivo' ? '🔴 ' : '')) }}{{ p.ev.title }}</div>
                 <div :style="`font-size:10.5px;margin-top:1px;color:${p.ev.attended ? 'rgba(var(--accent-ink-rgb),.8)' : 'var(--c-text-muted)'};font-weight:${p.ev.attended ? 700 : 400};`">{{ p.label }}<span v-if="p.ev.reminder_sent && evStatus(p.ev) === 'futura'" title="Lembrete de WhatsApp enviado"> · 🔔</span></div>
               </div>
@@ -781,11 +819,11 @@ async function excluirDoDetalhe(ev: CalEvent) {
       </div>
 
       <!-- Visão mês -->
-      <div v-else style="flex:1;overflow:auto;padding:14px clamp(12px,4vw,30px) 24px;">
-        <div style="display:grid;grid-template-columns:repeat(7,1fr);min-width:560px;gap:1px;margin-bottom:6px;">
+      <div v-else class="r-scroll-hint" style="--r-hint-bg:var(--c-bg-deep);flex:1;overflow:auto;padding:14px clamp(12px,4vw,30px) 24px;">
+        <div class="mes-grade" style="gap:1px;margin-bottom:6px;">
           <div v-for="dn in DAY_NAMES" :key="dn" style="text-align:center;font-size:11px;color:var(--c-text-muted);font-weight:700;padding:4px 0;">{{ dn }}</div>
         </div>
-        <div style="display:grid;grid-template-columns:repeat(7,1fr);min-width:560px;grid-auto-rows:1fr;gap:6px;">
+        <div class="mes-grade" style="grid-auto-rows:1fr;gap:6px;">
           <div
             v-for="d in monthGrid" :key="d.toISOString()"
             :style="`min-height:96px;background:${isToday(d) ? 'rgba(var(--accent-rgb),.06)' : 'var(--c-bg-deep)'};border:1px solid ${isToday(d) ? 'rgba(var(--accent-rgb),.4)' : 'var(--c-surface-0)'};border-radius:9px;padding:6px;display:flex;flex-direction:column;gap:3px;cursor:pointer;opacity:${d.getMonth() === monthCursor.getMonth() ? 1 : 0.4};`"
@@ -800,7 +838,8 @@ async function excluirDoDetalhe(ev: CalEvent) {
             >{{ ev.attended ? '✓ ' : (ev.no_show ? '✗ ' : '') }}{{ hm(ev.starts_at) }} {{ ev.title }}</div>
             <div
               v-if="eventsOfDay(d).length > 4"
-              style="font-size:10px;color:var(--accent);font-weight:700;cursor:pointer;"
+              class="r-tap-inline"
+              style="--r-tap-grow:7px;font-size:10px;color:var(--accent);font-weight:700;cursor:pointer;padding:6px 4px;margin-top:2px;"
               title="Ver o dia inteiro"
               @click.stop="abrirDia(d)"
             >+{{ eventsOfDay(d).length - 4 }} mais</div>
@@ -809,8 +848,11 @@ async function excluirDoDetalhe(ev: CalEvent) {
       </div>
     </div>
 
-    <!-- Painel lateral: agendas da empresa + hoje -->
-    <div v-if="crm.hasCalendars" class="r-hide" style="width:300px;flex-shrink:0;background:var(--c-bg);border-left:1px solid var(--c-surface-1);display:flex;flex-direction:column;">
+    <!-- Véu da gaveta: existe só no celular e só com ela aberta, para fechar tocando fora. -->
+    <div v-if="painelAberto" class="r-only-mobile veu-gaveta" @click="painelAberto = false" />
+
+    <!-- Painel lateral: agendas da empresa + hoje. Em ≤820px é a gaveta (.painel-gaveta). -->
+    <div v-if="crm.hasCalendars" :class="['r-drawer', 'painel-gaveta', { aberta: painelAberto }]" style="flex-shrink:0;background:var(--c-bg);border-left:1px solid var(--c-surface-1);display:flex;flex-direction:column;">
       <!-- Seletor de agendas: cada usuário é uma camada que liga/desliga, como no Google Agenda -->
       <div style="padding:16px 20px 14px;border-bottom:1px solid var(--c-surface-1);">
         <div style="display:flex;align-items:center;justify-content:space-between;">
@@ -820,6 +862,8 @@ async function excluirDoDetalhe(ev: CalEvent) {
             style="background:none;border:none;color:var(--accent);font-family:inherit;font-size:11.5px;font-weight:700;cursor:pointer;padding:0;"
             @click="crm.hiddenCalendars = []"
           >Mostrar todas</button>
+          <!-- Fechar a gaveta: no celular ela cobre a tela e o véu atrás não é óbvio. -->
+          <button class="r-only-mobile r-tap" title="Fechar" style="background:none;border:none;color:var(--c-text-muted);font-family:inherit;font-size:22px;line-height:1;cursor:pointer;padding:0;" @click="painelAberto = false">×</button>
         </div>
         <!--
           Duas chaves diferentes na mesma linha, de propósito:
@@ -889,7 +933,7 @@ async function excluirDoDetalhe(ev: CalEvent) {
           :title="ev.conversation_name ? `Abrir ficha de ${ev.conversation_name}` : 'Abrir evento'"
           @click="openDetails(ev)"
         >
-          <button class="editpin" title="Editar evento" :style="`position:absolute;top:10px;right:10px;background:${ev.attended ? 'rgba(var(--accent-ink-rgb),.18)' : 'var(--c-surface-1)'};border:none;border-radius:8px;padding:5px;cursor:pointer;display:flex;color:${ev.attended ? 'var(--accent-ink)' : 'var(--c-text-secondary)'};`" @click.stop="openEdit(ev)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+          <button class="editpin r-touch-show" title="Editar evento" :style="`--editpin-grow:10px;position:absolute;top:10px;right:10px;background:${ev.attended ? 'rgba(var(--accent-ink-rgb),.18)' : 'var(--c-surface-1)'};border:none;border-radius:8px;padding:5px;cursor:pointer;display:flex;color:${ev.attended ? 'var(--accent-ink)' : 'var(--c-text-secondary)'};`" @click.stop="openEdit(ev)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
           <div :style="`font-size:11px;font-weight:700;color:${ev.attended ? 'rgba(var(--accent-ink-rgb),.85)' : (ev.no_show ? 'var(--c-orange-soft)' : 'var(--c-text-muted)')};`">{{ ev.attended ? '✓ COMPARECEU · ' : (ev.no_show ? '✗ NÃO COMPARECEU · ' : '') }}{{ ev.all_day ? 'Dia inteiro' : hm(ev.starts_at) }}</div>
           <div :style="`font-weight:800;font-size:14px;margin-top:6px;padding-right:26px;color:${ev.attended ? 'var(--accent-ink)' : 'var(--c-text)'};`">{{ ev.title }}</div>
           <div v-if="ev.location" :style="`font-size:12px;margin-top:3px;color:${ev.attended ? 'rgba(var(--accent-ink-rgb),.8)' : 'var(--c-text-muted)'};`">{{ ev.location }}</div>
@@ -911,8 +955,12 @@ async function excluirDoDetalhe(ev: CalEvent) {
     </div>
 
     <!-- Modal criar/editar evento -->
-    <div v-if="modalOpen" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:50;" @click.self="closeModal">
-      <div style="width:420px;max-width:92vw;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:16px;padding:22px;">
+    <!-- `r-overlay-scroll` + `r-modal`: são dez campos (>750px de altura) num pano de fundo
+         que não rolava, então no celular o título e a barra Excluir/Cancelar/Salvar ficavam
+         fisicamente fora da tela — não dava para salvar um evento pelo aparelho.
+         O z-index sobe acima da gaveta (.r-drawer = 1200), de onde este modal também abre. -->
+    <div v-if="modalOpen" class="r-overlay-scroll" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:1250;" @click.self="closeModal">
+      <div class="r-modal" style="width:420px;max-width:92vw;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:16px;padding:22px;">
         <div style="font-size:17px;font-weight:800;margin-bottom:16px;">{{ editingId ? 'Editar evento' : 'Novo evento' }}</div>
         <!-- Em qual agenda da empresa o evento entra. Ao editar é só informativo: o Google
              não move um evento de uma agenda para outra. -->
@@ -928,10 +976,15 @@ async function excluirDoDetalhe(ev: CalEvent) {
         </template>
         <label class="lbl">Título</label>
         <input v-model="form.title" class="inp" placeholder="Ex.: Demo com cliente" >
-        <div style="display:flex;gap:10px;">
+        <!-- Em 360px os 90px fixos de Início/Fim mais o mínimo intrínseco do campo de data
+             (>120px no Android/iOS) não cabem na mesma linha. Com `r-wrap` a Data fica sozinha
+             em cima e os dois horários descem JUNTOS, por causa do <div> que os agrupa. -->
+        <div class="r-wrap" style="display:flex;gap:10px;">
           <div style="flex:1;"><label class="lbl">Data</label><input v-model="form.date" type="date" class="inp" ></div>
-          <div style="width:90px;"><label class="lbl">Início</label><input v-model="form.start" type="time" class="inp" ></div>
-          <div style="width:90px;"><label class="lbl">Fim</label><input v-model="form.end" type="time" class="inp" ></div>
+          <div style="display:flex;gap:10px;">
+            <div style="width:90px;"><label class="lbl">Início</label><input v-model="form.start" type="time" class="inp" ></div>
+            <div style="width:90px;"><label class="lbl">Fim</label><input v-model="form.end" type="time" class="inp" ></div>
+          </div>
         </div>
         <label class="lbl">Local / link</label>
         <input v-model="form.location" class="inp" placeholder="Sala, endereço ou link" >
@@ -960,7 +1013,7 @@ async function excluirDoDetalhe(ev: CalEvent) {
         <label class="lbl">Descrição</label>
         <textarea v-model="form.description" class="inp" rows="2" placeholder="Detalhes" />
 
-        <div style="display:flex;align-items:center;gap:10px;margin-top:18px;">
+        <div class="r-wrap" style="display:flex;align-items:center;gap:10px;margin-top:18px;">
           <button v-if="editingId" style="background:transparent;border:1px solid var(--c-danger-bg);color:var(--c-danger-soft);font-family:inherit;font-size:13px;font-weight:600;padding:9px 13px;border-radius:9px;cursor:pointer;" :disabled="saving" @click="removeEvent">Excluir</button>
           <div style="flex:1;" />
           <button style="background:transparent;border:1px solid var(--c-surface-3);color:var(--c-text-muted);font-family:inherit;font-size:13px;padding:9px 15px;border-radius:9px;cursor:pointer;" @click="closeModal">Cancelar</button>
@@ -970,11 +1023,13 @@ async function excluirDoDetalhe(ev: CalEvent) {
     </div>
 
     <!-- Popover: resumo da reunião -->
-    <div v-if="summaryFor" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:55;padding:24px;" @click.self="summaryFor = null">
-      <div style="width:520px;max-width:94vw;max-height:80vh;overflow-y:auto;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:16px;padding:24px;">
+    <div v-if="summaryFor" class="r-overlay-scroll" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:1255;padding:24px;" @click.self="summaryFor = null">
+      <!-- 80dvh, não 80vh: no navegador do celular o `vh` mede a tela SEM a barra de
+           endereços, então o rodapé do cartão ficava embaixo dela. -->
+      <div class="r-modal" style="width:520px;max-width:94vw;max-height:80dvh;overflow-y:auto;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:16px;padding:24px;">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:4px;">
           <div style="font-size:17px;font-weight:800;">📋 Resumo da reunião</div>
-          <button style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:22px;line-height:1;" @click="summaryFor = null">×</button>
+          <button class="r-tap" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:22px;line-height:1;" @click="summaryFor = null">×</button>
         </div>
         <div style="font-size:12.5px;color:var(--c-text-muted);margin-bottom:14px;">{{ summaryFor.title }} · {{ hm(summaryFor.starts_at) }}</div>
         <div style="font-size:13.5px;line-height:1.6;color:var(--c-text);white-space:pre-wrap;">{{ summaryFor.summary }}</div>
@@ -983,8 +1038,10 @@ async function excluirDoDetalhe(ev: CalEvent) {
     </div>
 
     <!-- Detalhes do evento: o que abre ao clicar num card -->
-    <div v-if="detalheAtual" style="position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:52;padding:24px;" @click.self="closeDetails">
-      <div style="width:440px;max-width:94vw;max-height:84vh;overflow-y:auto;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:16px;box-shadow:0 18px 60px rgba(0,0,0,.45);">
+    <div v-if="detalheAtual" class="r-overlay-scroll" style="position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:1252;padding:24px;" @click.self="closeDetails">
+      <!-- 84dvh pelo mesmo motivo do modal de resumo: com `vh` a linha "Editar / remarcar"
+           e "Excluir", no pé do cartão, caíam atrás da barra do navegador. -->
+      <div class="r-modal" style="width:440px;max-width:94vw;max-height:84dvh;overflow-y:auto;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:16px;box-shadow:0 18px 60px rgba(0,0,0,.45);">
         <!-- Faixa de cor do evento, igual à do card -->
         <div :style="`height:5px;border-radius:16px 16px 0 0;background:${colorFor(detalheAtual).bar};`" />
         <div style="padding:18px 22px 22px;">
@@ -993,7 +1050,7 @@ async function excluirDoDetalhe(ev: CalEvent) {
               <div style="font-size:18px;font-weight:800;line-height:1.3;">{{ detalheAtual.title }}</div>
               <div style="font-size:13px;color:var(--c-text-muted);margin-top:5px;">{{ dataLonga(detalheAtual) }}</div>
             </div>
-            <button style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:24px;line-height:1;padding:0 2px;" title="Fechar" @click="closeDetails">×</button>
+            <button class="r-tap" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:24px;line-height:1;padding:0 2px;" title="Fechar" @click="closeDetails">×</button>
           </div>
 
           <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:7px;align-items:center;">
@@ -1081,4 +1138,87 @@ async function excluirDoDetalhe(ev: CalEvent) {
 }
 .meet-toggle input { width:16px; height:16px; accent-color:var(--accent); cursor:pointer; }
 .meet-toggle svg { color:var(--accent); }
+
+/* ===== Responsivo ===== */
+
+/*
+  Coluna dos horários presa na rolagem horizontal. A grade da semana tem min-width de
+  ~900px no celular: sem isto, arrastar até quinta-feira leva a régua 07:00–21:00 para
+  fora da tela e os cartões ficam sem nenhuma referência de horário. Fundo opaco porque
+  a coluna passa por cima das colunas dos dias; z-index 1 para ficar abaixo do cabeçalho
+  dos dias (3), que é quem tem de vencer na rolagem vertical.
+*/
+.col-hora { position: sticky; left: 0; z-index: 1; background: var(--c-bg-deep); }
+
+/*
+  Lápis do cartão da grade: o alvo de 44px cresce POR FORA, num pseudo-elemento. Engordar
+  a caixa (padding) não serve aqui — o cartão de uma reunião de 30 min tem 26px de altura,
+  então um botão de 32px ficaria mais alto que o próprio cartão, cortado pelo overflow e
+  cobrindo o título. `r-tap-inline` do catálogo também não serve: ele força
+  `position: relative !important` e este botão é `position: absolute`.
+*/
+@media (max-width: 820px), (pointer: coarse) {
+  .editpin::after { content: ''; position: absolute; inset: calc(-1 * var(--editpin-grow, 14px)); }
+}
+
+/*
+  A mesma coluna na camada dos eventos (só a etiqueta do "agora" mora nela): acompanha a
+  de baixo, mas SEM fundo — um fundo opaco aqui apagaria os rótulos das horas, que ficam
+  na camada de trás. z-index 2 para a etiqueta não sumir atrás da régua.
+*/
+.col-hora-agora { position: sticky !important; left: 0; z-index: 2; }
+
+/* No celular o segmentado ocupa a linha inteira (r-full); sem isto os três botões
+   ficavam encostados à esquerda com meia barra vazia à direita. */
+@media (max-width: 820px) {
+  .seg-visao { flex: 1 1 0 !important; }
+}
+
+/* Grade do mês: sete colunas é o desenho, não um acidente — por isso a largura mínima
+   vive aqui e não no estilo inline. */
+.mes-grade {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  min-width: 560px;
+}
+
+/*
+  Aqui havia um `min-width: 322px` em ≤480px para a semana inteira caber sem rolar para o
+  lado. A conta não fecha: 331px úteis com `repeat(7,1fr)` e gap 6 dão 42px por célula e,
+  descontando borda, padding do cartão e o `padding:2px 5px` + borda de 3px do chip, sobram
+  ~15px de texto — 1 ou 2 caracteres, some até o horário, que era a última coisa legível.
+  Com os 560px da regra de cima a célula tem ~75px e mostra "14:30"; o preço é rolar na
+  horizontal, que é o mal menor. Enquanto a visão Mês não tiver um layout próprio de
+  celular (lista por dia), 560px fica.
+*/
+
+/* Largura do painel no desktop (no celular quem manda é o .r-drawer). */
+.painel-gaveta { width: 300px; }
+
+@media (max-width: 820px) {
+  /*
+    A gaveta em si: o .r-drawer tira o painel do fluxo e o cola na direita; o fechado/
+    aberto é daqui. `visibility` junto do `transform` para o painel fechado não ser
+    alcançável pelo teclado nem empurrar a tela.
+  */
+  .painel-gaveta {
+    transform: translateX(100%);
+    visibility: hidden;
+    transition: transform .2s ease, visibility .2s ease;
+    box-shadow: -14px 0 40px rgba(var(--c-shadow-rgb), .45);
+  }
+
+  .painel-gaveta.aberta {
+    transform: none;
+    visibility: visible;
+  }
+}
+
+/* Véu da gaveta — abaixo dela (1200) e acima do resto da tela. */
+.veu-gaveta {
+  position: fixed;
+  inset: 0;
+  z-index: 1199;
+  background: rgba(var(--c-shadow-rgb), .5);
+}
 </style>

@@ -64,7 +64,10 @@ function save(field: keyof typeof form) {
   crm.patchConvFields(v.id, { [field]: val } as any)
 }
 
-const inputStyle = 'background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:9px;padding:8px 11px;color:var(--c-text);font-family:inherit;font-size:13.5px;font-weight:600;outline:none;text-align:right;width:170px;'
+// O 170px virou TETO (max-width:100%): como largura fixa ele dava piso de 170px ao campo e,
+// somado ao rotulo, estourava a coluna abaixo de ~900px — e o layout corta o excedente
+// (overflow:hidden), levando junto o fim do campo e o texto digitado.
+const inputStyle = 'background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:9px;padding:8px 11px;color:var(--c-text);font-family:inherit;font-size:13.5px;font-weight:600;outline:none;text-align:right;width:170px;max-width:100%;min-width:0;'
 
 // --- Linha do tempo de atividades (real) ---
 const ACT_COLOR: Record<string, string> = { nota: 'var(--c-info)', etapa: 'var(--c-ai)', reuniao: 'var(--accent)', followup: 'var(--c-warn)', whatsapp: 'var(--accent)', nudge: 'var(--c-ai)' }
@@ -143,23 +146,31 @@ async function addNote() {
 
 <template>
   <div style="flex:1;display:flex;min-width:0;background:var(--c-bg-deep);overflow-y:auto;">
-    <div style="flex:1;min-width:0;padding:26px 32px;">
-      <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--c-text-muted);margin-bottom:18px;"><span class="bc" style="cursor:pointer;" @click="crm.go('pipeline')">Funil</span><span>›</span><span style="color:var(--c-text);">{{ c?.name }}</span></div>
+    <!-- r-pad: os 32px fixos comiam 18% de uma tela de 360px e eram a origem de todos os
+         estouros desta ficha. r-page: sem teto, a ficha esticava ate 2560px. -->
+    <div class="r-page r-pad" style="--r-page:1440px;flex:1;min-width:0;padding:26px 32px;">
+      <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--c-text-muted);margin-bottom:18px;"><span class="bc" style="cursor:pointer;" @click="crm.go('pipeline')">Funil</span><span>›</span><span class="r-break" style="color:var(--c-text);">{{ c?.name }}</span></div>
 
       <div class="r-wrap" style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:24px;display:flex;align-items:center;gap:20px;">
         <div :style="{ width: '84px', height: '84px', borderRadius: '50%', background: c?.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '30px', flexShrink: 0 }">{{ c?.initials }}</div>
-        <div style="flex:1;">
-          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;"><span style="font-size:22px;font-weight:800;">{{ c?.name }}</span><span v-if="c?.hot" style="font-size:11px;font-weight:700;color:var(--c-orange);background:rgba(255,122,69,.13);padding:3px 10px;border-radius:7px;">🔥 Lead quente</span><span v-for="(t, i) in c?.tags" :key="i" :style="{ fontSize: '11px', fontWeight: 700, color: t.color, background: `${t.color}22`, padding: '3px 10px', borderRadius: '7px' }">{{ t.label }}</span></div>
+        <!-- `min-width:0` SÓ de 821 a 1200, que é a faixa onde o cabeçalho da ficha não
+             cabia. Em 360/480 ele é veneno: a largura hipotética do item vira 0, a linha
+             deixa de estourar, o `r-wrap` do pai nunca quebra e o nome fica espremido numa
+             tira de ~37px, quebrado caractere a caractere. -->
+        <div class="r-tablet-min0" style="flex:1;">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;"><span class="r-break" style="font-size:22px;font-weight:800;">{{ c?.name }}</span><span v-if="c?.hot" style="font-size:11px;font-weight:700;color:var(--c-orange);background:rgba(255,122,69,.13);padding:3px 10px;border-radius:7px;">🔥 Lead quente</span><span v-for="(t, i) in c?.tags" :key="i" :style="{ fontSize: '11px', fontWeight: 700, color: t.color, background: `${t.color}22`, padding: '3px 10px', borderRadius: '7px' }">{{ t.label }}</span></div>
           <input v-model="form.role" placeholder="Cargo / função" style="margin-top:6px;background:transparent;border:none;outline:none;color:var(--c-text-muted);font-family:inherit;font-size:14px;width:100%;" @blur="save('role')" @keydown.enter="(e) => (e.target as HTMLInputElement).blur()">
         </div>
         <div style="display:flex;gap:9px;">
-          <button class="wabtn" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:13px;font-weight:700;padding:11px 17px;border-radius:11px;cursor:pointer;display:flex;align-items:center;gap:7px;" @click="crm.go('chat')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-9 8.34 9 9 0 0 1-3.9-.9L3 21l1.06-4.1A8.38 8.38 0 0 1 3 11.5 8.5 8.5 0 0 1 21 11.5Z" stroke-linecap="round" stroke-linejoin="round" /></svg>Mensagem</button>
+          <button class="wabtn r-tap" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:13px;font-weight:700;padding:11px 17px;border-radius:11px;cursor:pointer;display:flex;align-items:center;gap:7px;" @click="crm.go('chat')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-9 8.34 9 9 0 0 1-3.9-.9L3 21l1.06-4.1A8.38 8.38 0 0 1 3 11.5 8.5 8.5 0 0 1 21 11.5Z" stroke-linecap="round" stroke-linejoin="round" /></svg>Mensagem</button>
         </div>
       </div>
 
       <div style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:22px 24px;margin-top:18px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;"><span style="font-size:15px;font-weight:700;">Progresso do negócio</span><div style="display:flex;align-items:center;gap:4px;"><span style="font-size:13px;color:var(--c-text-muted);font-weight:600;">R$</span><input v-model="form.dealValue" placeholder="0" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:9px;padding:7px 11px;color:var(--accent);font-family:inherit;font-size:18px;font-weight:800;outline:none;width:120px;text-align:right;" @blur="save('dealValue')" @keydown.enter="(e) => (e.target as HTMLInputElement).blur()"></div></div>
-        <div style="display:flex;align-items:center;gap:6px;">
+        <div class="r-wrap" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;"><span style="font-size:15px;font-weight:700;">Progresso do negócio</span><div class="r-full" style="display:flex;align-items:center;gap:4px;"><span style="font-size:13px;color:var(--c-text-muted);font-weight:600;">R$</span><input v-model="form.dealValue" placeholder="0" class="r-fs-lg r-full" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:9px;padding:7px 11px;color:var(--accent);font-family:inherit;font-size:18px;font-weight:800;outline:none;width:120px;text-align:right;" @blur="save('dealValue')" @keydown.enter="(e) => (e.target as HTMLInputElement).blur()"></div></div>
+        <!-- r-steps: com flex:1 cada etapa tinha piso no min-content do rotulo e a fila
+             estourava o cartao a 360px; as ultimas etapas ficavam fora do alcance do dedo. -->
+        <div class="r-steps" style="display:flex;align-items:center;gap:6px;">
           <div v-for="(s, i) in STAGES" :key="s.key" class="stagestep" style="flex:1;text-align:center;cursor:pointer;" :title="`Mover para “${s.name}”`" @click="setStage(s.key)"><div :style="barStyle(i)" /><div :style="labelStyle(i)">{{ s.name }}</div></div>
         </div>
       </div>
@@ -169,8 +180,10 @@ async function addNote() {
 
         <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
           <input v-model="fuNote" placeholder="O que fazer (ex.: cobrar resposta da proposta)" style="flex:1;min-width:200px;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:10px 12px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;" @keydown.enter="addFollowup">
-          <input v-model="fuWhen" type="datetime-local" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:9px 11px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;color-scheme:dark;">
-          <button :disabled="savingFu || !fuNote.trim() || !fuWhen" :style="{ background: 'var(--c-ai)', border: 'none', color: 'var(--c-on-accent)', fontFamily: 'inherit', fontSize: '13px', fontWeight: 700, padding: '0 16px', borderRadius: '10px', cursor: (savingFu || !fuNote.trim() || !fuWhen) ? 'default' : 'pointer', opacity: (savingFu || !fuNote.trim() || !fuWhen) ? 0.6 : 1 }" @click="addFollowup">Agendar</button>
+          <input v-model="fuWhen" type="datetime-local" class="r-full" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:9px 11px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;color-scheme:dark;">
+          <!-- r-full + r-tap: ao quebrar linha o botao ficava sozinho numa linha flex e encolhia
+               para ~18px de altura, impossivel de acertar com o dedo. -->
+          <button class="r-full r-tap" :disabled="savingFu || !fuNote.trim() || !fuWhen" :style="{ background: 'var(--c-ai)', border: 'none', color: 'var(--c-on-accent)', fontFamily: 'inherit', fontSize: '13px', fontWeight: 700, padding: '0 16px', borderRadius: '10px', cursor: (savingFu || !fuNote.trim() || !fuWhen) ? 'default' : 'pointer', opacity: (savingFu || !fuNote.trim() || !fuWhen) ? 0.6 : 1 }" @click="addFollowup">Agendar</button>
         </div>
 
         <div v-if="crm.followups.length" style="display:flex;flex-direction:column;gap:9px;">
@@ -184,37 +197,37 @@ async function addNote() {
               <div v-if="f.ai_draft" style="margin-top:9px;background:var(--c-surface-0);border:1px solid var(--c-surface-3);border-radius:9px;padding:9px 11px;">
                 <div style="font-size:11px;font-weight:700;color:var(--c-ai-soft);margin-bottom:4px;">✨ Rascunho da IA</div>
                 <div style="font-size:12.5px;color:var(--c-ai-faint);white-space:pre-wrap;word-break:break-word;line-height:1.45;">{{ f.ai_draft }}</div>
-                <button class="aibtn" style="margin-top:8px;font-size:12px;font-weight:700;color:var(--c-on-accent);background:var(--c-ai);border:none;padding:7px 13px;border-radius:8px;cursor:pointer;" @click="c && crm.useFollowupDraft(c.id, f.ai_draft!)">Abrir no chat com o rascunho</button>
+                <button class="aibtn r-tap" style="margin-top:8px;font-size:12px;font-weight:700;color:var(--c-on-accent);background:var(--c-ai);border:none;padding:7px 13px;border-radius:8px;cursor:pointer;" @click="c && crm.useFollowupDraft(c.id, f.ai_draft!)">Abrir no chat com o rascunho</button>
               </div>
             </div>
-            <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
-              <button v-if="f.column !== 'done'" title="Concluir" style="background:rgba(var(--accent-rgb),.14);border:none;color:var(--accent);cursor:pointer;padding:6px 8px;border-radius:8px;display:flex;" @click="c && crm.completeFollowup(c.id, f.id)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m5 13 4 4L19 7" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
-              <button title="Excluir" style="background:none;border:none;color:var(--c-text-faint);cursor:pointer;padding:6px 8px;display:flex;" @click="crm.removeFollowup(f.id)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+            <div class="r-sm-gap-sm" style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
+              <button v-if="f.column !== 'done'" class="r-tap" title="Concluir" style="background:rgba(var(--accent-rgb),.14);border:none;color:var(--accent);cursor:pointer;padding:6px 8px;border-radius:8px;display:flex;" @click="c && crm.completeFollowup(c.id, f.id)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m5 13 4 4L19 7" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+              <button class="r-tap" title="Excluir" style="background:none;border:none;color:var(--c-text-faint);cursor:pointer;padding:6px 8px;display:flex;" @click="crm.removeFollowup(f.id)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
             </div>
           </div>
         </div>
         <div v-else style="font-size:13px;color:var(--c-text-muted);">Nenhum follow-up agendado. Crie um para não perder o lead de vista.</div>
       </div>
 
-      <div class="r-col-1" style="display:grid;grid-template-columns:1fr 1.2fr;gap:18px;margin-top:18px;">
+      <div class="r-col-1 r-md-col-1" style="display:grid;grid-template-columns:1fr 1.2fr;gap:18px;margin-top:18px;">
         <div style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:22px 24px;">
           <div style="font-size:15px;font-weight:700;margin-bottom:16px;">Detalhes</div>
           <div style="display:flex;flex-direction:column;gap:13px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;"><span style="font-size:13px;color:var(--c-text-muted);flex-shrink:0;">Telefone</span><span style="font-size:13.5px;font-weight:600;">{{ c?.phone || '—' }}</span></div>
+            <div class="r-field-row" style="display:flex;justify-content:space-between;align-items:center;gap:10px;"><span style="font-size:13px;color:var(--c-text-muted);flex-shrink:0;">Telefone</span><span style="font-size:13.5px;font-weight:600;">{{ c?.phone || '—' }}</span></div>
             <div style="height:1px;background:var(--c-surface-1);" />
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;"><span style="font-size:13px;color:var(--c-text-muted);flex-shrink:0;">E-mail</span><input v-model="form.email" placeholder="—" :style="inputStyle" @blur="save('email')" @keydown.enter="(e) => (e.target as HTMLInputElement).blur()"></div>
+            <div class="r-field-row" style="display:flex;justify-content:space-between;align-items:center;gap:10px;"><span style="font-size:13px;color:var(--c-text-muted);flex-shrink:0;">E-mail</span><input v-model="form.email" placeholder="—" :style="inputStyle" @blur="save('email')" @keydown.enter="(e) => (e.target as HTMLInputElement).blur()"></div>
             <div style="height:1px;background:var(--c-surface-1);" />
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;"><span style="font-size:13px;color:var(--c-text-muted);flex-shrink:0;">Empresa</span><input v-model="form.company" placeholder="—" :style="inputStyle" @blur="save('company')" @keydown.enter="(e) => (e.target as HTMLInputElement).blur()"></div>
+            <div class="r-field-row" style="display:flex;justify-content:space-between;align-items:center;gap:10px;"><span style="font-size:13px;color:var(--c-text-muted);flex-shrink:0;">Empresa</span><input v-model="form.company" placeholder="—" :style="inputStyle" @blur="save('company')" @keydown.enter="(e) => (e.target as HTMLInputElement).blur()"></div>
             <div style="height:1px;background:var(--c-surface-1);" />
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;"><span style="font-size:13px;color:var(--c-text-muted);flex-shrink:0;">Segmento</span><input v-model="form.segmento" placeholder="—" :style="inputStyle" @blur="save('segmento')" @keydown.enter="(e) => (e.target as HTMLInputElement).blur()"></div>
+            <div class="r-field-row" style="display:flex;justify-content:space-between;align-items:center;gap:10px;"><span style="font-size:13px;color:var(--c-text-muted);flex-shrink:0;">Segmento</span><input v-model="form.segmento" placeholder="—" :style="inputStyle" @blur="save('segmento')" @keydown.enter="(e) => (e.target as HTMLInputElement).blur()"></div>
             <div style="height:1px;background:var(--c-surface-1);" />
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;"><span style="font-size:13px;color:var(--c-text-muted);flex-shrink:0;">Origem</span><input v-model="form.origin" placeholder="—" :style="inputStyle" @blur="save('origin')" @keydown.enter="(e) => (e.target as HTMLInputElement).blur()"></div>
+            <div class="r-field-row" style="display:flex;justify-content:space-between;align-items:center;gap:10px;"><span style="font-size:13px;color:var(--c-text-muted);flex-shrink:0;">Origem</span><input v-model="form.origin" placeholder="—" :style="inputStyle" @blur="save('origin')" @keydown.enter="(e) => (e.target as HTMLInputElement).blur()"></div>
             <div style="height:1px;background:var(--c-surface-1);" />
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;"><span style="font-size:13px;color:var(--c-text-muted);flex-shrink:0;">Dono do negócio</span><select v-model="form.ownerUserId" :style="inputStyle" @change="save('ownerUserId')"><option :value="null">— sem dono —</option><option v-for="u in usuarios" :key="u.id" :value="u.id">{{ u.name }}</option></select></div>
+            <div class="r-field-row" style="display:flex;justify-content:space-between;align-items:center;gap:10px;"><span style="font-size:13px;color:var(--c-text-muted);flex-shrink:0;">Dono do negócio</span><select v-model="form.ownerUserId" :style="inputStyle" @change="save('ownerUserId')"><option :value="null">— sem dono —</option><option v-for="u in usuarios" :key="u.id" :value="u.id">{{ u.name }}</option></select></div>
             <div style="height:1px;background:var(--c-surface-1);" />
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;"><span style="font-size:13px;color:var(--c-text-muted);flex-shrink:0;">Responsável</span><input v-model="form.responsible" placeholder="—" :style="inputStyle" @blur="save('responsible')" @keydown.enter="(e) => (e.target as HTMLInputElement).blur()"></div>
+            <div class="r-field-row" style="display:flex;justify-content:space-between;align-items:center;gap:10px;"><span style="font-size:13px;color:var(--c-text-muted);flex-shrink:0;">Responsável</span><input v-model="form.responsible" placeholder="—" :style="inputStyle" @blur="save('responsible')" @keydown.enter="(e) => (e.target as HTMLInputElement).blur()"></div>
             <div style="height:1px;background:var(--c-surface-1);" />
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;"><span style="font-size:13px;color:var(--c-text-muted);flex-shrink:0;">Probabilidade</span><div style="display:flex;align-items:center;gap:4px;"><input v-model="form.prob" type="number" min="0" max="100" placeholder="0" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:9px;padding:8px 11px;color:var(--accent);font-family:inherit;font-size:13.5px;font-weight:700;outline:none;width:64px;text-align:right;" @blur="save('prob')" @keydown.enter="(e) => (e.target as HTMLInputElement).blur()"><span style="font-size:13.5px;font-weight:700;color:var(--accent);">%</span></div></div>
+            <div class="r-field-row" style="display:flex;justify-content:space-between;align-items:center;gap:10px;"><span style="font-size:13px;color:var(--c-text-muted);flex-shrink:0;">Probabilidade</span><div style="display:flex;align-items:center;gap:4px;"><input v-model="form.prob" type="number" min="0" max="100" placeholder="0" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:9px;padding:8px 11px;color:var(--accent);font-family:inherit;font-size:13.5px;font-weight:700;outline:none;width:64px;text-align:right;" @blur="save('prob')" @keydown.enter="(e) => (e.target as HTMLInputElement).blur()"><span style="font-size:13.5px;font-weight:700;color:var(--accent);">%</span></div></div>
           </div>
 
           <div style="font-size:13px;color:var(--c-text-muted);margin:18px 0 8px;">Observações</div>
@@ -235,9 +248,11 @@ async function addNote() {
         <div style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:22px 24px;">
           <div style="font-size:15px;font-weight:700;margin-bottom:14px;">Histórico de interações</div>
 
-          <div style="display:flex;gap:8px;margin-bottom:18px;">
-            <input v-model="noteText" placeholder="Registrar uma nota / interação…" style="flex:1;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:10px 12px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;" @keydown.enter="addNote">
-            <button :disabled="savingNote || !noteText.trim()" :style="{ background: 'var(--accent)', border: 'none', color: 'var(--accent-ink)', fontFamily: 'inherit', fontSize: '13px', fontWeight: 700, padding: '0 16px', borderRadius: '10px', cursor: (savingNote || !noteText.trim()) ? 'default' : 'pointer', opacity: (savingNote || !noteText.trim()) ? 0.6 : 1 }" @click="addNote">Adicionar</button>
+          <!-- r-wrap/r-min0: o <input> tem largura intrinseca de ~20 caracteres (16px forcados no
+               celular) e empurrava o botao "Adicionar" para fora da tela, cortado pelo layout. -->
+          <div class="r-wrap" style="display:flex;gap:8px;margin-bottom:18px;">
+            <input v-model="noteText" class="r-min0 r-full" placeholder="Registrar uma nota / interação…" style="flex:1;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:10px 12px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;" @keydown.enter="addNote">
+            <button class="r-full r-tap" :disabled="savingNote || !noteText.trim()" :style="{ background: 'var(--accent)', border: 'none', color: 'var(--accent-ink)', fontFamily: 'inherit', fontSize: '13px', fontWeight: 700, padding: '0 16px', borderRadius: '10px', cursor: (savingNote || !noteText.trim()) ? 'default' : 'pointer', opacity: (savingNote || !noteText.trim()) ? 0.6 : 1 }" @click="addNote">Adicionar</button>
           </div>
 
           <div v-if="crm.activities.length" style="display:flex;flex-direction:column;gap:0;">
@@ -249,7 +264,10 @@ async function addNote() {
               <div :style="{ paddingBottom: i < crm.activities.length - 1 ? '18px' : '0', flex: 1, minWidth: 0 }">
                 <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
                   <div style="font-size:13.5px;font-weight:600;word-break:break-word;">{{ a.title }}</div>
-                  <button class="delact" title="Excluir" style="background:none;border:none;color:var(--c-text-faint);cursor:pointer;padding:0;flex-shrink:0;display:flex;" @click="c && crm.removeActivity(c.id, a.id)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+                  <!-- Ação destrutiva sem desfazer: no dedo ela é visível (r-touch-show), então
+                       precisa de alvo de 44px. `r-tap-inline` cresce por fora (ícone de 14px +
+                       2×15px = 44) e não engorda cada linha do histórico como o `r-tap` faria. -->
+                  <button class="delact r-touch-show r-tap-inline" title="Excluir" style="--r-tap-grow:15px;background:none;border:none;color:var(--c-text-faint);cursor:pointer;padding:0;flex-shrink:0;display:flex;" @click="c && crm.removeActivity(c.id, a.id)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
                 </div>
                 <div v-if="a.body" style="font-size:12.5px;color:var(--c-text-secondary);margin-top:3px;white-space:pre-wrap;word-break:break-word;">{{ a.body }}</div>
                 <div style="font-size:12px;color:var(--c-text-muted);margin-top:2px;">{{ actMeta(a) }}</div>
@@ -264,6 +282,26 @@ async function addNote() {
 </template>
 
 <style scoped>
+/*
+  Ate 1200px as linhas da ficha empilham (.r-field-row). O `text-align:right` do campo so
+  fazia sentido colado ao rotulo: empilhado, jogava o que o usuario digita para o canto
+  oposto ao nome do campo.
+*/
+@media (max-width: 1200px) {
+  .r-field-row > input,
+  .r-field-row > select {
+    text-align: left !important;
+  }
+}
+
+/*
+  No celular a trilha passa a rolar (.r-steps, que zera o flex-grow). Sem um piso de largura
+  uma etapa de nome curto viraria uma barrinha de ~20px, impossivel de acertar com o dedo.
+*/
+@media (max-width: 820px) {
+  .stagestep { min-width: 72px; }
+}
+
 .wabtn:hover { background: var(--accent-hi) !important; }
 .ghost:hover { background: var(--c-surface-3) !important; }
 .bc:hover { color: var(--c-text) !important; }

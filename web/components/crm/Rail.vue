@@ -44,7 +44,10 @@ function isActive(s: Screen) {
 const hideOnMobile = computed(() => isMobile.value && (isActive('chat') || route.path.startsWith('/chat-')) && crm.chatOpen)
 const railStyle = computed(() => isMobile.value
   ? { order: 2, width: '100%', minHeight: '58px', flexShrink: 0, background: 'var(--c-surface-2)', borderTop: '1px solid var(--c-border)', display: hideOnMobile.value ? 'none' : 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: '0 6px', gap: '2px' }
-  : { width: '76px', flexShrink: 0, background: 'var(--c-surface-2)', borderRight: '1px solid var(--c-border)', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '18px 0', gap: '6px' })
+  // Em janela baixa (<=720px de altura) os 11 botões possíveis não cabiam nos 76px de
+  // coluna: o flex encolhia cada um no eixo Y e o `overflow:hidden` do layout cortava o
+  // resto, sem rolagem de resgate. `minHeight:0` + `overflowY:auto` deixam a coluna rolar.
+  : { width: '76px', flexShrink: 0, minHeight: 0, overflowY: 'auto', background: 'var(--c-surface-2)', borderRight: '1px solid var(--c-border)', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '18px 0', gap: '6px' })
 
 function nav(active: boolean) {
   const base = {
@@ -61,7 +64,7 @@ function nav(active: boolean) {
   */
   return isMobile.value
     ? { ...base, flex: '1 1 0', minWidth: 0, maxWidth: '54px', height: '44px' }
-    : { ...base, width: '46px', height: '46px' }
+    : { ...base, width: '46px', height: '46px', flexShrink: 0 }
 }
 
 const initials = computed(() => {
@@ -109,49 +112,53 @@ function onKeydown(e: KeyboardEvent) {
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('resize', placeMenu)
+  // Alguns Android não disparam `resize` ao girar o aparelho, e o menu (posição fixa
+  // calculada em px) ficava ancorado nas coordenadas da orientação antiga.
+  window.addEventListener('orientationchange', placeMenu)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('resize', placeMenu)
+  window.removeEventListener('orientationchange', placeMenu)
 })
 </script>
 
 <template>
   <nav :class="isMobile ? 'r-safe-bottom' : undefined" :style="railStyle">
-    <img v-if="!isMobile && companyLogo" :src="companyLogo" alt="Logo" style="width:42px;height:42px;border-radius:13px;object-fit:contain;margin-bottom:14px;">
-    <div v-else-if="!isMobile" style="width:42px;height:42px;border-radius:13px;background:var(--accent);display:flex;align-items:center;justify-content:center;margin-bottom:14px;box-shadow:0 6px 16px rgba(var(--accent-rgb),.35);">
+    <img v-if="!isMobile && companyLogo" :src="companyLogo" alt="Logo" style="width:42px;height:42px;flex-shrink:0;border-radius:13px;object-fit:contain;margin-bottom:14px;">
+    <div v-else-if="!isMobile" style="width:42px;height:42px;flex-shrink:0;border-radius:13px;background:var(--accent);display:flex;align-items:center;justify-content:center;margin-bottom:14px;box-shadow:0 6px 16px rgba(var(--accent-rgb),.35);">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 3c-4.97 0-9 3.58-9 8 0 2.5 1.3 4.7 3.3 6.1L5.5 21l3.6-1.5c.9.25 1.9.4 2.9.4 4.97 0 9-3.58 9-8s-4.03-8.9-9-8.9Z" fill="var(--accent-ink)" /></svg>
     </div>
 
-    <button v-for="i in order" :key="i" class="navbtn" :style="[nav(route.path === chatPath(i)), chats > 1 ? { position: 'relative' } : {}]" :title="chats > 1 ? `Chat ${i} — arraste para reordenar` : 'Chat'" :draggable="!isMobile && chats > 1" @click="goChat(i)" @dragstart="dragChat = i" @dragover.prevent @drop.prevent="dropChat(i)">
+    <button v-for="i in order" :key="i" class="navbtn r-tap-h" :style="[nav(route.path === chatPath(i)), chats > 1 ? { position: 'relative' } : {}]" :title="chats > 1 ? `Chat ${i} — arraste para reordenar` : 'Chat'" :draggable="!isMobile && chats > 1" @click="goChat(i)" @dragstart="dragChat = i" @dragover.prevent @drop.prevent="dropChat(i)">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 11.5a8.38 8.38 0 0 1-9 8.34 9 9 0 0 1-3.9-.9L3 21l1.06-4.1A8.38 8.38 0 0 1 3 11.5 8.5 8.5 0 0 1 21 11.5Z" stroke-linecap="round" stroke-linejoin="round" /></svg>
       <span v-if="chats > 1" class="chatbadge">{{ i }}</span>
     </button>
-    <button class="navbtn" :style="nav(isActive('pipeline'))" title="Funil" @click="crm.go('pipeline')">
+    <button class="navbtn r-tap-h" :style="nav(isActive('pipeline'))" title="Funil" @click="crm.go('pipeline')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="5" height="18" rx="1.5" /><rect x="9.5" y="3" width="5" height="12" rx="1.5" /><rect x="16" y="3" width="5" height="15" rx="1.5" /></svg>
     </button>
-    <button class="navbtn" :style="nav(isActive('tasks'))" title="Tarefas" @click="crm.go('tasks')">
+    <button class="navbtn r-tap-h" :style="nav(isActive('tasks'))" title="Tarefas" @click="crm.go('tasks')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="3.5" /><path d="m8 12.2 2.4 2.4L16 9" stroke-linecap="round" stroke-linejoin="round" /></svg>
     </button>
-    <button class="navbtn" :style="nav(isActive('agenda'))" title="Agenda" @click="crm.go('agenda')">
+    <button class="navbtn r-tap-h" :style="nav(isActive('agenda'))" title="Agenda" @click="crm.go('agenda')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4.5" width="18" height="16" rx="2.5" /><path d="M3 9h18M8 2.5v4M16 2.5v4" stroke-linecap="round" /></svg>
     </button>
-    <button class="navbtn" :style="nav(isActive('contacts'))" title="Contatos" @click="crm.go('contacts')">
+    <button class="navbtn r-tap-h" :style="nav(isActive('contacts'))" title="Contatos" @click="crm.go('contacts')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.4" /><path d="M5.5 20a6.5 6.5 0 0 1 13 0" stroke-linecap="round" /></svg>
     </button>
-    <button v-if="user?.is_admin" class="navbtn" :style="nav(route.path === '/admin/campanhas')" title="Campanhas (prospecção)" @click="navigateTo('/admin/campanhas')">
+    <button v-if="user?.is_admin" class="navbtn r-tap-h" :style="nav(route.path === '/admin/campanhas')" title="Campanhas (prospecção)" @click="navigateTo('/admin/campanhas')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21.5 3.2 2.8 10.4a.6.6 0 0 0 .05 1.13l4.9 1.6 1.6 4.9a.6.6 0 0 0 1.13.05Z" stroke-linejoin="round" /><path d="m21.5 3.2-13.75 9.93" stroke-linecap="round" /></svg>
     </button>
-    <button v-if="user?.is_admin" class="navbtn" :style="nav(route.path.startsWith('/marketing'))" title="Gerenciador de anúncios (Facebook Ads)" @click="navigateTo('/marketing')">
+    <button v-if="user?.is_admin" class="navbtn r-tap-h" :style="nav(route.path.startsWith('/marketing'))" title="Gerenciador de anúncios (Facebook Ads)" @click="navigateTo('/marketing')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11v2a1 1 0 0 0 1 1h2v4h2v-4l10 4.5v-15L8 8H4a1 1 0 0 0-1 1Z" stroke-linecap="round" stroke-linejoin="round" /></svg>
     </button>
-    <button v-if="user?.is_admin" class="navbtn" :style="nav(route.path === '/admin/memoria')" title="Memória da IA" @click="navigateTo('/admin/memoria')">
+    <button v-if="user?.is_admin" class="navbtn r-tap-h" :style="nav(route.path === '/admin/memoria')" title="Memória da IA" @click="navigateTo('/admin/memoria')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 3a3 3 0 0 0-3 3 3 3 0 0 0-1 5.8V15a3 3 0 0 0 3 3 2.5 2.5 0 0 0 5 0V5.5A2.5 2.5 0 0 0 9.5 3Z" /><path d="M15 3a3 3 0 0 1 3 3 3 3 0 0 1 1 5.8V15a3 3 0 0 1-3 3" /></svg>
     </button>
     <div v-if="!isMobile" style="flex:1;" />
 
     <button
-      ref="avatarEl" class="avatar" :title="user?.name || ''" aria-haspopup="menu" :aria-expanded="menuOpen"
+      ref="avatarEl" class="avatar r-tap" :title="user?.name || ''" aria-haspopup="menu" :aria-expanded="menuOpen"
       :style="{ width: '40px', height: '40px', borderRadius: '50%', border: 'none', cursor: 'pointer', background: 'linear-gradient(135deg,var(--accent),var(--accent-deep))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '14px', color: 'var(--accent-ink)', marginTop: isMobile ? '0' : '4px', flexShrink: 0, outline: menuOpen ? '2px solid var(--accent)' : 'none', outlineOffset: '2px' }"
       @click="toggleMenu()"
     >
@@ -243,7 +250,16 @@ onBeforeUnmount(() => {
   filter: brightness(1.08);
 }
 
+/*
+  Para super-admin o menu tem ~448px. No celular ele cresce para CIMA a partir do
+  avatar: em tela deitada (360px de altura) o topo saía da janela e não havia como
+  chegar em 'Usuários'/'Conexão WhatsApp'. Vale em qualquer largura — a janela baixa
+  do desktop tem o mesmo problema.
+*/
 .usermenu {
+  max-height: min(70dvh, calc(100dvh - 24px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--c-surface-2);
   border: 1px solid var(--c-border);
   border-radius: 14px;

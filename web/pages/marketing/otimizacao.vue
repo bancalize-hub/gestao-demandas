@@ -69,24 +69,35 @@ const td = 'font-size:12px;padding:7px 10px;border-top:1px solid var(--c-surface
 
 <template>
   <div style="flex:1;min-width:0;background:var(--c-bg-deep);display:flex;flex-direction:column;overflow-y:auto;">
-    <div style="padding:16px 24px;border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;gap:12px;flex-shrink:0;">
+    <!-- Sem quebra de linha, o cabeçalho tinha ~400px de largura mínima (ícone + seletor
+         de período + "← Gerenciador", nenhum deles encolhível) e em 360px estourava para
+         fora: como a raiz tem overflow-y:auto, o estouro virava rolagem horizontal da tela
+         inteira. O r-pad ainda alinha o respiro lateral com o corpo abaixo. -->
+    <div class="r-wrap r-pad" style="padding-block:16px;border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;gap:12px;flex-shrink:0;">
       <div style="width:34px;height:34px;border-radius:10px;background:var(--accent);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:17px;">🎯</div>
       <div style="min-width:0;">
         <div style="font-weight:800;font-size:15px;">Otimização</div>
         <div style="font-size:12px;color:var(--c-text-muted);">De onde vêm os leads que qualificam</div>
       </div>
-      <div style="flex:1;" />
+      <!-- o espaçador vira a quebra de linha no celular: o período e o link caem juntos
+           na fileira de baixo, em vez de cada um ocupar uma fileira própria -->
+      <div class="r-break-line" style="flex:1;" />
       <div style="display:flex;align-items:center;gap:4px;background:var(--c-bg-deepest);border:1px solid var(--c-surface-1);border-radius:10px;padding:4px;">
         <button
-          v-for="p in periodos" :key="p.value"
+          v-for="p in periodos" :key="p.value" class="r-tap"
           :style="{ background: periodo === p.value ? 'var(--c-surface-2)' : 'transparent', border: 'none', color: periodo === p.value ? 'var(--c-text)' : 'var(--c-text-faint)', fontFamily: 'inherit', fontSize: '11.5px', fontWeight: 700, padding: '5px 10px', borderRadius: '7px', cursor: 'pointer' }"
           @click="periodo = p.value"
         >{{ p.label }}</button>
       </div>
-      <NuxtLink to="/marketing" style="text-decoration:none;background:var(--c-surface-2);color:var(--c-text-secondary);font-size:12.5px;font-weight:700;padding:8px 13px;border-radius:9px;">← Gerenciador</NuxtLink>
+      <NuxtLink to="/marketing" class="r-tap" style="text-decoration:none;background:var(--c-surface-2);color:var(--c-text-secondary);font-size:12.5px;font-weight:700;padding:8px 13px;border-radius:9px;">← Gerenciador</NuxtLink>
     </div>
 
-    <div style="padding:20px 24px;max-width:1100px;">
+    <!--
+      A coluna tinha teto de 1100px mas nenhuma centralização: em 1600px+ as tabelas e os
+      KPIs ficavam colados na borda esquerda enquanto o cabeçalho ia até o fim da tela. Em
+      360px os 48px de padding lateral saíam da largura de tabelas que já estão apertadas.
+    -->
+    <div class="r-page r-pad" style="--r-page:1100px;padding-block:20px;">
       <div v-if="carregando" style="font-size:12.5px;color:var(--c-text-faint);">Carregando…</div>
       <div v-else-if="erro" style="background:rgba(255,77,77,.08);border:1px solid rgba(255,77,77,.3);border-radius:10px;padding:10px 12px;font-size:12px;color:var(--c-danger-soft);">{{ erro }}</div>
 
@@ -134,8 +145,16 @@ const td = 'font-size:12px;padding:7px 10px;border-top:1px solid var(--c-surface
               <div style="font-size:11px;color:var(--c-text-faint);margin-top:5px;line-height:1.5;">{{ c.nota }}</div>
             </div>
 
-            <div style="overflow-x:auto;">
-              <table style="width:100%;border-collapse:collapse;">
+            <!--
+              São 9 colunas com nowrap (~900px): no celular a tabela rola, e sem prender a
+              coluna do rótulo o usuário ficava lendo "Intervalo (95%)" sem saber de qual
+              recorte. O r-table-wrap acrescenta o overscroll-contain que faltava (o arraste
+              lateral encadeava no gesto de voltar do iOS) e o r-scroll-hint avisa, com
+              sombra na borda, que ainda há coluna fora da tela. O border-collapse vira
+              separate porque o Safari ignora position:sticky em tabela colapsada.
+            -->
+            <div class="r-table-wrap r-scroll-hint" style="--r-hint-bg:var(--c-bg-deepest);">
+              <table class="r-table r-table-sticky-1" style="width:100%;border-collapse:separate;border-spacing:0;--r-sticky-bg:var(--c-bg-deepest);">
                 <thead>
                   <tr>
                     <th :style="th">&nbsp;</th>
@@ -196,13 +215,18 @@ const td = 'font-size:12px;padding:7px 10px;border-top:1px solid var(--c-surface
 
           <div v-for="f in dados.facebook" :key="f.chave" style="margin-bottom:18px;">
             <div :style="cartao + 'padding:0;overflow:hidden;'">
-              <div style="padding:11px 16px;border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;gap:9px;">
+              <!-- r-wrap: sem quebra, o selo de 38 caracteres era espremido ao lado do
+                   título e quebrava em três linhas dentro da própria pílula, virando um
+                   bloco de texto com fundo em vez de um selo -->
+              <div class="r-wrap" style="padding:11px 16px;border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;gap:9px;">
                 <strong style="font-size:13px;">{{ f.titulo }}</strong>
                 <span style="font-size:10px;font-weight:800;padding:3px 8px;border-radius:6px;background:var(--c-surface-1);color:var(--c-text-faint);">CONVERSA INICIADA — NÃO É QUALIFICAÇÃO</span>
               </div>
+              <!-- mesmo caso da tabela do CRM: 7 colunas nowrap, e sem a primeira presa
+                   Gasto/CPM/Custo-por-conversa ficam sem dizer de que recorte são -->
               <div v-if="!f.linhas.length" style="padding:12px 16px;font-size:12px;color:var(--c-text-faint);">Sem dados no período.</div>
-              <div v-else style="overflow-x:auto;">
-                <table style="width:100%;border-collapse:collapse;">
+              <div v-else class="r-table-wrap r-scroll-hint" style="--r-hint-bg:var(--c-bg-deepest);">
+                <table class="r-table r-table-sticky-1" style="width:100%;border-collapse:separate;border-spacing:0;--r-sticky-bg:var(--c-bg-deepest);">
                   <thead>
                     <tr>
                       <th :style="th">&nbsp;</th>
@@ -237,3 +261,15 @@ const td = 'font-size:12px;padding:7px 10px;border-top:1px solid var(--c-surface
     </div>
   </div>
 </template>
+
+<style scoped>
+/*
+  A coluna presa precisa de uma marca de onde o conteúdo passa por baixo — sem ela, com a
+  tabela rolada, o número da coluna vizinha encosta no rótulo e parece pertencer a ele.
+  É box-shadow, e não border-right, para não entrar na conta de largura das colunas.
+*/
+.r-table-sticky-1 th:first-child,
+.r-table-sticky-1 td:first-child {
+  box-shadow: 1px 0 0 0 var(--c-surface-1);
+}
+</style>

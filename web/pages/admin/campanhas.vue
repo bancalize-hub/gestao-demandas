@@ -227,18 +227,30 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 <template>
   <div style="flex:1;min-width:0;background:var(--c-bg-deep);display:flex;flex-direction:column;overflow-y:auto;">
     <!-- topo -->
-    <div class="r-wrap" style="padding:16px clamp(12px,4vw,30px);border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;gap:11px;flex-shrink:0;">
-      <div style="width:34px;height:34px;border-radius:10px;background:var(--c-ai);display:flex;align-items:center;justify-content:center;">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--c-on-accent)" stroke-width="2"><path d="M3 11v2a1 1 0 0 0 1 1h2l3.5 3.5V7.5L6 11H4Z" stroke-linecap="round" stroke-linejoin="round" /><path d="m9.5 7.5 9-4v17l-9-4" stroke-linecap="round" stroke-linejoin="round" /></svg>
+    <div style="border-bottom:1px solid var(--c-surface-1);flex-shrink:0;">
+      <!-- O teto de largura entrou AQUI DENTRO, e não no bloco de fora, para a borda
+           continuar atravessando a tela toda no ultrawide enquanto o título fica
+           alinhado com os cartões (que agora param em 1440px).
+           O respiro lateral mora NESTA caixa, não na de fora: com `box-sizing:border-box`
+           global, os 1440px do `.r-page` do conteúdo já incluem o padding dele — medir o
+           teto do cabeçalho DEPOIS do padding do pai deslocava o título 30px à esquerda
+           do primeiro cartão em qualquer tela ≥1500px. -->
+      <div class="r-wrap r-page" style="display:flex;align-items:center;gap:11px;padding:16px clamp(12px,4vw,30px);">
+        <div style="width:34px;height:34px;border-radius:10px;background:var(--c-ai);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--c-on-accent)" stroke-width="2"><path d="M3 11v2a1 1 0 0 0 1 1h2l3.5 3.5V7.5L6 11H4Z" stroke-linecap="round" stroke-linejoin="round" /><path d="m9.5 7.5 9-4v17l-9-4" stroke-linecap="round" stroke-linejoin="round" /></svg>
+        </div>
+        <div class="r-min0" style="flex:1;">
+          <div style="font-weight:800;font-size:15px;">Campanhas</div>
+          <!-- em 360px o subtítulo quebrava em 4 linhas e dobrava a altura do topo -->
+          <div class="r-xs-hide" style="font-size:12px;color:var(--c-text-muted);">Disparo para listas de contatos · somente administradores</div>
+        </div>
+        <button class="r-tap r-xs-full" style="background:var(--c-ai);border:none;color:var(--c-on-accent);font-family:inherit;font-size:13px;font-weight:700;padding:9px 15px;border-radius:10px;cursor:pointer;flex-shrink:0;" @click="abrirNova">+ Nova campanha</button>
       </div>
-      <div style="flex:1;">
-        <div style="font-weight:800;font-size:15px;">Campanhas</div>
-        <div style="font-size:12px;color:var(--c-text-muted);">Disparo para listas de contatos · somente administradores</div>
-      </div>
-      <button style="background:var(--c-ai);border:none;color:var(--c-on-accent);font-family:inherit;font-size:13px;font-weight:700;padding:9px 15px;border-radius:10px;cursor:pointer;flex-shrink:0;" @click="abrirNova">+ Nova campanha</button>
     </div>
 
-    <div style="flex:1;padding:22px clamp(12px,4vw,30px) 40px;">
+    <!-- r-page: sem teto, a grade auto-fill abria 6+ colunas de cartão num monitor de
+         2560px e a leitura se perdia entre uma campanha e outra -->
+    <div class="r-page" style="flex:1;padding:22px clamp(12px,4vw,30px) 40px;">
       <div v-if="loading" style="color:var(--c-text-muted);font-size:14px;text-align:center;padding:40px;">Carregando…</div>
 
       <template v-else>
@@ -258,7 +270,9 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
             <div style="display:flex;align-items:flex-start;gap:8px;">
               <div style="flex:1;min-width:0;">
                 <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
-                  <span style="font-weight:800;font-size:15px;">{{ c.name }}</span>
+                  <!-- nome colado ("Leads_de_anuncio_julho_reativacao") não tem onde
+                       quebrar e vazava o cartão de 360px, ligando rolagem lateral -->
+                  <span class="r-break" style="font-weight:800;font-size:15px;">{{ c.name }}</span>
                   <span :style="{ fontSize: '10.5px', fontWeight: 700, padding: '2px 9px', borderRadius: '20px', background: statusPill(c.status)[1] + '22', color: statusPill(c.status)[1] }">{{ statusPill(c.status)[0] }}</span>
                 </div>
                 <div style="font-size:11.5px;color:var(--c-text-muted);margin-top:3px;">
@@ -267,7 +281,8 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
                   <template v-else-if="c.starts_at"> · começa {{ dataHora(c.starts_at) }}</template>
                 </div>
               </div>
-              <button title="Excluir" style="background:none;border:none;color:var(--c-text-faint);cursor:pointer;font-size:15px;flex-shrink:0;padding:2px 4px;" @click="remove(c)">✕</button>
+              <!-- apagar campanha + contatos num alvo de 23×21px encostado no nome: no dedo virava toque errado -->
+              <button title="Excluir" class="r-tap r-tap-pad" style="background:none;border:none;color:var(--c-text-faint);cursor:pointer;font-size:15px;flex-shrink:0;padding:2px 4px;" @click="remove(c)">✕</button>
             </div>
 
             <div v-if="c.motivo" style="background:rgba(255,180,67,.1);border:1px solid rgba(255,180,67,.28);border-radius:10px;padding:8px 11px;font-size:11.5px;color:var(--c-warn-soft);">
@@ -285,7 +300,10 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
             </div>
 
             <!-- métricas -->
-            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:7px;">
+            <!-- minmax(0,1fr): com `1fr` puro um número de 7 dígitos forçava min-content
+                 e a grade estourava o cartão; em ≤480px viram 2 colunas para o rótulo
+                 "responderam · 45%" não quebrar em três linhas -->
+            <div class="r-xs-col-2" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;">
               <div style="background:var(--c-surface-2);border-radius:9px;padding:8px 10px;">
                 <div style="font-size:16px;font-weight:800;letter-spacing:-.5px;">{{ c.total }}</div>
                 <div style="font-size:10px;color:var(--c-text-faint);">contatos</div>
@@ -317,7 +335,9 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
               <div style="font-size:11.5px;color:var(--c-text-muted);margin-bottom:6px;">
                 Template: <b :style="{ color: c.template_name ? 'var(--c-text-secondary)' : 'var(--c-danger-soft)' }">{{ c.template_name || 'nenhum escolhido' }}</b>
               </div>
-              <select :value="c.template_name || ''" style="width:100%;box-sizing:border-box;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:9px;padding:8px 10px;color:var(--c-text);font-family:inherit;font-size:12px;outline:none;" @focus="carregarTemplates(c.wa_account_id)" @change="(e:any) => escolherTemplateDaCampanha(c, e.target.value)">
+              <!-- escolhe a mensagem que vai sair: com a fonte de 16px do celular o
+                   seletor ainda parava em ~37px de altura -->
+              <select :value="c.template_name || ''" class="r-tap-h" style="width:100%;box-sizing:border-box;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:9px;padding:8px 10px;color:var(--c-text);font-family:inherit;font-size:12px;outline:none;" @focus="carregarTemplates(c.wa_account_id)" @change="(e:any) => escolherTemplateDaCampanha(c, e.target.value)">
                 <option value="">Escolher template…</option>
                 <option v-for="t in templates" :key="t.name" :value="t.name" :disabled="t.status !== 'APPROVED'">
                   {{ t.status === 'APPROVED' ? '' : '⏳ ' }}{{ t.name }} ({{ t.language }}){{ t.status === 'APPROVED' ? '' : ' — em análise' }}
@@ -327,9 +347,12 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 
             <!-- contatos -->
             <div style="border-top:1px solid var(--c-surface-1);padding-top:11px;">
-              <div v-if="listas.length" style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:9px;">
+              <!-- é o controle que decide PARA QUEM vai o disparo: com 26px de altura e
+                   5px de folga, o dedo marcava a lista vizinha -->
+              <div v-if="listas.length" class="r-sm-gap-sm" style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:9px;">
                 <button
                   v-for="l in listas" :key="l.id"
+                  class="r-tap-pad"
                   :style="{ fontSize:'11px',fontWeight:700,padding:'5px 10px',borderRadius:'20px',border:'1px solid',cursor:'pointer',fontFamily:'inherit',
                             background: listasEscolhidas.includes(l.id) ? 'var(--c-ai)' : 'transparent',
                             borderColor: listasEscolhidas.includes(l.id) ? 'var(--c-ai)' : 'var(--c-surface-3)',
@@ -338,10 +361,12 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
                 >{{ l.name }} · {{ l.contacts_count }}</button>
               </div>
               <div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center;">
-                <button v-if="listas.length" :disabled="!listasEscolhidas.length || carregandoListas === c.id" :style="{ background:'var(--c-surface-2)',border:'none',color:'var(--c-text)',fontFamily:'inherit',fontSize:'12px',fontWeight:700,padding:'7px 12px',borderRadius:'9px', cursor:(!listasEscolhidas.length || carregandoListas === c.id)?'default':'pointer', opacity:(!listasEscolhidas.length || carregandoListas === c.id)?0.5:1 }" @click="usarListas(c)">
+                <button v-if="listas.length" class="r-tap" :disabled="!listasEscolhidas.length || carregandoListas === c.id" :style="{ background:'var(--c-surface-2)',border:'none',color:'var(--c-text)',fontFamily:'inherit',fontSize:'12px',fontWeight:700,padding:'7px 12px',borderRadius:'9px', cursor:(!listasEscolhidas.length || carregandoListas === c.id)?'default':'pointer', opacity:(!listasEscolhidas.length || carregandoListas === c.id)?0.5:1 }" @click="usarListas(c)">
                   {{ carregandoListas === c.id ? 'Carregando…' : '+ Carregar listas' }}
                 </button>
-                <label :style="{ background: 'var(--c-surface-2)', color: 'var(--c-text)', fontSize: '12px', fontWeight: 700, padding: '7px 12px', borderRadius: '9px', cursor: 'pointer' }">
+                <!-- o <input type=file> está escondido: este rótulo de 31px era o único
+                     caminho para importar CSV e o alvo mais difícil da tela no celular -->
+                <label class="r-tap" :style="{ background: 'var(--c-surface-2)', color: 'var(--c-text)', fontSize: '12px', fontWeight: 700, padding: '7px 12px', borderRadius: '9px', cursor: 'pointer' }">
                   {{ uploadingId === c.id ? 'Enviando…' : '⬆ CSV' }}
                   <input type="file" accept=".csv,text/csv,text/plain" style="display:none;" :disabled="uploadingId === c.id" @change="(e) => uploadCsv(c, e)">
                 </label>
@@ -350,10 +375,11 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
             </div>
 
             <!-- ações -->
+            <!-- ligar e pausar o disparo: 35px de altura exigia mira no celular -->
             <div style="display:flex;gap:7px;">
-              <button v-if="c.status === 'draft' || c.status === 'paused'" style="flex:1;background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:12.5px;font-weight:700;padding:9px;border-radius:9px;cursor:pointer;" @click="setStatus(c, 'running')">▶ Iniciar</button>
-              <button v-if="c.status === 'running'" style="flex:1;background:rgba(255,180,67,.14);border:1px solid rgba(255,180,67,.3);color:var(--c-warn);font-family:inherit;font-size:12.5px;font-weight:700;padding:9px;border-radius:9px;cursor:pointer;" @click="setStatus(c, 'paused')">⏸ Pausar</button>
-              <button v-if="c.status === 'done'" disabled style="flex:1;background:var(--c-surface-2);border:none;color:var(--c-text-faint);font-family:inherit;font-size:12.5px;font-weight:700;padding:9px;border-radius:9px;">Concluída</button>
+              <button v-if="c.status === 'draft' || c.status === 'paused'" class="r-tap" style="flex:1;background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:12.5px;font-weight:700;padding:9px;border-radius:9px;cursor:pointer;" @click="setStatus(c, 'running')">▶ Iniciar</button>
+              <button v-if="c.status === 'running'" class="r-tap" style="flex:1;background:rgba(255,180,67,.14);border:1px solid rgba(255,180,67,.3);color:var(--c-warn);font-family:inherit;font-size:12.5px;font-weight:700;padding:9px;border-radius:9px;cursor:pointer;" @click="setStatus(c, 'paused')">⏸ Pausar</button>
+              <button v-if="c.status === 'done'" disabled class="r-tap" style="flex:1;background:var(--c-surface-2);border:none;color:var(--c-text-faint);font-family:inherit;font-size:12.5px;font-weight:700;padding:9px;border-radius:9px;">Concluída</button>
             </div>
           </div>
         </div>
@@ -361,11 +387,16 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
     </div>
 
     <!-- ============ POPUP: nova campanha ============ -->
-    <div v-if="open" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:60;padding:24px;" @click.self="open = false">
-      <div style="width:520px;max-width:100%;max-height:88vh;overflow-y:auto;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:24px;">
+    <!-- Formulário longo (template + variáveis + limites + listas) num bloco centralizado
+         medido em vh: no celular o vh conta a barra de URL, então o fim do modal — onde
+         moram Cancelar/Criar campanha — ficava embaixo da borda da tela. r-overlay +
+         r-sheet transformam isso em folha de baixo (90dvh, colada no rodapé, com safe
+         area); o padding de 24px do pano também sumia 48px dos 360px de largura. -->
+    <div v-if="open" class="r-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:60;padding:24px;" @click.self="open = false">
+      <div class="r-sheet r-xs-pad-sm" style="width:520px;max-width:100%;max-height:88dvh;overflow-y:auto;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:24px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
           <div style="font-size:18px;font-weight:800;">Nova campanha</div>
-          <button style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:20px;line-height:1;" @click="open = false">×</button>
+          <button class="r-tap" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;font-size:20px;line-height:1;" @click="open = false">×</button>
         </div>
 
         <input v-model="form.name" placeholder="Nome da campanha (ex.: Leads de anúncio — julho)" style="width:100%;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:11px 12px;color:var(--c-text);font-family:inherit;font-size:13.5px;outline:none;box-sizing:border-box;">
@@ -392,7 +423,9 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
             </option>
           </select>
 
-          <div v-if="templateEscolhido" style="margin-top:10px;background:var(--c-surface-2);border-radius:10px;padding:11px 12px;font-size:12.5px;color:var(--c-text-secondary);line-height:1.5;white-space:pre-wrap;">{{ templateEscolhido.body }}</div>
+          <!-- template quase sempre traz link com utm: pre-wrap não quebra URL e ela
+               vazava o modal em 360px, criando rolagem lateral dentro do popup -->
+          <div v-if="templateEscolhido" class="r-break" style="margin-top:10px;background:var(--c-surface-2);border-radius:10px;padding:11px 12px;font-size:12.5px;color:var(--c-text-secondary);line-height:1.5;white-space:pre-wrap;">{{ templateEscolhido.body }}</div>
 
           <template v-if="templateEscolhido && templateEscolhido.params">
             <div style="margin-top:12px;font-size:12.5px;font-weight:700;color:var(--c-text-secondary);margin-bottom:6px;">O que vai em cada variável</div>
@@ -405,7 +438,9 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
           </template>
 
           <div style="margin-top:14px;font-size:12.5px;font-weight:700;color:var(--c-text-secondary);margin-bottom:6px;">Começar em (opcional)</div>
-          <input v-model="form.starts_at" type="datetime-local" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:9px;padding:9px 11px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;">
+          <!-- único campo do formulário sem largura cheia: no celular ficava com a
+               largura nativa (~230px), desalinhado de todos os vizinhos -->
+          <input v-model="form.starts_at" type="datetime-local" class="r-full" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:9px;padding:9px 11px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;">
           <div style="font-size:11.5px;color:var(--c-text-faint);margin-top:6px;">Em branco = começa assim que você apertar Iniciar.</div>
         </template>
 
@@ -415,25 +450,37 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
           <textarea v-model="form.objective" rows="3" placeholder="Ex.: Apresentar a plataforma e agendar uma conversa de 15 min com quem tiver interesse." style="width:100%;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:11px 12px;color:var(--c-text);font-family:inherit;font-size:13.5px;outline:none;box-sizing:border-box;resize:vertical;" />
 
           <div style="font-size:11.5px;color:var(--c-text-faint);margin-top:10px;line-height:1.5;">Número não-oficial: os limites abaixo existem para o WhatsApp não bloquear o número.</div>
+          <!-- Estes campos foram medidos em px para a fonte de 13px do desktop; no celular
+               a regra global sobe todo input para 16px (anti-zoom do iOS) e 64px viram
+               ~42px úteis — número de 3 dígitos encostando na borda. Daí o `campo-num`
+               (fluido até 820px) e cada grupo ocupando a linha inteira em ≤480px. -->
           <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap;">
-            <div>
+            <div class="r-xs-full">
               <div style="font-size:11.5px;color:var(--c-text-muted);margin-bottom:4px;">Teto diário</div>
-              <input v-model.number="form.daily_cap" type="number" min="1" max="1000" style="width:90px;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:8px;padding:8px 10px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;">
-            </div>
-            <div>
-              <div style="font-size:11.5px;color:var(--c-text-muted);margin-bottom:4px;">Intervalo (seg)</div>
-              <div style="display:flex;align-items:center;gap:5px;">
-                <input v-model.number="form.min_gap_s" type="number" min="15" style="width:64px;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:8px;padding:8px 10px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;">
-                <span style="color:var(--c-text-muted);">a</span>
-                <input v-model.number="form.max_gap_s" type="number" min="15" style="width:64px;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:8px;padding:8px 10px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;">
+              <!-- A linha de flex é o que faz o `.campo-num` valer: sem um pai flex, o
+                   `flex:1 1 0` é inerte e sobra o `width:auto`, que num input[type=number]
+                   devolve a largura NATIVA do navegador (~170px) — o campo ficava solto
+                   dentro do grupo de largura cheia em ≤480px. -->
+              <div style="display:flex;">
+                <input v-model.number="form.daily_cap" type="number" min="1" max="1000" class="campo-num" style="width:90px;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:8px;padding:8px 10px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;">
               </div>
             </div>
-            <div>
+            <div class="r-xs-full">
+              <div style="font-size:11.5px;color:var(--c-text-muted);margin-bottom:4px;">Intervalo (seg)</div>
+              <div class="r-xs-wrap" style="display:flex;align-items:center;gap:5px;">
+                <input v-model.number="form.min_gap_s" type="number" min="15" class="campo-num" style="width:64px;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:8px;padding:8px 10px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;">
+                <span style="color:var(--c-text-muted);">a</span>
+                <input v-model.number="form.max_gap_s" type="number" min="15" class="campo-num" style="width:64px;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:8px;padding:8px 10px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;">
+              </div>
+            </div>
+            <div class="r-xs-full">
               <div style="font-size:11.5px;color:var(--c-text-muted);margin-bottom:4px;">Janela de horário</div>
-              <div style="display:flex;align-items:center;gap:5px;">
-                <input v-model="form.window_start" type="time" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:8px;padding:7px 9px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;">
+              <!-- dois input[type=time] a 16px medem ~105px cada: em 360px o par não
+                   cabia no modal sem poder quebrar a linha -->
+              <div class="r-xs-wrap" style="display:flex;align-items:center;gap:5px;">
+                <input v-model="form.window_start" type="time" class="campo-num" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:8px;padding:7px 9px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;">
                 <span style="color:var(--c-text-muted);">–</span>
-                <input v-model="form.window_end" type="time" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:8px;padding:7px 9px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;">
+                <input v-model="form.window_end" type="time" class="campo-num" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:8px;padding:7px 9px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;">
               </div>
             </div>
           </div>
@@ -442,9 +489,10 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
         <!-- listas -->
         <div v-if="listas.length" style="margin-top:16px;border-top:1px solid var(--c-surface-1);padding-top:14px;">
           <div style="font-size:12.5px;font-weight:700;color:var(--c-text-secondary);margin-bottom:8px;">Para quem disparar</div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <div class="r-sm-gap-sm" style="display:flex;gap:6px;flex-wrap:wrap;">
             <button
               v-for="l in listas" :key="l.id"
+              class="r-tap-pad"
               :style="{ fontSize:'11.5px',fontWeight:700,padding:'6px 11px',borderRadius:'20px',border:'1px solid',cursor:'pointer',fontFamily:'inherit',
                         background: listasEscolhidas.includes(l.id) ? 'var(--c-ai)' : 'transparent',
                         borderColor: listasEscolhidas.includes(l.id) ? 'var(--c-ai)' : 'var(--c-surface-3)',
@@ -455,11 +503,29 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
           <div style="font-size:11.5px;color:var(--c-text-faint);margin-top:7px;">Dá para deixar em branco e carregar depois, no cartão da campanha.</div>
         </div>
 
-        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:20px;">
-          <button style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);font-family:inherit;font-size:13px;padding:10px 16px;border-radius:10px;cursor:pointer;" @click="open = false">Cancelar</button>
-          <button :disabled="saving || !form.name.trim() || !form.wa_account_id" :style="{ background: 'var(--c-ai)', border: 'none', color: 'var(--c-on-accent)', fontFamily: 'inherit', fontSize: '13.5px', fontWeight: 700, padding: '10px 20px', borderRadius: '10px', cursor: (saving || !form.name.trim() || !form.wa_account_id) ? 'default' : 'pointer', opacity: (saving || !form.name.trim() || !form.wa_account_id) ? 0.6 : 1 }" @click="create">{{ saving ? 'Criando…' : 'Criar campanha' }}</button>
+        <!-- em 360px os dois botões ocupavam quase toda a largura útil sem poder quebrar -->
+        <div class="r-wrap" style="display:flex;gap:8px;justify-content:flex-end;margin-top:20px;">
+          <button class="r-tap" style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);font-family:inherit;font-size:13px;padding:10px 16px;border-radius:10px;cursor:pointer;" @click="open = false">Cancelar</button>
+          <button class="r-tap" :disabled="saving || !form.name.trim() || !form.wa_account_id" :style="{ background: 'var(--c-ai)', border: 'none', color: 'var(--c-on-accent)', fontFamily: 'inherit', fontSize: '13.5px', fontWeight: 700, padding: '10px 20px', borderRadius: '10px', cursor: (saving || !form.name.trim() || !form.wa_account_id) ? 'default' : 'pointer', opacity: (saving || !form.name.trim() || !form.wa_account_id) ? 0.6 : 1 }" @click="create">{{ saving ? 'Criando…' : 'Criar campanha' }}</button>
         </div>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+/*
+  Falta no responsive.css um utilitário para "input com largura travada em px que
+  precisa virar fluido no celular": o `.r-sm-auto-w` devolve a largura NATIVA do
+  input[type=number] (~150px) e estoura a linha, e o `.r-field` fixa width:100% dentro
+  de um pai de largura automática. Aqui o campo vira item flexível de verdade, para
+  caber com a fonte de 16px que a regra global força até 820px.
+*/
+@media (max-width: 820px) {
+  .campo-num {
+    flex: 1 1 0 !important;
+    width: auto !important;
+    min-width: 0 !important;
+  }
+}
+</style>

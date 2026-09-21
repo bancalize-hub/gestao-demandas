@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\AgentController;
 use App\Http\Controllers\Api\AiCredentialController;
+use App\Http\Controllers\Api\AttendanceController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BrandingController;
 use App\Http\Controllers\Api\CampaignController;
@@ -62,6 +63,10 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
     // Branding da empresa: cor de destaque + logos (alteração só admin, checado no controller).
     Route::get('/branding', [BrandingController::class, 'show']);
     Route::patch('/branding', [BrandingController::class, 'update']);
+
+    // Horário de atendimento: quando a IA pode ABORDAR (retomada, reunião, campanha).
+    Route::get('/attendance', [AttendanceController::class, 'show']);
+    Route::patch('/attendance', [AttendanceController::class, 'update']);
     Route::post('/branding/logo', [BrandingController::class, 'uploadLogo']);
     Route::delete('/branding/logo', [BrandingController::class, 'removeLogo']);
 
@@ -116,8 +121,18 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
         Route::get('/agent/jobs/{job}', [AgentController::class, 'job']);
         Route::post('/agent/jobs/{job}/stop', [AgentController::class, 'stop']);
 
-        // Marketing: credencial do Facebook Ads + biblioteca de criativos. O terminal
-        // do agente de marketing usa as rotas /agent acima (sessões com kind=marketing).
+        // Painel da PLATAFORMA (página /super): fala de todas as empresas ao mesmo tempo,
+        // por isso vive aqui dentro e nunca no grupo comum. Ver PLANO-SUPER-ADMIN.md.
+        Route::get('/super/companies', [SuperController::class, 'empresas']);
+        Route::patch('/super/companies/{company}', [SuperController::class, 'alternarEmpresa']);
+        Route::get('/super/wa-accounts', [SuperController::class, 'numeros']);
+        Route::patch('/super/wa-accounts/{conta}', [SuperController::class, 'alternarNumero']);
+        Route::get('/super/platform', [SuperController::class, 'plataforma']);
+    });
+
+    // Marketing (Facebook Ads): credencial, criativos, campanhas e memória — tudo POR
+    // EMPRESA (BelongsToCompany), por isso o gate é o admin da empresa, não o super-admin.
+    Route::middleware('admin')->group(function () {
         Route::get('/marketing/status', [MarketingController::class, 'status']);
         Route::post('/marketing/credentials', [MarketingController::class, 'salvar']);
         Route::post('/marketing/test', [MarketingController::class, 'testar']);
@@ -139,14 +154,6 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
         Route::post('/marketing/memorias', [MarketingController::class, 'salvarMemoria']);
         Route::patch('/marketing/memorias/{memoria}', [MarketingController::class, 'atualizarMemoria']);
         Route::delete('/marketing/memorias/{memoria}', [MarketingController::class, 'apagarMemoria']);
-
-        // Painel da PLATAFORMA (página /super): fala de todas as empresas ao mesmo tempo,
-        // por isso vive aqui dentro e nunca no grupo comum. Ver PLANO-SUPER-ADMIN.md.
-        Route::get('/super/companies', [SuperController::class, 'empresas']);
-        Route::patch('/super/companies/{company}', [SuperController::class, 'alternarEmpresa']);
-        Route::get('/super/wa-accounts', [SuperController::class, 'numeros']);
-        Route::patch('/super/wa-accounts/{conta}', [SuperController::class, 'alternarNumero']);
-        Route::get('/super/platform', [SuperController::class, 'plataforma']);
     });
 
     Route::get('/stages', [StageController::class, 'index']);
@@ -184,6 +191,9 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
     Route::delete('/google/events/{event}', [EventController::class, 'destroy']);
     // Marcação manual de "aconteceu / não aconteceu" (o Meet não mede reunião por telefone ou presencial).
     Route::post('/google/events/{event}/attendance', [EventController::class, 'attendance']);
+    // Gravações de reunião na ficha: lista por lead + streaming do vídeo (Drive por trás).
+    Route::get('/conversations/{conversation}/recordings', [EventController::class, 'recordings']);
+    Route::get('/meetings/{meeting}/recording', [EventController::class, 'recording']);
 
     Route::get('/quick-replies', [QuickReplyController::class, 'index']);
     Route::post('/quick-replies', [QuickReplyController::class, 'store']);
@@ -248,6 +258,7 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
     Route::post('/wpp/accounts', [WhatsAppController::class, 'createAccount']);
     Route::post('/wpp/accounts/{account}/primary', [WhatsAppController::class, 'setPrimary']);
     Route::post('/wpp/accounts/{account}/active', [WhatsAppController::class, 'setActive']);
+    Route::post('/wpp/accounts/{account}/avatars-only', [WhatsAppController::class, 'setAvatarsOnly']);
     Route::delete('/wpp/accounts/{account}', [WhatsAppController::class, 'destroyAccount']);
 
     // API oficial (Cloud API da Meta): conectar número, diagnosticar e listar templates.

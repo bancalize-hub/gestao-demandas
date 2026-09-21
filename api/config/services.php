@@ -71,6 +71,33 @@ return [
     // CLIENTE) é descartada em vez de responder o lead horas depois.
     'auto_reply' => [
         'stale_hours' => (int) env('AUTO_REPLY_STALE_HOURS', 6),
+        // Minutos de silêncio da IA depois que um humano escreve pelo painel (0 desliga).
+        'human_pause_minutes' => (int) env('AUTO_REPLY_HUMAN_PAUSE_MINUTES', 180),
+    ],
+
+    // Agenda: horas do dia que a IA só oferece em último caso. NÃO são horas bloqueadas —
+    // o lead que PEDIR 9h ou meio-dia continua sendo atendido, e o dia que só tem esses
+    // horários livres volta a oferecê-los. A régua é a hora de INÍCIO da reunião, então
+    // 9 cobre 9:00 e 9:30, e 12 cobre 12:00 e 12:30.
+    // Etapas em que um negócio é "quente": passou da reunião e ainda pode fechar. É a
+    // fila que o watchdog (deals:watchdog-tick) cobra por dono, proposta e silêncio.
+    'crm_watchdog' => [
+        'stages_quentes' => array_values(array_filter(array_map('trim', explode(
+            ',', (string) env('CRM_STAGES_QUENTES', 'reuniao-realizada,proposta,negociacao,disse-que-vai-fechar'),
+        )))),
+    ],
+
+    'agenda' => [
+        'horas_despriorizadas' => array_values(array_filter(array_map(
+            'intval',
+            explode(',', (string) env('AGENDA_HORAS_DESPRIORIZADAS', '9,12')),
+        ), fn ($h) => $h >= 0 && $h <= 23)),
+
+        // Antecedência mínima, em DIAS, entre hoje e a reunião que a IA pode oferecer ou
+        // marcar. 1 = só a partir de amanhã (padrão): reunião marcada para daqui a duas
+        // horas pega o anfitrião de surpresa, sem tempo de preparar a call nem de reorganizar
+        // o dia. 0 devolve o comportamento antigo (pode marcar para hoje).
+        'antecedencia_dias' => max(0, (int) env('AGENDA_ANTECEDENCIA_DIAS', 1)),
     ],
 
     // Retomada ativa ("nudge"): a IA não espera o lead voltar — ela busca quem sumiu no meio

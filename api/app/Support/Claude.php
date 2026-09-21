@@ -55,6 +55,47 @@ class Claude
     }
 
     /**
+     * Como a credencial chega ao CLI. Token de assinatura (`sk-ant-oat01-…`) vai em
+     * CLAUDE_CODE_OAUTH_TOKEN; chave de API (`sk-ant-api03-…`) em ANTHROPIC_API_KEY.
+     * A variável não usada vai como `false` de propósito: o Symfony a REMOVE do
+     * ambiente do filho, senão uma credencial velha herdada do PHP-FPM venceria a nova.
+     */
+    private static function ambiente(string $token): array
+    {
+        $apiKey = str_starts_with($token, 'sk-ant-api');
+
+        return [
+            'CLAUDE_CODE_OAUTH_TOKEN' => $apiKey ? false : $token,
+            'ANTHROPIC_API_KEY' => $apiKey ? $token : false,
+            'HOME' => storage_path('app/claude-home'),
+        ];
+    }
+
+    /** A credencial em si está ruim (token revogado, sem acesso, não logado). */
+    private static function falhaDeCredencial(string $saida): bool
+    {
+        return (bool) preg_match(
+            '/401|authenticat|revoked|expired|unauthorized|not logged in|disabled|subscription access|invalid.{0,10}api key/i',
+            $saida
+        );
+    }
+
+    /**
+     * Vale segurar as chamadas por uns minutos?
+     *
+     * O caso real (03/09 → 07/09): a mensagem era "organization has disabled Claude
+     * subscription access" e "session limit" — nenhuma casava com o teste de credencial,
+     * então a trégua nunca armava e o CRM respawnava o CLI ~21 mil vezes por dia, em
+     * silêncio, numa VPS de 2 vCPU. Limite de uso entra aqui junto: insistir a cada
+     * 2 min não muda o resultado, só multiplica processo.
+     */
+    private static function deveSuspender(string $saida): bool
+    {
+        return self::falhaDeCredencial($saida)
+            || (bool) preg_match('/session limit|usage limit|rate limit|overloaded|too many requests|\b429\b/i', $saida);
+    }
+
+    /**
      * Testa a credencial de verdade (uma chamada mínima) e devolve o que o CLI disse.
      * É o que transforma "a IA não respondeu" em uma causa na tela.
      */
@@ -67,13 +108,13 @@ class Claude
         }
 
         $res = Process::timeout(60)
-            ->env(['CLAUDE_CODE_OAUTH_TOKEN' => $token, 'HOME' => storage_path('app/claude-home')])
+            ->env(self::ambiente($token))
             ->input('Responda apenas: ok')
             ->run([config('services.claude.bin'), '-p']);
 
         $saida = trim($res->output()."\n".$res->errorOutput());
 
-        if ($res->successful() && ! preg_match('/401|not logged in|revoked|authenticat/i', $saida)) {
+        if ($res->successful() && ! self::falhaDeCredencial($saida)) {
             return ['ok' => true, 'mensagem' => mb_substr($saida, 0, 200) ?: 'ok'];
         }
 
@@ -117,10 +158,7 @@ class Claude
         // base de conhecimento) estourava o limite de ~128KB por argumento do Linux
         // (proc_open: "Argument list too long") e derrubava quem chamasse.
         $res = Process::timeout($timeout)
-            ->env([
-                'CLAUDE_CODE_OAUTH_TOKEN' => $token,
-                'HOME' => storage_path('app/claude-home'),
-            ])
+            ->env(self::ambiente($token))
             ->input($prompt)
             ->run([config('services.claude.bin'), '-p']);
 
@@ -128,7 +166,7 @@ class Claude
         // ("Not logged in · Please run /login"). Olhar só o código de saída fazia a falha
         // de credencial passar por resposta válida.
         $saida = trim($res->output()."\n".$res->errorOutput());
-        $auth = (bool) preg_match('/401|authenticat|revoked|expired|unauthorized|not logged in/i', $saida);
+        $auth = self::falhaDeCredencial($saida);
 
         if ($res->successful() && ! $auth) {
             return trim($res->output());
@@ -140,7 +178,7 @@ class Claude
             'saida' => mb_substr($saida, 0, 300),
         ], 'error');
 
-        if ($auth) {
+        if (self::deveSuspender($saida)) {
             self::marcarFora(mb_substr($saida, 0, 200));
         }
 

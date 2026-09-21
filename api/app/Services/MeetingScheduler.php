@@ -65,6 +65,11 @@ class MeetingScheduler
             $time = $conectados;
         }
 
+        // Liga/desliga do dia (Agenda → "recebe reunião"): quem está de folga sai do rodízio.
+        // Aplicado DEPOIS do fallback de propósito — se a empresa desligar todo mundo, o
+        // resultado tem de ser "não marca", e não "marca em qualquer conta conectada".
+        $time = $time->where('agenda_ativa', true)->values();
+
         // Carga = reuniões ainda por acontecer de cada um. Filtrada pelos ids do time e não
         // pelo escopo de empresa: o agendador também roda no tick, onde nem sempre há tenant
         // ligado, e aí o escopo global não filtra nada.
@@ -457,6 +462,24 @@ class MeetingScheduler
         return $start;
     }
 
+    /**
+     * Aviso de tolerância de atraso, dito no MOMENTO DO AGENDAMENTO.
+     *
+     * Sai no texto do servidor, e não pela IA, porque é combinado comercial: precisa ser
+     * idêntico em toda confirmação (nova ou remarcada) e não pode depender de o modelo
+     * lembrar de mencionar. `tolerancia_minutos = 0` desliga o aviso.
+     */
+    private static function avisoTolerancia(): string
+    {
+        $min = (int) config('services.agenda.tolerancia_minutos', 10);
+
+        if ($min <= 0) {
+            return '';
+        }
+
+        return "\n\nSó um combinado: a tolerância de atraso é de {$min} minutos. Se precisar remarcar, é só me avisar por aqui. 🙂";
+    }
+
     /** Cria a reunião (evento + Meet + registro + etapa do funil). */
     private function book(User $user, Conversation $conversation, Carbon $start, Carbon $end, string $title, string $transcript): array
     {
@@ -477,6 +500,7 @@ class MeetingScheduler
         if ($meet) {
             $message .= "\n\nSegue o link da nossa reunião no Google Meet: {$meet}";
         }
+        $message .= self::avisoTolerancia();
 
         // Registra a reunião: serve para o lembrete (WhatsApp, se houver telefone) e para a
         // apuração de presença/resumo depois da reunião (Meet API + read.ai). user_id é a conta
@@ -580,6 +604,7 @@ class MeetingScheduler
         if ($meet) {
             $message .= "\n\nO link do Google Meet continua o mesmo: {$meet}";
         }
+        $message .= self::avisoTolerancia();
 
         return [
             'action' => 'remarcar',

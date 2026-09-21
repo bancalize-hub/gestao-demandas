@@ -185,6 +185,9 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
     Route::get('/google/status', [GoogleAuthController::class, 'status']);
     Route::get('/google/connect', [GoogleAuthController::class, 'connect']);
     Route::delete('/google/disconnect', [GoogleAuthController::class, 'disconnect']);
+    // Liga/desliga o agendamento de uma pessoa. Admin da empresa: mexe na agenda dos outros.
+    Route::patch('/google/calendars/{id}/agenda', [GoogleAuthController::class, 'toggleAgenda'])
+        ->middleware('admin');
     Route::get('/google/events', [EventController::class, 'index']);
     Route::post('/google/events', [EventController::class, 'store']);
     Route::patch('/google/events/{event}', [EventController::class, 'update']);

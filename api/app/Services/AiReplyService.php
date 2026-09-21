@@ -148,7 +148,11 @@ class AiReplyService
                 // com dois anfitriões, oferecer só a agenda de um esconderia metade da capacidade.
                 // O filtro por empresa não é decorativo: `User` não tem escopo de tenant, então
                 // sem ele a IA de uma empresa proporia o horário livre da agenda de outra.
+                // `agenda_ativa` = o liga/desliga do dia. Sem ele aqui, a IA ofereceria o
+                // horário de quem está de folga e o agendador recusaria na hora de marcar —
+                // o lead escolheria um horário que não existe.
                 $hosts = User::where('company_id', $conversation->company_id)
+                    ->where('agenda_ativa', true)
                     ->whereNotNull('google_refresh_token')->get();
                 if ($hosts->isNotEmpty()) {
                     [$iniHora, $fimHora] = \App\Support\Attendance::horas($empresa);
@@ -248,6 +252,9 @@ class AiReplyService
         {$regraMaterial}{$agendaRule}
         - NUNCA diga que enviou o convite, que marcou/agendou a reunião nem que "está confirmado/agendado":
           a confirmação real (com o link do Meet) é enviada automaticamente pelo sistema, não por você.
+        - NUNCA diga que VOCÊ vai à reunião ("te encontro lá", "estarei na call", "nos vemos lá",
+          "vou entrar com você"): quem entra na sala é uma PESSOA do time, não você. Fale da reunião
+          sem se colocar dentro dela — "nosso especialista vai te atender", "a equipe te encontra lá".
         - Só cumprimente ("{$saudacao}") no início da conversa ou após uma longa pausa; ao saudar, respeite o horário atual indicado acima.
         - Português do Brasil, no máximo 2-3 frases curtas.
         - Sem aspas, sem rótulos — só o texto da mensagem.

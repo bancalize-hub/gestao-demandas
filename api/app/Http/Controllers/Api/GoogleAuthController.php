@@ -25,13 +25,18 @@ class GoogleAuthController extends Controller
         $agendas = User::where('company_id', $user->company_id)
             ->whereNotNull('google_refresh_token')
             ->orderBy('id')
-            ->get(['id', 'name', 'google_email'])
+            ->get(['id', 'name', 'google_email', 'is_host', 'agenda_ativa'])
             ->map(fn (User $u) => [
                 'user_id' => $u->id,
                 'name' => $u->name,
                 'email' => $u->google_email,
                 'color' => GoogleCalendarService::corDaAgenda($u->id),
                 'is_me' => $u->id === $user->id,
+                // Liga/desliga do agendamento: a agenda continua VISÍVEL na tela mesmo
+                // desligada (ver o compromisso de quem está de folga é o normal) — o que
+                // muda é só receber reunião nova.
+                'agenda_ativa' => (bool) $u->agenda_ativa,
+                'is_host' => (bool) $u->is_host,
             ])
             ->values();
 
@@ -140,6 +145,33 @@ class GoogleAuthController extends Controller
         }
 
         return $conta.'@'.$dominio;
+    }
+
+    /**
+     * Liga/desliga o AGENDAMENTO de uma pessoa (Agenda → "recebe reunião").
+     *
+     * Para o dia em que o atendente daquele e-mail não trabalha: ele sai do rodízio de
+     * reunião nova e some dos horários que a IA oferece, sem desconectar o Google e sem
+     * perder o histórico — os compromissos que já existem continuam na tela.
+     *
+     * O usuário é buscado COM filtro de empresa em vez de route-model binding: o binding
+     * resolve antes do tenant, e sem o filtro explícito um admin conseguiria alternar a
+     * agenda de alguém de outra empresa.
+     */
+    public function toggleAgenda(Request $request, int $id)
+    {
+        $alvo = User::where('company_id', $request->user()->company_id)
+            ->where('id', $id)
+            ->firstOrFail();
+
+        $alvo->agenda_ativa = $request->boolean('ativa');
+        $alvo->save();
+
+        return response()->json([
+            'user_id' => $alvo->id,
+            'email' => $alvo->google_email,
+            'agenda_ativa' => (bool) $alvo->agenda_ativa,
+        ]);
     }
 
     /** Desvincula a conta Google do usuário. */

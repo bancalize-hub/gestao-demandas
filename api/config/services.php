@@ -88,6 +88,11 @@ return [
     ],
 
     'agenda' => [
+        // Tolerância de atraso avisada ao cliente NO MOMENTO DO AGENDAMENTO. Dita no texto
+        // que o SERVIDOR monta (não pela IA) porque é combinado comercial: tem de sair
+        // igual em toda confirmação, inclusive nas de remarcação.
+        'tolerancia_minutos' => (int) env('AGENDA_TOLERANCIA_MINUTOS', 10),
+
         'horas_despriorizadas' => array_values(array_filter(array_map(
             'intval',
             explode(',', (string) env('AGENDA_HORAS_DESPRIORIZADAS', '9,12')),

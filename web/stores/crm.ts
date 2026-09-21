@@ -135,6 +135,10 @@ export interface CalendarLayer {
   email: string | null
   color: string
   is_me: boolean
+  // Recebe reunião NOVA? (liga/desliga do dia). Diferente de estar visível na grade:
+  // a agenda de quem está de folga continua aparecendo, só não entra no rodízio.
+  agenda_ativa: boolean
+  is_host: boolean
 }
 export interface Column<T> { id: string, title: string, dot: string, money?: boolean, cards: T[] }
 
@@ -1418,6 +1422,20 @@ export const useCrmStore = defineStore('crm', {
         this.hiddenCalendars = this.hiddenCalendars.filter(id => this.calendars.some(c => c.user_id === id))
       }
       catch { this.googleConnected = false; this.calendars = [] }
+    },
+    // Liga/desliga o AGENDAMENTO de alguém (só admin). Atualiza a lista na hora e
+    // desfaz se o servidor recusar — a tela nunca fica dizendo algo que o banco não tem.
+    async setAgendaAtiva(userId: number, ativa: boolean) {
+      const cal = this.calendars.find(c => c.user_id === userId)
+      const antes = cal?.agenda_ativa
+      if (cal) cal.agenda_ativa = ativa
+      try {
+        await api()(`/api/google/calendars/${userId}/agenda`, { method: 'PATCH', body: { ativa } })
+      }
+      catch (e) {
+        if (cal && antes !== undefined) cal.agenda_ativa = antes
+        throw e
+      }
     },
     toggleCalendar(userId: number) {
       this.hiddenCalendars = this.hiddenCalendars.includes(userId)

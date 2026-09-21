@@ -34,6 +34,8 @@ class User extends Authenticatable
             'password' => 'hashed',
             'is_admin' => 'boolean',
             'is_super_admin' => 'boolean',
+            'is_host' => 'boolean',
+            'agenda_ativa' => 'boolean',
             // Tokens do Google guardados cifrados no banco.
             'google_access_token' => 'encrypted',
             'google_refresh_token' => 'encrypted',

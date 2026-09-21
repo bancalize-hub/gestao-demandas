@@ -286,6 +286,19 @@ const focusedDay = ref(new Date()) // dia em foco na visão "dia"
   ainda troca no seletor, e aí a grade rola na horizontal (ver gridMinW).
 */
 const isMobile = useIsMobile()
+const { user: usuarioLogado } = useAuth()
+// Só admin mexe na agenda dos OUTROS (o backend também exige, via middleware `admin`);
+// o botão some para quem não pode, em vez de aparecer e dar 403 na cara.
+const podeAlternarAgenda = computed(() => !!(usuarioLogado.value?.is_admin || usuarioLogado.value?.is_super_admin))
+
+async function alternarAgenda(c: { user_id: number, agenda_ativa: boolean, email: string | null, name: string }) {
+  try {
+    await crm.setAgendaAtiva(c.user_id, !c.agenda_ativa)
+  }
+  catch {
+    banner.value = { type: 'erro', text: `Não foi possível mudar o agendamento de ${c.email || c.name}.` }
+  }
+}
 onMounted(() => {
   if (isMobile.value && viewMode.value === 'semana') viewMode.value = 'dia'
 })
@@ -808,24 +821,47 @@ async function excluirDoDetalhe(ev: CalEvent) {
             @click="crm.hiddenCalendars = []"
           >Mostrar todas</button>
         </div>
-        <label
+        <!--
+          Duas chaves diferentes na mesma linha, de propósito:
+          - a caixinha da esquerda esconde/mostra a agenda NA GRADE (só visual, por navegador);
+          - a chave da direita liga/desliga o AGENDAMENTO daquela pessoa (vale para todo mundo).
+          Quem está de folga continua com a agenda visível — ver o compromisso de quem não
+          está trabalhando é o normal; o que muda é parar de receber reunião nova.
+          A chave fica FORA do <label>, senão clicar nela também marcaria a caixinha.
+        -->
+        <div
           v-for="c in crm.calendars" :key="c.user_id"
-          style="display:flex;align-items:center;gap:9px;margin-top:9px;cursor:pointer;font-size:13px;"
-          :title="c.email ?? ''"
+          style="display:flex;align-items:center;gap:9px;margin-top:9px;font-size:13px;"
         >
-          <input
-            type="checkbox" :checked="!crm.hiddenCalendars.includes(c.user_id)"
-            :style="`width:15px;height:15px;cursor:pointer;accent-color:${c.color};flex-shrink:0;`"
-            @change="crm.toggleCalendar(c.user_id)"
-          >
-          <span :style="`width:10px;height:10px;border-radius:3px;background:${c.color};flex-shrink:0;`" />
-          <span :title="c.name" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;">{{ c.email || c.name }}<span v-if="c.is_me" style="color:var(--c-text-muted);"> (você)</span></span>
+          <label style="display:flex;align-items:center;gap:9px;cursor:pointer;flex:1;min-width:0;" :title="c.email ?? ''">
+            <input
+              type="checkbox" :checked="!crm.hiddenCalendars.includes(c.user_id)"
+              :style="`width:15px;height:15px;cursor:pointer;accent-color:${c.color};flex-shrink:0;`"
+              @change="crm.toggleCalendar(c.user_id)"
+            >
+            <span :style="`width:10px;height:10px;border-radius:3px;background:${c.color};flex-shrink:0;`" />
+            <span
+              :title="c.name"
+              :style="`overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;${c.agenda_ativa ? '' : 'color:var(--c-text-muted);'}`"
+            >{{ c.email || c.name }}<span v-if="c.is_me" style="color:var(--c-text-muted);"> (você)</span></span>
+          </label>
           <span
             v-if="countsByOwner.get(c.user_id)"
             :title="`${countsByOwner.get(c.user_id)} reunião(ões) de ${c.name} no período mostrado`"
             style="flex-shrink:0;font-size:11px;font-weight:700;color:var(--c-text-secondary);background:var(--c-surface-1);padding:1px 7px;border-radius:999px;font-variant-numeric:tabular-nums;"
           >{{ countsByOwner.get(c.user_id) }}</span>
-        </label>
+          <button
+            v-if="podeAlternarAgenda"
+            type="button"
+            :title="c.agenda_ativa
+              ? `${c.email || c.name} está recebendo reunião nova — clique para desligar (ex.: dia de folga)`
+              : `${c.email || c.name} NÃO está recebendo reunião nova — clique para religar`"
+            :style="`flex-shrink:0;position:relative;width:32px;height:18px;border-radius:999px;border:none;cursor:pointer;padding:0;transition:background .15s;background:${c.agenda_ativa ? 'var(--accent)' : 'var(--c-surface-3)'};`"
+            @click="alternarAgenda(c)"
+          >
+            <span :style="`position:absolute;top:2px;left:${c.agenda_ativa ? '16px' : '2px'};width:14px;height:14px;border-radius:50%;background:#fff;transition:left .15s;`" />
+          </button>
+        </div>
         <button
           v-if="!crm.googleConnected"
           style="width:100%;margin-top:12px;background:transparent;border:1px dashed var(--c-surface-3);color:var(--accent);font-family:inherit;font-size:12px;font-weight:600;padding:8px;border-radius:9px;cursor:pointer;"

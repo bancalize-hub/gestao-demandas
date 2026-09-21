@@ -26,6 +26,9 @@ class ChatTabController extends Controller
             // Lixeira: a tab mostra SÓ as conversas excluídas (as que ganharam hidden_at).
             'show_hidden' => 'sometimes|boolean',
             'objetivo' => 'nullable|string|max:2000',
+            // Chat (balão) dono da tab: cada chat duplicado gerencia as próprias tabs.
+            // Ausente/null = tab visível em todos os chats (comportamento antigo).
+            'chat' => 'nullable|integer|min:1|max:9',
         ]);
         $data['stages'] = $data['stages'] ?? [];
         $data['position'] = (ChatTab::max('position') ?? -1) + 1;

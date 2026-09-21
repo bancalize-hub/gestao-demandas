@@ -6,6 +6,27 @@ const route = useRoute()
 const { user, logout } = useAuth()
 const { isDark, toggle } = useTheme()
 const isMobile = useIsMobile()
+// Chats duplicados: um balão por chat, cada um abrindo sua página (tab e filtros próprios).
+// Excluir um chat é só DENTRO da página dele (× no topo da lista) — o × que ficava aqui
+// no balão saiu porque era fácil excluir sem querer.
+const { chats, order, setOrder } = useChats()
+function chatPath(i: number) { return i === 1 ? '/' : `/chat-${i}` }
+function goChat(i: number) {
+  if (i === 1) return crm.go('chat')
+  crm.screen = 'chat'
+  navigateTo(chatPath(i))
+}
+// Arrastar um balão sobre outro reordena (a hierarquia que o usuário quiser). O balão
+// mantém o número dele — muda só a posição na barra.
+const dragChat = ref<number | null>(null)
+function dropChat(alvo: number) {
+  const de = dragChat.value
+  dragChat.value = null
+  if (!de || de === alvo) return
+  const o = order.value.filter(x => x !== de)
+  o.splice(o.indexOf(alvo), 0, de)
+  setOrder(o)
+}
 
 // Logo da empresa para o topo do Rail (variante conforme o tema), se houver.
 const companyLogo = computed(() => {
@@ -20,7 +41,7 @@ function isActive(s: Screen) {
 
 // No celular a Rail vira uma barra inferior horizontal. Ela some quando uma conversa
 // está aberta no chat, para o teclado/composer ocuparem a tela toda.
-const hideOnMobile = computed(() => isMobile.value && isActive('chat') && crm.chatOpen)
+const hideOnMobile = computed(() => isMobile.value && (isActive('chat') || route.path.startsWith('/chat-')) && crm.chatOpen)
 const railStyle = computed(() => isMobile.value
   ? { order: 2, width: '100%', height: '58px', flexShrink: 0, background: 'var(--c-surface-2)', borderTop: '1px solid var(--c-border)', display: hideOnMobile.value ? 'none' : 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', padding: '0 4px', gap: '2px', overflowX: 'auto' }
   : { width: '76px', flexShrink: 0, background: 'var(--c-surface-2)', borderRight: '1px solid var(--c-border)', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '18px 0', gap: '6px' })
@@ -93,8 +114,9 @@ onBeforeUnmount(() => {
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 3c-4.97 0-9 3.58-9 8 0 2.5 1.3 4.7 3.3 6.1L5.5 21l3.6-1.5c.9.25 1.9.4 2.9.4 4.97 0 9-3.58 9-8s-4.03-8.9-9-8.9Z" fill="var(--accent-ink)" /></svg>
     </div>
 
-    <button class="navbtn" :style="nav(isActive('chat'))" title="Chat" @click="crm.go('chat')">
+    <button v-for="i in order" :key="i" class="navbtn" :style="[nav(route.path === chatPath(i)), chats > 1 ? { position: 'relative' } : {}]" :title="chats > 1 ? `Chat ${i} — arraste para reordenar` : 'Chat'" :draggable="!isMobile && chats > 1" @click="goChat(i)" @dragstart="dragChat = i" @dragover.prevent @drop.prevent="dropChat(i)">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 11.5a8.38 8.38 0 0 1-9 8.34 9 9 0 0 1-3.9-.9L3 21l1.06-4.1A8.38 8.38 0 0 1 3 11.5 8.5 8.5 0 0 1 21 11.5Z" stroke-linecap="round" stroke-linejoin="round" /></svg>
+      <span v-if="chats > 1" class="chatbadge">{{ i }}</span>
     </button>
     <button class="navbtn" :style="nav(isActive('pipeline'))" title="Funil" @click="crm.go('pipeline')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="5" height="18" rx="1.5" /><rect x="9.5" y="3" width="5" height="12" rx="1.5" /><rect x="16" y="3" width="5" height="15" rx="1.5" /></svg>
@@ -111,7 +133,7 @@ onBeforeUnmount(() => {
     <button v-if="user?.is_admin" class="navbtn" :style="nav(route.path === '/admin/campanhas')" title="Campanhas (prospecção)" @click="navigateTo('/admin/campanhas')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21.5 3.2 2.8 10.4a.6.6 0 0 0 .05 1.13l4.9 1.6 1.6 4.9a.6.6 0 0 0 1.13.05Z" stroke-linejoin="round" /><path d="m21.5 3.2-13.75 9.93" stroke-linecap="round" /></svg>
     </button>
-    <button v-if="user?.is_super_admin" class="navbtn" :style="nav(route.path.startsWith('/marketing'))" title="Gerenciador de anúncios (Facebook Ads)" @click="navigateTo('/marketing')">
+    <button v-if="user?.is_admin" class="navbtn" :style="nav(route.path.startsWith('/marketing'))" title="Gerenciador de anúncios (Facebook Ads)" @click="navigateTo('/marketing')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11v2a1 1 0 0 0 1 1h2v4h2v-4l10 4.5v-15L8 8H4a1 1 0 0 0-1 1Z" stroke-linecap="round" stroke-linejoin="round" /></svg>
     </button>
     <button v-if="user?.is_admin" class="navbtn" :style="nav(route.path === '/admin/memoria')" title="Memória da IA" @click="navigateTo('/admin/memoria')">
@@ -144,6 +166,10 @@ onBeforeUnmount(() => {
           Conexão WhatsApp
         </button>
 
+        <button v-if="user?.is_admin" class="usermenu-item" :class="{ active: route.path === '/admin/atendimento' }" role="menuitem" @click="goFromMenu('/admin/atendimento')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8.5" /><path d="M12 7v5l3.2 2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+          Horário de atendimento
+        </button>
         <button v-if="user?.is_admin" class="usermenu-item" :class="{ active: route.path === '/admin/marca' }" role="menuitem" @click="goFromMenu('/admin/marca')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3a9 9 0 1 0 0 18c1.4 0 2.2-.9 2.2-2 0-1-.8-1.6-.8-2.4 0-.7.6-1.3 1.4-1.3H17a4 4 0 0 0 4-4c0-4.4-4-8.3-9-8.3Z" stroke-linejoin="round" /><circle cx="7.5" cy="12" r="1.1" fill="currentColor" stroke="none" /><circle cx="10" cy="7.8" r="1.1" fill="currentColor" stroke="none" /><circle cx="14.5" cy="7.8" r="1.1" fill="currentColor" stroke="none" /></svg>
           Marca (cores e logo)
@@ -167,7 +193,7 @@ onBeforeUnmount(() => {
           {{ isDark ? 'Tema claro' : 'Tema escuro' }}
         </button>
 
-        <button v-if="user?.is_super_admin" class="usermenu-item" :class="{ active: route.path === '/admin/meta-ads' }" role="menuitem" @click="goFromMenu('/admin/meta-ads')">
+        <button v-if="user?.is_admin" class="usermenu-item" :class="{ active: route.path === '/admin/meta-ads' }" role="menuitem" @click="goFromMenu('/admin/meta-ads')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11v2a1 1 0 0 0 1 1h2v4h2v-4l10 4.5v-15L8 8H4a1 1 0 0 0-1 1Z" stroke-linecap="round" stroke-linejoin="round" /></svg>
           Conexão Facebook Ads
         </button>
@@ -186,6 +212,23 @@ onBeforeUnmount(() => {
 <style scoped>
 .navbtn:hover {
   background: rgba(var(--accent-rgb),0.1) !important;
+}
+/* Numerinho que separa os balões de chat quando o chat está duplicado. */
+.chatbadge {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  min-width: 14px;
+  height: 14px;
+  border-radius: 7px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 9px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 2px;
 }
 .avatar:hover {
   filter: brightness(1.08);

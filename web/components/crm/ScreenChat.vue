@@ -18,9 +18,45 @@ const crm = useCrmStore()
 const inputRef = ref<HTMLTextAreaElement | null>(null)
 const msgsRef = ref<HTMLElement | null>(null)
 
-// Busca + filtros da lista de conversas
-const search = ref('')
-const filter = ref<'tudo' | 'unread' | 'minhas' | 'arquivadas'>('tudo')
+// Busca + filtros da lista de conversas — um estado POR CHAT. O chat pode ser DUPLICADO
+// (até 4): cada balão no menu lateral abre uma página (/, /chat-2, /chat-3, …) que monta
+// este mesmo componente com `instance` diferente. Cada instância guarda a própria tab,
+// busca e filtro, então dá para deixar um chat só de qualificados, outro de CS e outro
+// com todos os leads. Sobrevive ao refresh a tab escolhida de cada chat (chave própria
+// por instância no localStorage).
+const props = defineProps<{ instance?: number }>()
+const instancia = props.instance ?? 1
+const { chats, setChats, removeChat } = useChats()
+function duplicarChat() {
+  if (chats.value >= MAX_CHATS) return
+  const n = chats.value + 1
+  setChats(n)
+  crm.screen = 'chat'
+  navigateTo(`/chat-${n}`)
+}
+/** Remove ESTE chat (o balão some do menu lateral) e volta pro principal. */
+function removerChat() {
+  removeChat(instancia)
+  crm.go('chat')
+}
+interface Pane { tab: number | null, search: string, filter: 'tudo' | 'unread' | 'arquivadas' }
+const PANES_KEY = `crm.chat.panes:${instancia}`
+function loadPane(): Pane {
+  try {
+    const raw = JSON.parse(localStorage.getItem(PANES_KEY) || '')
+    const t = Array.isArray(raw) ? raw[0] : raw
+    if (typeof t === 'number') return { tab: t, search: '', filter: 'tudo' }
+  }
+  catch { /* primeira visita ou valor corrompido: padrão */ }
+  return { tab: null, search: '', filter: 'tudo' }
+}
+// Ainda é uma LISTA de painéis (o template itera nela), mas hoje cada chat tem um só —
+// a duplicação virou página inteira, não coluna lado a lado.
+const panes = ref<Pane[]>([loadPane()])
+watch(() => panes.value.map(p => p.tab), (tabs) => {
+  try { localStorage.setItem(PANES_KEY, JSON.stringify(tabs)) }
+  catch { /* sem storage, sem persistência — a tela segue funcionando */ }
+})
 const menuFor = ref('')
 const stageFor = ref('')
 function pillStyle(active: boolean) {
@@ -61,6 +97,31 @@ const conv = computed(() => crm.activeConv)
 const isMobile = useIsMobile()
 function backToList() { crm.chatOpen = false }
 const broken = reactive(new Set<string>())
+
+// Foto do contato vem SEMPRE da nossa API, nunca da URL que o WhatsApp devolveu: aquela
+// URL (`pps.whatsapp.net`) vence em poucos dias e passa a responder 403 — era por isso
+// que a lista inteira ficava sem foto. O endpoint serve o binário do nosso disco e, para
+// quem não tem foto, devolve um identicon próprio, então ele nunca falha e cada contato
+// fica visualmente distinto. O cookie de sessão é do domínio `.bancalize.com.br`, então
+// a própria tag <img> autentica sozinha. O `broken` fica só como rede de segurança
+// (queda da API / sessão expirada): aí a tela cai nas iniciais.
+//
+// NÃO PONHA `referrerpolicy="no-referrer"` nestas <img>. Ele fazia sentido quando o src
+// era o CDN do WhatsApp, e quebra tudo agora: o Sanctum decide se a requisição vem da SPA
+// olhando o header `Referer`/`Origin`, e requisição de imagem não manda `Origin`. Sem
+// referrer ele não reconhece a origem, ignora a sessão e responde como não autenticado —
+// o sintoma é 500 "Route [login] not defined" no log da API e nenhuma foto na tela.
+// O container do avatar tem fundo colorido para as INICIAIS. Com imagem por cima ele
+// vira uma borda: o círculo de trás vaza no antialiasing da quina e lê como contorno.
+// Some enquanto a imagem estiver de pé, e volta se ela falhar (aí as iniciais precisam).
+const semFundo = { background: 'transparent', overflow: 'hidden' }
+const apiOrigin = useRuntimeConfig().public.apiOrigin as string
+function avatarSrc(id: string | number) {
+  // `v` é a versão do DESENHO gerado. O navegador guarda a imagem por um tempo, então
+  // mexeu no gerador, sobe este número — sem isso o usuário fica vendo o avatar antigo
+  // e nada na tela explica por quê.
+  return `${apiOrigin}/api/conversations/${id}/avatar?v=3`
+}
 
 // Polling p/ mensagens novas (tempo real via webhook do WhatsApp).
 // O polling em tempo real é global (layouts/default.vue) — sem timer próprio aqui.
@@ -333,18 +394,23 @@ async function createConversation() {
 }
 
 // ----- Tabs por etiqueta -----
-const activeTab = ref<number | null>(null)
-const tabAtiva = computed(() => (activeTab.value ? crm.chatTabs.find(t => t.id === activeTab.value) : null) || null)
-const activeTabStageNames = computed(() => {
-  const tab = tabAtiva.value
-  if (!tab) return null as Set<string> | null
-  return new Set(crm.stages.filter(s => tab.stages.includes(s.key)).map(s => s.name))
-})
-function visibleTags(tags: { label: string, color: string }[]) {
-  const names = activeTabStageNames.value
-  if (!names) return tags || []
-  return (tags || []).filter(t => names.has(t.label))
-}
+// Não existe a opção "Todas" fixa, e nenhuma tab selecionada É um estado válido
+// (= mostra tudo) — chat duplicado nasce assim, sem filtro nenhum. Clicar na tab ativa
+// desmarca. Quem quiser uma visão geral nomeada cria uma tab sem etiqueta marcada.
+function tabById(id: number | null) { return (id ? crm.chatTabs.find(t => t.id === id) : null) || null }
+// Tabs DESTE chat: as criadas nele + as antigas sem dono (chat null), que valem em todos.
+// É o que faz cada balão ter os próprios filtros — criar/excluir tab num chat não mexe
+// na fileira de tabs dos outros.
+const tabsDoChat = computed(() => crm.chatTabs.filter(t => t.chat == null || t.chat === instancia))
+watch(() => crm.chatTabs.map(t => `${t.id}:${t.chat ?? ''}`).join(','), () => {
+  // As tabs chegam do servidor DEPOIS do primeiro render: enquanto a lista está vazia
+  // não se mexe na escolha persistida, senão o refresh perderia a tab de cada chat.
+  // Tab guardada que morreu ou pertence a outro chat: limpa a seleção (mostra tudo).
+  if (!crm.chatTabs.length) return
+  for (const p of panes.value) {
+    if (p.tab !== null && !tabsDoChat.value.some(t => t.id === p.tab)) p.tab = null
+  }
+}, { immediate: true })
 /**
  * A conversa entra nesta tab? Etapa E triagem — espelha `ChatTab::combina()` no servidor.
  * Régua única: lista, contadores do topo e bolinha da tab passam por aqui, senão o número
@@ -424,13 +490,16 @@ async function saveTab() {
   if (!name) return
   const payload = { name, stages: [...tabStages.value], qualified: [...tabQualified.value] as any, show_hidden: tabShowHidden.value }
   if (editingTabId.value) crm.updateChatTab(editingTabId.value, payload)
-  else await crm.createChatTab(payload)
+  // Tab nova pertence a ESTE chat: só aparece na fileira do balão onde foi criada.
+  else await crm.createChatTab({ ...payload, chat: instancia })
   newTabForm()
 }
 function deleteTab(id: number) {
   if (!confirm('Excluir esta tab?')) return
   crm.removeChatTab(id)
-  if (activeTab.value === id) activeTab.value = null
+  for (const p of panes.value) {
+    if (p.tab === id) p.tab = null
+  }
   if (editingTabId.value === id) newTabForm()
 }
 
@@ -508,7 +577,7 @@ function qualChip(q: boolean | null, motivo: string, auto: boolean, curto = fals
 async function cycleQual(id: string) {
   await crm.cycleQualified(id)
   const c = crm.conversations.find(x => x.id === id)
-  if (c?.qualified !== false || tabMostraDesq(tabAtiva.value))
+  if (c?.qualified !== false || panes.value.some(p => tabMostraDesq(tabById(p.tab))))
     return
   // Quem já andou no funil ou tem reunião marcada NÃO some — e isso precisa ser dito, senão
   // o próximo reprovado que continuar na lista parece bug do "sumir".
@@ -517,47 +586,47 @@ async function cycleQual(id: string) {
     : 'Lead desqualificado, mas continua na lista: já avançou no funil ou tem reunião marcada.', 4500)
 }
 
-const list = computed(() => baseDaTab(tabAtiva.value).map(c => ({
-  id: c.id, name: c.name, initials: c.initials, avatar: c.avatar, preview: c.preview, time: fmtListTime(c.lastMessageAt, c.time),
-  unread: c.unread, online: c.online, hot: !!c.hot, hasUnread: c.unread > 0, archived: c.archived, inMemory: c.inMemory, tags: c.tags || [], stage: c.stage,
-  autoReply: c.autoReply, lastOut: c.lastOut, stageColor: c.stageColor,
-  // Cru, além do chip: é o que a tab filtra (o chip já virou texto e cor).
-  qualified: c.qualified,
-  excluida: c.excluida,
-  qual: qualChip(c.qualified, c.qualifiedReason, c.qualifiedAuto, true),
-  stageName: (crm.stages.find(s => s.key === c.stage)?.name) || c.stage,
-  rowStyle: ROW_STYLE,
-  avatarStyle: { width: '48px', height: '48px', borderRadius: '50%', background: c.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '16px', flexShrink: 0, position: 'relative' },
-  dotStyle: DOT_STYLE,
-})))
+function mapRow(c: any) {
+  return {
+    id: c.id, name: c.name, initials: c.initials, avatar: c.avatar, preview: c.preview, time: fmtListTime(c.lastMessageAt, c.time),
+    unread: c.unread, online: c.online, hot: !!c.hot, hasUnread: c.unread > 0, archived: c.archived, inMemory: c.inMemory, tags: c.tags || [], stage: c.stage,
+    autoReply: c.autoReply, lastOut: c.lastOut, stageColor: c.stageColor,
+    // Cru, além do chip: é o que a tab filtra (o chip já virou texto e cor).
+    qualified: c.qualified,
+    excluida: c.excluida,
+    qual: qualChip(c.qualified, c.qualifiedReason, c.qualifiedAuto, true),
+    stageName: (crm.stages.find(s => s.key === c.stage)?.name) || c.stage,
+    rowStyle: ROW_STYLE,
+    avatarStyle: { width: '48px', height: '48px', borderRadius: '50%', background: c.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '16px', flexShrink: 0, position: 'relative' },
+    dotStyle: DOT_STYLE,
+  }
+}
 
-// Base filtrada pela TAB ativa (Todas/SDR/CLOSER/CS). Os contadores de status (Tudo/Não
-// lidas/Arquivadas) e a lista derivam daqui — assim ficam dinâmicos com a tab selecionada.
-const tabBase = computed(() => {
-  const tab = tabAtiva.value
-  return tab ? list.value.filter(c => tabMatch(tab, c)) : list.value
-})
-
-const filteredList = computed(() => {
-  const q = search.value.trim().toLowerCase()
-  return tabBase.value.filter((c) => {
-    if (filter.value === 'arquivadas') {
+// Uma visão por PAINEL: lista filtrada + contadores derivados da tab daquele painel.
+// Os contadores de status (Tudo/Não lidas/Arquivadas) saem da mesma base da lista,
+// senão o número da pill discorda do que aparece embaixo.
+const paneViews = computed(() => panes.value.map((p) => {
+  const tab = tabById(p.tab)
+  const rows = baseDaTab(tab).map(mapRow)
+  const base = tab ? rows.filter(c => tabMatch(tab, c)) : rows
+  const q = p.search.trim().toLowerCase()
+  const list = base.filter((c) => {
+    if (p.filter === 'arquivadas') {
       if (!c.archived) return false
     }
     else if (c.archived) {
       return false
     }
-    if (filter.value === 'unread' && !c.hasUnread && c.id !== crm.activeId) return false
+    if (p.filter === 'unread' && !c.hasUnread && c.id !== crm.activeId) return false
     if (q && !(`${c.name} ${c.preview}`.toLowerCase().includes(q))) return false
     return true
   })
-})
-
-const counts = computed(() => ({
-  tudo: tabBase.value.filter(c => !c.archived).length,
-  unread: tabBase.value.filter(c => c.hasUnread && !c.archived).length,
-  minhas: tabBase.value.filter(c => !c.archived).length,
-  arquivadas: tabBase.value.filter(c => c.archived).length,
+  const counts = {
+    tudo: base.filter(c => !c.archived).length,
+    unread: base.filter(c => c.hasUnread && !c.archived).length,
+    arquivadas: base.filter(c => c.archived).length,
+  }
+  return { list, counts }
 }))
 
 const dividerStyle = { alignSelf: 'center', background: 'var(--c-surface-1)', color: 'var(--c-text-muted)', fontSize: '11px', fontWeight: 600, padding: '5px 13px', borderRadius: '8px', margin: '8px 0 6px' }
@@ -1132,33 +1201,36 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
 <template>
   <div style="flex:1;display:flex;min-width:0;">
     <!-- lista de conversas -->
-    <div :style="{ width: isMobile ? '100%' : '340px', flexShrink: 0, background: 'var(--c-bg)', borderRight: '1px solid var(--c-surface-1)', flexDirection: 'column', display: (isMobile && crm.chatOpen) ? 'none' : 'flex' }">
-      <div style="padding:18px 18px 12px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-          <div style="font-size:19px;font-weight:800;letter-spacing:-.2px;">Conversas</div>
-          <div style="display:flex;gap:6px;">
-            <button title="Importar conversa (.txt)" class="iconbtn" style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);font-family:inherit;font-size:12.5px;font-weight:600;padding:7px 10px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:5px;" @click="showImport = true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" stroke-linejoin="round" /></svg>Importar</button>
-            <button title="Nova conversa" class="wabtn" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:12.5px;font-weight:700;padding:7px 12px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:5px;" @click="showNewConv = true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>Nova</button>
+    <template v-for="(pane, pi) in panes" :key="pi">
+      <div :style="{ width: isMobile ? '100%' : '340px', flexShrink: 0, background: 'var(--c-bg)', borderRight: '1px solid var(--c-surface-1)', flexDirection: 'column', display: (isMobile && crm.chatOpen) ? 'none' : 'flex' }">
+        <div style="padding:18px 18px 12px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+            <div style="font-size:19px;font-weight:800;letter-spacing:-.2px;">{{ chats > 1 ? `Conversas · ${instancia}` : 'Conversas' }}</div>
+            <div style="display:flex;gap:6px;">
+              <button title="Importar conversa (.txt)" class="iconbtn" style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);font-family:inherit;font-size:12.5px;font-weight:600;padding:7px 10px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:5px;" @click="showImport = true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" stroke-linejoin="round" /></svg>Importar</button>
+              <button title="Nova conversa" class="wabtn" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:12.5px;font-weight:700;padding:7px 12px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:5px;" @click="showNewConv = true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>Nova</button>
+              <button v-if="instancia === 1 && chats < MAX_CHATS" title="Duplicar o chat: cria mais um balão no menu lateral, com conversas configuradas à parte" class="iconbtn" style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);width:31px;height:31px;border-radius:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;" @click="duplicarChat"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="8" height="16" rx="2" /><rect x="13" y="4" width="8" height="16" rx="2" /></svg></button>
+              <button v-if="instancia > 1" title="Remover este chat duplicado (o balão some do menu lateral; nenhuma conversa é apagada)" class="iconbtn" style="background:var(--c-surface-2);border:none;color:var(--c-text-muted);width:31px;height:31px;border-radius:10px;cursor:pointer;font-size:17px;line-height:1;" @click="removerChat">×</button>
+            </div>
+          </div>
+
+          <!-- Tabs por etiqueta (independentes dos filtros abaixo; sem "Todas" fixa).
+               Clicar na tab ativa desmarca = sem filtro (mostra tudo). -->
+          <div style="display:flex;align-items:center;gap:7px;margin-bottom:11px;overflow-x:auto;padding-bottom:2px;">
+            <button v-for="t in tabsDoChat" :key="t.id" :style="tabPill(pane.tab === t.id)" @click="pane.tab = pane.tab === t.id ? null : t.id">{{ t.name }} · {{ tabCount(t) }}</button>
+            <button title="Gerenciar tabs" style="flex-shrink:0;background:var(--c-surface-2);border:1px dashed var(--c-border-strong);color:var(--c-text-muted);width:28px;height:28px;border-radius:9px;cursor:pointer;display:flex;align-items:center;justify-content:center;" @click="showTabs = true; newTabForm()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg></button>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:9px;background:var(--c-surface-2);border-radius:11px;padding:9px 13px;">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--c-text-muted)" stroke-width="2"><circle cx="11" cy="11" r="7" /><path d="m20 20-3-3" stroke-linecap="round" /></svg>
+            <input v-model="pane.search" placeholder="Buscar conversa ou contato" style="flex:1;background:transparent;border:none;outline:none;color:var(--c-text);font-family:inherit;font-size:13.5px;">
+          </div>
+          <div style="display:flex;gap:7px;margin-top:13px;">
+            <button :style="pillStyle(pane.filter === 'tudo')" @click="pane.filter = 'tudo'">Tudo · {{ paneViews[pi].counts.tudo }}</button>
+            <button :style="pillStyle(pane.filter === 'unread')" @click="pane.filter = 'unread'">Não lidas · {{ paneViews[pi].counts.unread }}</button>
+            <button :style="pillStyle(pane.filter === 'arquivadas')" @click="pane.filter = 'arquivadas'">Arquivadas · {{ paneViews[pi].counts.arquivadas }}</button>
           </div>
         </div>
-
-        <!-- Tabs por etiqueta (independentes dos filtros abaixo) -->
-        <div style="display:flex;align-items:center;gap:7px;margin-bottom:11px;overflow-x:auto;padding-bottom:2px;">
-          <button v-if="crm.chatTabs.length" :style="tabPill(activeTab === null)" @click="activeTab = null">Todas</button>
-          <button v-for="t in crm.chatTabs" :key="t.id" :style="tabPill(activeTab === t.id)" @click="activeTab = activeTab === t.id ? null : t.id">{{ t.name }} · {{ tabCount(t) }}</button>
-          <button title="Gerenciar tabs" style="flex-shrink:0;background:var(--c-surface-2);border:1px dashed var(--c-border-strong);color:var(--c-text-muted);width:28px;height:28px;border-radius:9px;cursor:pointer;display:flex;align-items:center;justify-content:center;" @click="showTabs = true; newTabForm()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg></button>
-        </div>
-
-        <div style="display:flex;align-items:center;gap:9px;background:var(--c-surface-2);border-radius:11px;padding:9px 13px;">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--c-text-muted)" stroke-width="2"><circle cx="11" cy="11" r="7" /><path d="m20 20-3-3" stroke-linecap="round" /></svg>
-          <input v-model="search" placeholder="Buscar conversa ou contato" style="flex:1;background:transparent;border:none;outline:none;color:var(--c-text);font-family:inherit;font-size:13.5px;">
-        </div>
-        <div style="display:flex;gap:7px;margin-top:13px;">
-          <button :style="pillStyle(filter === 'tudo')" @click="filter = 'tudo'">Tudo · {{ counts.tudo }}</button>
-          <button :style="pillStyle(filter === 'unread')" @click="filter = 'unread'">Não lidas · {{ counts.unread }}</button>
-          <button :style="pillStyle(filter === 'arquivadas')" @click="filter = 'arquivadas'">Arquivadas · {{ counts.arquivadas }}</button>
-        </div>
-      </div>
 
       <div style="flex:1;overflow-y:auto;padding:0 8px;">
         <!-- skeleton -->
@@ -1173,10 +1245,10 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
         </template>
 
         <template v-else>
-          <div v-if="!filteredList.length" style="padding:30px 14px;text-align:center;color:var(--c-text-muted);font-size:13px;">Nenhuma conversa encontrada</div>
-          <div v-for="c in filteredList" :key="c.id" :style="c.rowStyle" class="convrow" :class="{ activerow: c.id === crm.activeId, cvrow: menuFor !== c.id && stageFor !== c.id }" @click="openConv(c)">
-            <div :style="c.avatarStyle">
-              <img v-if="c.avatar && !broken.has(c.id)" :src="c.avatar" referrerpolicy="no-referrer" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" @error="broken.add(c.id)">
+          <div v-if="!paneViews[pi].list.length" style="padding:30px 14px;text-align:center;color:var(--c-text-muted);font-size:13px;">Nenhuma conversa encontrada</div>
+          <div v-for="c in paneViews[pi].list" :key="c.id" :style="c.rowStyle" class="convrow" :class="{ activerow: c.id === crm.activeId, cvrow: menuFor !== pi + ':' + c.id && stageFor !== pi + ':' + c.id }" @click="openConv(c)">
+            <div :style="[c.avatarStyle, broken.has(c.id) ? {} : semFundo]">
+              <img v-if="!broken.has(c.id)" :src="avatarSrc(c.id)" title="Ver foto ampliada" style="width:100%;height:100%;border-radius:50%;object-fit:cover;cursor:zoom-in;" @click.stop="lightbox = avatarSrc(c.id)" @error="broken.add(c.id)">
               <template v-else>{{ c.initials }}</template>
               <span v-if="c.online" :style="c.dotStyle" />
             </div>
@@ -1196,12 +1268,12 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
               <div v-if="c.hot" style="margin-top:6px;display:inline-flex;font-size:10.5px;font-weight:700;color:var(--c-orange);background:rgba(255,122,69,.13);padding:2px 8px;border-radius:6px;">🔥 Lead quente</div>
               <!-- Etiqueta (etapa) clicável + toggle de atendimento automático, direto na lista -->
               <div style="display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap;">
-                <button class="ghost" :style="{ fontSize: '10.5px', fontWeight: 700, color: c.stageColor, background: `${c.stageColor}22`, padding: '2px 9px', borderRadius: '6px', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }" @click.stop="stageFor = stageFor === c.id ? '' : c.id; menuFor = ''">{{ c.stageName }} ▾</button>
+                <button class="ghost" :style="{ fontSize: '10.5px', fontWeight: 700, color: c.stageColor, background: `${c.stageColor}22`, padding: '2px 9px', borderRadius: '6px', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }" @click.stop="stageFor = stageFor === pi + ':' + c.id ? '' : pi + ':' + c.id; menuFor = ''">{{ c.stageName }} ▾</button>
                 <button class="ghost" :title="c.autoReply ? 'Atendimento automático ligado — clique para desligar' : 'Ativar atendimento automático (IA responde sozinha)'" :style="{ fontSize: '10.5px', fontWeight: 700, padding: '2px 9px', borderRadius: '6px', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', color: c.autoReply ? 'var(--accent-ink)' : 'var(--c-text-faint)', background: c.autoReply ? 'var(--accent)' : 'var(--c-surface-2)', opacity: c.autoReply ? 1 : 0.6 }" @click.stop="crm.toggleAutoReply(c.id)">🤖 IA</button>
                 <button class="ghost" :title="c.qual.titulo" :style="{ ...c.qual.style, fontSize: '10.5px', fontWeight: 700, padding: '2px 9px', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }" @click.stop="cycleQual(c.id)">{{ c.qual.icone }} {{ c.qual.txt }}</button>
               </div>
             </div>
-            <div v-if="stageFor === c.id" style="position:absolute;left:62px;top:58px;z-index:31;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:5px;min-width:170px;box-shadow:0 10px 28px rgba(0,0,0,.45);" @click.stop>
+            <div v-if="stageFor === pi + ':' + c.id" style="position:absolute;left:62px;top:58px;z-index:31;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:5px;min-width:170px;box-shadow:0 10px 28px rgba(0,0,0,.45);" @click.stop>
               <div style="font-size:10px;color:var(--c-text-muted);font-weight:700;letter-spacing:.5px;padding:3px 8px 6px;">MUDAR ETIQUETA</div>
               <button v-for="l in crm.stages" :key="l.key" class="mitem" style="width:100%;display:flex;align-items:center;gap:9px;background:none;border:none;color:var(--c-text);font-family:inherit;font-size:13px;padding:7px 8px;border-radius:7px;cursor:pointer;text-align:left;" @click="crm.setConvStage(c.id, l.key); stageFor = ''">
                 <span :style="{ width: '11px', height: '11px', borderRadius: '3px', background: l.color, flexShrink: 0 }" />
@@ -1209,8 +1281,8 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
                 <svg v-if="c.stage === l.key" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5"><path d="m5 13 4 4L19 7" stroke-linecap="round" stroke-linejoin="round" /></svg>
               </button>
             </div>
-            <button class="rowmenu" title="Ações" style="position:absolute;top:8px;right:6px;background:var(--c-surface-2);border:none;color:var(--c-text);width:22px;height:22px;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:15px;line-height:1;" @click.stop="menuFor = menuFor === c.id ? '' : c.id">⋮</button>
-            <div v-if="menuFor === c.id" style="position:absolute;top:30px;right:6px;z-index:30;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:5px;min-width:180px;box-shadow:0 10px 28px rgba(0,0,0,.45);" @click.stop>
+            <button class="rowmenu" title="Ações" style="position:absolute;top:8px;right:6px;background:var(--c-surface-2);border:none;color:var(--c-text);width:22px;height:22px;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:15px;line-height:1;" @click.stop="menuFor = menuFor === pi + ':' + c.id ? '' : pi + ':' + c.id">⋮</button>
+            <div v-if="menuFor === pi + ':' + c.id" style="position:absolute;top:30px;right:6px;z-index:30;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:5px;min-width:180px;box-shadow:0 10px 28px rgba(0,0,0,.45);" @click.stop>
               <button class="mitem" style="width:100%;text-align:left;background:none;border:none;color:var(--c-text);font-family:inherit;font-size:13px;padding:8px 11px;border-radius:7px;cursor:pointer;" @click="crm.markUnread(c.id); menuFor = ''">Marcar como não lida</button>
               <button class="mitem" style="width:100%;text-align:left;background:none;border:none;color:var(--c-text);font-family:inherit;font-size:13px;padding:8px 11px;border-radius:7px;cursor:pointer;" @click="crm.toggleArchive(c.id); menuFor = ''">{{ c.archived ? 'Desarquivar' : 'Arquivar' }}</button>
               <button class="mitem" style="width:100%;text-align:left;background:none;border:none;color:var(--c-ai-soft);font-family:inherit;font-size:13px;padding:8px 11px;border-radius:7px;cursor:pointer;" @click="doMemorize(c.id)">{{ c.inMemory ? '✓ Na memória' : '🧠 Adicionar à memória' }}</button>
@@ -1221,7 +1293,8 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
           </div>
         </template>
       </div>
-    </div>
+      </div>
+    </template>
 
     <!-- thread -->
     <div :style="{ position:'relative', flex:1, flexDirection:'column', minWidth:0, background:'var(--c-bg-deep)', backgroundImage:'radial-gradient(circle at 20% 30%,rgba(var(--accent-rgb),.04),transparent 40%),radial-gradient(circle at 80% 70%,rgba(124,108,245,.04),transparent 40%)', display: (isMobile && !crm.chatOpen) ? 'none' : 'flex' }" @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
@@ -1241,8 +1314,8 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
         <button v-if="isMobile" title="Voltar" style="background:none;border:none;color:var(--c-text);cursor:pointer;display:flex;align-items:center;padding:0;margin-right:-4px;flex-shrink:0;" @click="backToList">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 19l-7-7 7-7" stroke-linecap="round" stroke-linejoin="round" /></svg>
         </button>
-        <div :style="active.avatarHeader">
-          <img v-if="active.avatar && !broken.has(active.id)" :src="active.avatar" referrerpolicy="no-referrer" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" @error="broken.add(active.id)">
+        <div :style="[active.avatarHeader, broken.has(active.id) ? {} : semFundo]">
+          <img v-if="active.id && !broken.has(active.id)" :src="avatarSrc(active.id)" title="Ver foto ampliada" style="width:100%;height:100%;border-radius:50%;object-fit:cover;cursor:zoom-in;" @click="lightbox = avatarSrc(active.id)" @error="broken.add(active.id)">
           <template v-else>{{ active.initials }}</template>
         </div>
         <div style="flex:1;min-width:0;">
@@ -1528,8 +1601,8 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
     <!-- painel de contexto -->
     <div :style="{ width:'312px', flexShrink:0, background:'var(--c-surface-2)', borderLeft:'1px solid var(--c-border)', flexDirection:'column', overflowY:'auto', display: isMobile ? 'none' : 'flex' }">
       <div style="padding:24px 20px 18px;text-align:center;border-bottom:1px solid var(--c-surface-1);">
-        <div :style="active.avatarBig">
-          <img v-if="active.avatar && !broken.has(active.id)" :src="active.avatar" referrerpolicy="no-referrer" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" @error="broken.add(active.id)">
+        <div :style="[active.avatarBig, broken.has(active.id) ? {} : semFundo]">
+          <img v-if="active.id && !broken.has(active.id)" :src="avatarSrc(active.id)" title="Ver foto ampliada" style="width:100%;height:100%;border-radius:50%;object-fit:cover;cursor:zoom-in;" @click="lightbox = avatarSrc(active.id)" @error="broken.add(active.id)">
           <template v-else>{{ active.initials }}</template>
         </div>
         <div v-if="!editingName" style="display:flex;align-items:center;justify-content:center;gap:6px;">
@@ -1723,8 +1796,9 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
         <div style="font-size:12.5px;color:var(--c-text-muted);margin-bottom:16px;">Crie tabs que filtram as conversas por etiqueta e, se quiser, pela triagem (ex.: "SDR" = Lead + Contato feito, só qualificados e sem triagem).</div>
 
         <!-- tabs existentes -->
-        <div v-if="crm.chatTabs.length" style="display:flex;flex-direction:column;gap:7px;margin-bottom:16px;">
-          <div v-for="t in crm.chatTabs" :key="t.id" style="display:flex;align-items:center;gap:8px;background:var(--c-surface-2);border-radius:10px;padding:8px 11px;">
+        <!-- Só as tabs DESTE chat: excluir/editar aqui não mexe nos outros balões. -->
+        <div v-if="tabsDoChat.length" style="display:flex;flex-direction:column;gap:7px;margin-bottom:16px;">
+          <div v-for="t in tabsDoChat" :key="t.id" style="display:flex;align-items:center;gap:8px;background:var(--c-surface-2);border-radius:10px;padding:8px 11px;">
             <span style="flex:1;font-size:13.5px;font-weight:600;">{{ t.name }}</span>
             <span style="font-size:11.5px;color:var(--c-text-muted);">{{ tabResumo(t) }}</span>
             <button title="Editar" style="background:none;border:none;color:var(--c-text-muted);cursor:pointer;padding:2px 4px;" @click="editTabForm(t)">✎</button>

@@ -176,7 +176,9 @@ function openCard(card: any) {
 
 // Botão de WhatsApp no card: vai direto para a conversa (chat).
 function openChat(card: any) {
-  crm.activeId = card.id
+  // selectConv (não activeId direto): é ele que carrega a thread e marca chatOpen —
+  // sem isso o chat abre vazio.
+  crm.selectConv(String(card.id))
   crm.go('chat')
 }
 

@@ -1,0 +1,20 @@
+# DEPOIS dos índices — medido em produção com ./medir.sh, logo após o deploy da Fase 1.
+# Comparar com antes.txt linha a linha: mesma consulta, mesma máquina, mesmo banco.
+#
+#   AutoReplyTick:  type=ALL (varria 3.489 linhas) -> range em conversas_auto_reply_index (1 linha)
+#   Lista de conversas: filtered 39,72% -> 100% (o índice já devolve só o que a consulta quer)
+#   VoiceTranscribeTick: filtered 0,12% (lia 40 p/ achar ~0) -> 1,67% em messages_tipo_saida_ts_index
+
+# EXPLAIN — 2026-09-21 11:46:39
+
+## VoiceTranscribeTick (roda a cada minuto)
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	messages	NULL	range	messages_wa_id_index,messages_tipo_saida_ts_index,messages_saida_status_ts_index	messages_tipo_saida_ts_index	72	NULL	4	1.67	Using index condition; Using where; Using filesort
+
+## Lista de conversas (a cada refetch de aba)
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	conversations	NULL	range	conversations_company_id_slug_unique,conversations_company_id_index,conversations_hidden_at_index,conversas_empresa_visivel_ultima_index,conversas_empresa_etapa_index,conversas_empresa_qualificado_index,conversas_empresa_criacao_index	conversas_empresa_visivel_ultima_index	14	NULL	1396	100.00	Using index condition; Backward index scan
+
+## AutoReplyTick
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	conversations	NULL	range	conversas_auto_reply_index	conversas_auto_reply_index	6	NULL	1	100.00	Using index condition

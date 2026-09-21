@@ -1,5 +1,6 @@
 import Echo from 'laravel-echo'
 import Pusher from 'pusher-js'
+import { useBoardStore } from '~/stores/board'
 import { useCrmStore } from '~/stores/crm'
 
 // Tempo real via Laravel Reverb (protocolo Pusher). Canal PRIVADO por empresa
@@ -86,6 +87,11 @@ export default defineNuxtPlugin(() => {
     }
     if (kind === 'deal') {
       crm.refreshDeals()
+      return
+    }
+    // Quadro de tarefas: só rebusca se a tela estiver montada (a store só existe aí).
+    if (kind === 'board') {
+      useBoardStore().refresh()
       return
     }
     if (kind === 'followup' || kind === 'calendar' || kind === 'meeting') {

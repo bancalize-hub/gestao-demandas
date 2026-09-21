@@ -5,29 +5,27 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Company;
 use App\Models\Task;
+use App\Models\TaskList;
 use App\Models\User;
 use App\Services\GoogleCalendarService;
 use App\Support\Tenancy;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 class TaskController extends Controller
 {
     public function __construct(private GoogleCalendarService $google) {}
 
     /**
-     * Quadro de tarefas (/tarefas). Só entra o que alguém pôs à mão: tarefa criada no
-     * painel ou solicitação que o cliente mandou pelo formulário. As cobranças que os
-     * robôs geram sozinhos (negócio parado, proposta pós-reunião, remarcar no-show,
-     * definir responsável) são type='followup' e continuam existindo — mas na ficha do
-     * lead, dentro do chat, que é onde se resolve cada uma. No quadro elas viravam
-     * ruído: centenas de cartões que ninguém arrastou nem fechou.
+     * Lista crua das tarefas do quadro (só o que entrou à mão — ver `scopeManual`).
+     * A tela usa o `GET /board`, que devolve listas, etiquetas, time e cartões juntos;
+     * este endpoint fica para quem só quer as tarefas.
      */
     public function index()
     {
-        return Task::where(fn ($q) => $q->whereNull('type')->orWhere('type', '!=', 'followup'))
-            ->orderBy('position')->orderBy('id')->get();
+        return Task::query()->noQuadro()->orderBy('position')->orderBy('id')->get();
     }
 
     public function store(Request $request)
@@ -38,8 +36,10 @@ class TaskController extends Controller
             'client' => 'nullable|string',
             'priority' => 'nullable|in:baixa,media,alta',
             'due' => 'nullable|string|max:32',
+            'due_at' => 'nullable|date',
             'type' => 'nullable|string|max:32',
             'column' => 'nullable|string|max:16',
+            'task_list_id' => 'nullable|integer',
             'starts_at' => 'nullable|date',
             'ends_at' => 'nullable|date|after_or_equal:starts_at',
             // Portal público do cliente: identifica a empresa (tenant) destino pelo slug.
@@ -52,8 +52,11 @@ class TaskController extends Controller
         $create = function () use ($data, $request) {
             $data['column'] = $data['column'] ?? 'todo';
             $data['priority'] = $data['priority'] ?? 'media';
-            // Novas solicitações entram no topo de "A fazer" (escopado à empresa atual).
-            $data['position'] = (Task::where('column', $data['column'])->min('position') ?? 0) - 1;
+            // Sem lista escolhida (é o caso do formulário do cliente), o cartão entra na
+            // primeira lista aberta do quadro — a que estiver mais à esquerda.
+            $data['task_list_id'] = $this->listaDestino($data['task_list_id'] ?? null);
+            // Solicitação nova entra no TOPO da lista, para ser vista.
+            $data['position'] = (Task::query()->manual()->where('task_list_id', $data['task_list_id'])->min('position') ?? 0) - 1;
 
             $task = Task::create($data);
             $this->syncToCalendar($task, $request->user());
@@ -77,14 +80,15 @@ class TaskController extends Controller
     {
         $data = $request->validate([
             'column' => 'nullable|string|max:16',
-            'title' => 'nullable|string',
-            'description' => 'nullable|string',
-            'client' => 'nullable|string',
-            'priority' => 'nullable|in:baixa,media,alta',
-            'due' => 'nullable|string|max:32',
-            'type' => 'nullable|string|max:32',
-            'starts_at' => 'nullable|date',
-            'ends_at' => 'nullable|date|after_or_equal:starts_at',
+            'title' => 'sometimes|string',
+            'description' => 'sometimes|nullable|string',
+            'client' => 'sometimes|nullable|string',
+            'priority' => 'sometimes|in:baixa,media,alta',
+            'due' => 'sometimes|nullable|string|max:32',
+            'due_at' => 'sometimes|nullable|date',
+            'type' => 'sometimes|nullable|string|max:32',
+            'starts_at' => 'sometimes|nullable|date',
+            'ends_at' => 'sometimes|nullable|date|after_or_equal:starts_at',
         ]);
 
         if (! empty($data['column']) && $data['column'] !== $task->column) {
@@ -100,9 +104,27 @@ class TaskController extends Controller
     public function destroy(Request $request, Task $task)
     {
         $this->removeFromCalendar($task);
+        // As linhas filhas caem por FK; o arquivo no disco não — some aqui ou fica órfão.
+        foreach ($task->attachments as $anexo) {
+            Storage::disk('local')->delete($anexo->path);
+        }
         $task->delete();
 
         return response()->json(['message' => 'ok']);
+    }
+
+    /**
+     * Lista em que o cartão nasce: a pedida, se existir e estiver aberta; senão a
+     * primeira da esquerda. Quadro de empresa nova ainda não tem lista nenhuma — aí o
+     * cartão nasce sem lista e o `GET /board` semeia as padrão na primeira visita.
+     */
+    private function listaDestino(?int $pedida): ?int
+    {
+        if ($pedida && TaskList::whereNull('archived_at')->whereKey($pedida)->exists()) {
+            return $pedida;
+        }
+
+        return TaskList::whereNull('archived_at')->orderBy('position')->orderBy('id')->value('id');
     }
 
     /**

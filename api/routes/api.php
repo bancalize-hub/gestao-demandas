@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\AiCredentialController;
 use App\Http\Controllers\Api\AttendanceController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BrandingController;
+use App\Http\Controllers\Api\BoardController;
 use App\Http\Controllers\Api\CampaignController;
 use App\Http\Controllers\Api\ChatTabController;
 use App\Http\Controllers\Api\ContactController;
@@ -24,6 +25,7 @@ use App\Http\Controllers\Api\QuickReplyController;
 use App\Http\Controllers\Api\StageAutomationController;
 use App\Http\Controllers\Api\StageController;
 use App\Http\Controllers\Api\SuperController;
+use App\Http\Controllers\Api\TaskCardController;
 use App\Http\Controllers\Api\TaskController;
 use App\Http\Controllers\Api\WhatsAppCloudController;
 use App\Http\Controllers\Api\WhatsAppController;
@@ -180,6 +182,34 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
     Route::post('/tasks', [TaskController::class, 'store']);
     Route::patch('/tasks/{task}', [TaskController::class, 'update']);
     Route::delete('/tasks/{task}', [TaskController::class, 'destroy']);
+
+    // Quadro de tarefas (/tarefas) — a moldura: listas, etiquetas, time e cartões.
+    Route::get('/board', [BoardController::class, 'index']);
+    Route::get('/board/archived', [BoardController::class, 'archived']);
+    Route::post('/board/lists', [BoardController::class, 'storeList']);
+    Route::post('/board/lists/reorder', [BoardController::class, 'reorderLists']);
+    Route::patch('/board/lists/{list}', [BoardController::class, 'updateList']);
+    Route::delete('/board/lists/{list}', [BoardController::class, 'destroyList']);
+    Route::post('/board/lists/{list}/restore', [BoardController::class, 'restoreList']);
+    Route::post('/board/labels', [BoardController::class, 'storeLabel']);
+    Route::patch('/board/labels/{label}', [BoardController::class, 'updateLabel']);
+    Route::delete('/board/labels/{label}', [BoardController::class, 'destroyLabel']);
+
+    // O cartão por dentro. Tudo aninhado na tarefa: é ela que carrega a empresa.
+    Route::get('/tasks/{task}/card', [TaskCardController::class, 'show']);
+    Route::patch('/tasks/{task}/move', [TaskCardController::class, 'move']);
+    Route::post('/tasks/{task}/archive', [TaskCardController::class, 'archive']);
+    Route::post('/tasks/{task}/restore', [TaskCardController::class, 'restore']);
+    Route::put('/tasks/{task}/labels', [TaskCardController::class, 'syncLabels']);
+    Route::put('/tasks/{task}/members', [TaskCardController::class, 'syncMembers']);
+    Route::post('/tasks/{task}/checklist', [TaskCardController::class, 'storeChecklistItem']);
+    Route::patch('/tasks/{task}/checklist/{item}', [TaskCardController::class, 'updateChecklistItem']);
+    Route::delete('/tasks/{task}/checklist/{item}', [TaskCardController::class, 'destroyChecklistItem']);
+    Route::post('/tasks/{task}/comments', [TaskCardController::class, 'storeComment']);
+    Route::delete('/tasks/{task}/comments/{comment}', [TaskCardController::class, 'destroyComment']);
+    Route::post('/tasks/{task}/attachments', [TaskCardController::class, 'storeAttachment']);
+    Route::get('/tasks/{task}/attachments/{attachment}', [TaskCardController::class, 'showAttachment']);
+    Route::delete('/tasks/{task}/attachments/{attachment}', [TaskCardController::class, 'destroyAttachment']);
 
     // Google Agenda — conexão da conta + CRUD de eventos
     Route::get('/google/status', [GoogleAuthController::class, 'status']);

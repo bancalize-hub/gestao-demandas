@@ -136,6 +136,18 @@ class BlindagemFase0Test extends TestCase
             ->assertStatus(429);
     }
 
+    /**
+     * Sessão expirada devolve 401, não 500.
+     *
+     * O handler padrão tentava redirecionar para a rota `login`, que não existe num
+     * backend só-API: virava `Route [login] not defined` — 98.690 linhas num log de
+     * 424 MB, e o front recebendo 500 sem saber que era só mandar o usuário entrar.
+     */
+    public function test_rota_autenticada_sem_sessao_devolve_401(): void
+    {
+        $this->getJson('/api/conversations')->assertStatus(401);
+    }
+
     /** O portal público não aceita texto sem tamanho: era gravar megabyte no banco de graça. */
     public function test_solicitacao_publica_tem_teto_de_tamanho(): void
     {

@@ -1,5 +1,6 @@
 <?php
 
+use Illuminate\Auth\AuthenticationException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -42,4 +43,21 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->shouldRenderJsonWhen(
             fn (Request $request) => $request->is('api/*'),
         );
+
+        /*
+         * Sessão expirada devolvia 500, não 401.
+         *
+         * O handler padrão de "não autenticado" tenta redirecionar para a rota `login`,
+         * que não existe num backend que só serve API — a exceção virava
+         * `Route [login] not defined`, 500 na cara do usuário e uma linha no log. Eram
+         * 98.690 linhas assim num arquivo de 424 MB (87% de tudo que o log tinha), e o
+         * front, recebendo 500, não sabia que era só o caso de mandar o usuário logar.
+         */
+        $exceptions->render(function (AuthenticationException $e, Request $request) {
+            if ($request->is('api/*') || $request->expectsJson()) {
+                return response()->json(['message' => 'Sessão expirada. Entre novamente.'], 401);
+            }
+
+            return null;
+        });
     })->create();

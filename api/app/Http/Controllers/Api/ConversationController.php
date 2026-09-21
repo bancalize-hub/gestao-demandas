@@ -262,7 +262,16 @@ class ConversationController extends Controller
                 // trocar o estilo muda a seed e fura o cache de um ano de todo mundo.
                 $seed = 'a1-'.substr(hash('sha256', (string) $conversation->slug), 0, 16);
 
-                return redirect()->away(rtrim((string) config('app.frontend_url'), '/')."/_avatares/{$seed}.svg", 302);
+                /*
+                 * O 302 saía SEM Cache-Control: o navegador voltava a perguntar a cada
+                 * render. Num dia cheio medido (20/09), 27.520 dos 40.887 pedidos da API
+                 * eram exatamente este redirecionamento — 67% de TODO o tráfego, no mesmo
+                 * endpoint onde o PHP-FPM devolveu 502. O destino é hash determinístico do
+                 * slug e nunca muda, então pode ser guardado por uma semana: é CPU que
+                 * volta para a máquina sem trocar nada do que o usuário vê.
+                 */
+                return redirect()->away(rtrim((string) config('app.frontend_url'), '/')."/_avatares/{$seed}.svg", 302)
+                    ->header('Cache-Control', 'public, max-age=604800, immutable');
             }
         }
 

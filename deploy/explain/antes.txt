@@ -1,0 +1,16 @@
+# ANTES dos índices — medido em produção com ./medir.sh (mesma consulta que o código roda).
+# A primeira captura desta pasta foi refeita com o script para que ANTES e DEPOIS sejam
+# comparáveis linha a linha: mesma consulta, mesma máquina, mesmo banco.
+# EXPLAIN — 2026-09-21 10:14:25
+
+## VoiceTranscribeTick (roda a cada minuto)
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	messages	NULL	index	messages_wa_id_index	PRIMARY	8	NULL	40	0.12	Using where; Backward index scan
+
+## Lista de conversas (a cada refetch de aba)
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	conversations	NULL	index	conversations_company_id_slug_unique,conversations_company_id_index,conversations_hidden_at_index	conversations_last_message_at_index	6	NULL	149	39.72	Using where; Backward index scan
+
+## AutoReplyTick
+id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	conversations	NULL	ALL	NULL	NULL	NULL	NULL	3489	3.00	Using where

@@ -74,6 +74,15 @@ Schedule::command('leads:qualificar-tick')
     ->everyThreeMinutes()
     ->withoutOverlapping();
 
+// Saúde de cada número de WhatsApp: conexão caída, número que ficou mudo e entrega com
+// erro. Existe porque o número oficial ficou dois dias sem receber (19-21/09/2026) e quem
+// descobriu foi uma auditoria — o painel de saúde é PULL e só super-admin abre.
+// A cada 5 min: o que ele vigia muda em escala de horas, e cada rodada sobe um processo
+// do CLI numa VPS de 2 vCPU.
+Schedule::command('wa:health-tick')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(5);
+
 // Lembrete de reunião: avisa o cliente pelo WhatsApp X min antes de começar (padrão 1h).
 Schedule::command('meetings:remind-tick')
     ->everyMinute()

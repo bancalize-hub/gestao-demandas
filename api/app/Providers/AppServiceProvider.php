@@ -4,6 +4,9 @@ namespace App\Providers;
 
 use App\Support\Tenancy;
 use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Foundation\Events\DiagnosingHealth;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
@@ -25,6 +28,24 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->rateLimiters();
+        $this->healthCheck();
+    }
+
+    /**
+     * O /up tem que falhar quando o CRM está quebrado — senão vigia externo não serve.
+     *
+     * Por padrão a rota /up só prova que o PHP subiu: ela responde 200 com o MySQL fora,
+     * que é exatamente o incidente mais comum aqui (924 'Connection refused' em sete dias
+     * distintos, acelerando: 53 em junho, 284 em setembro). Um monitor apontado para um
+     * /up assim dá "tudo certo" enquanto ninguém consegue abrir uma conversa.
+     */
+    private function healthCheck(): void
+    {
+        Event::listen(function (DiagnosingHealth $event) {
+            // Consulta de verdade, não `select 1`: passa pelo pool, pela credencial e pelo
+            // banco configurado.
+            DB::connection()->table('companies')->count();
+        });
     }
 
     /**

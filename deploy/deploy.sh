@@ -18,10 +18,17 @@ git fetch origin main
 git reset --hard origin/main
 
 # ---- API (Laravel) ----
+# artisan roda como www-data (ver o comentário em refresh.sh): qualquer linha que ele
+# escreva em storage/logs como root deixa o arquivo do dia root:root, e a partir dali o
+# PHP-FPM não consegue mais logar nada.
+HOME_WWW=/tmp/wwwhome-deploy
+mkdir -p "$HOME_WWW" && chown www-data:www-data "$HOME_WWW"
+artisan() { sudo -u www-data env HOME="$HOME_WWW" php artisan "$@"; }
+
 cd "$APP_DIR/api"
 composer install --no-dev --optimize-autoloader --no-interaction
-php artisan migrate --force
-php artisan storage:link || true
+artisan migrate --force
+artisan storage:link || true
 "$APP_DIR/deploy/refresh.sh" "$APP_DIR"
 
 # ---- Front (Nuxt) ----

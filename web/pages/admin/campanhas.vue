@@ -227,7 +227,7 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 <template>
   <div style="flex:1;min-width:0;background:var(--c-bg-deep);display:flex;flex-direction:column;overflow-y:auto;">
     <!-- topo -->
-    <div style="padding:16px 30px;border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;gap:11px;flex-shrink:0;">
+    <div class="r-wrap" style="padding:16px clamp(12px,4vw,30px);border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;gap:11px;flex-shrink:0;">
       <div style="width:34px;height:34px;border-radius:10px;background:var(--c-ai);display:flex;align-items:center;justify-content:center;">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--c-on-accent)" stroke-width="2"><path d="M3 11v2a1 1 0 0 0 1 1h2l3.5 3.5V7.5L6 11H4Z" stroke-linecap="round" stroke-linejoin="round" /><path d="m9.5 7.5 9-4v17l-9-4" stroke-linecap="round" stroke-linejoin="round" /></svg>
       </div>
@@ -238,7 +238,7 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
       <button style="background:var(--c-ai);border:none;color:var(--c-on-accent);font-family:inherit;font-size:13px;font-weight:700;padding:9px 15px;border-radius:10px;cursor:pointer;flex-shrink:0;" @click="abrirNova">+ Nova campanha</button>
     </div>
 
-    <div style="flex:1;padding:22px 30px 40px;">
+    <div style="flex:1;padding:22px clamp(12px,4vw,30px) 40px;">
       <div v-if="loading" style="color:var(--c-text-muted);font-size:14px;text-align:center;padding:40px;">Carregando…</div>
 
       <template v-else>
@@ -252,7 +252,7 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
         </div>
 
         <!-- cards -->
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:16px;">
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(360px,100%),1fr));gap:16px;">
           <div v-for="c in campaigns" :key="c.id" style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:18px;display:flex;flex-direction:column;gap:12px;">
             <!-- cabeçalho -->
             <div style="display:flex;align-items:flex-start;gap:8px;">

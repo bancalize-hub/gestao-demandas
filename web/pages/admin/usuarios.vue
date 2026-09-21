@@ -56,7 +56,7 @@ onMounted(load)
 
 <template>
   <div style="flex:1;min-width:0;background:var(--c-bg-deep);display:flex;flex-direction:column;overflow-y:auto;">
-    <div style="padding:16px 30px;border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;gap:11px;flex-shrink:0;">
+    <div class="r-wrap" style="padding:16px clamp(12px,4vw,30px);border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;gap:11px;flex-shrink:0;">
       <div style="width:34px;height:34px;border-radius:10px;background:var(--c-ai);display:flex;align-items:center;justify-content:center;">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--c-on-accent)" stroke-width="2"><circle cx="9" cy="8" r="3.2" /><path d="M3.5 20a5.5 5.5 0 0 1 11 0M17 5.5a3 3 0 0 1 0 5.4M21 20a5.5 5.5 0 0 0-3.5-5.1" stroke-linecap="round" /></svg>
       </div>
@@ -74,11 +74,11 @@ onMounted(load)
           <div style="font-size:13px;color:var(--c-text-muted);margin-top:4px;">Crie um acesso para um membro da equipe.</div>
 
           <div style="margin-top:20px;display:flex;flex-direction:column;gap:16px;">
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+            <div class="r-col-1" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
               <label style="display:flex;flex-direction:column;gap:7px;"><span style="font-size:12.5px;font-weight:600;color:var(--c-text-secondary);">Nome</span><input v-model="form.name" placeholder="Nome completo" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:11px;padding:11px 13px;color:var(--c-text);font-family:inherit;font-size:14px;outline:none;"></label>
               <label style="display:flex;flex-direction:column;gap:7px;"><span style="font-size:12.5px;font-weight:600;color:var(--c-text-secondary);">E-mail</span><input v-model="form.email" type="email" placeholder="email@empresa.com" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:11px;padding:11px 13px;color:var(--c-text);font-family:inherit;font-size:14px;outline:none;"></label>
             </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:end;">
+            <div class="r-col-1" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:end;">
               <label style="display:flex;flex-direction:column;gap:7px;"><span style="font-size:12.5px;font-weight:600;color:var(--c-text-secondary);">Senha (mín. 8)</span><input v-model="form.password" type="password" placeholder="••••••••" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:11px;padding:11px 13px;color:var(--c-text);font-family:inherit;font-size:14px;outline:none;"></label>
               <label style="display:flex;align-items:center;gap:9px;font-size:13.5px;color:var(--c-text-secondary);cursor:pointer;padding:11px 0;"><input v-model="form.is_admin" type="checkbox" style="width:16px;height:16px;accent-color:var(--c-ai);cursor:pointer;">Administrador</label>
             </div>

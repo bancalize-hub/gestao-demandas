@@ -146,7 +146,7 @@ async function addNote() {
     <div style="flex:1;min-width:0;padding:26px 32px;">
       <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--c-text-muted);margin-bottom:18px;"><span class="bc" style="cursor:pointer;" @click="crm.go('pipeline')">Funil</span><span>›</span><span style="color:var(--c-text);">{{ c?.name }}</span></div>
 
-      <div style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:24px;display:flex;align-items:center;gap:20px;">
+      <div class="r-wrap" style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:24px;display:flex;align-items:center;gap:20px;">
         <div :style="{ width: '84px', height: '84px', borderRadius: '50%', background: c?.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '30px', flexShrink: 0 }">{{ c?.initials }}</div>
         <div style="flex:1;">
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;"><span style="font-size:22px;font-weight:800;">{{ c?.name }}</span><span v-if="c?.hot" style="font-size:11px;font-weight:700;color:var(--c-orange);background:rgba(255,122,69,.13);padding:3px 10px;border-radius:7px;">🔥 Lead quente</span><span v-for="(t, i) in c?.tags" :key="i" :style="{ fontSize: '11px', fontWeight: 700, color: t.color, background: `${t.color}22`, padding: '3px 10px', borderRadius: '7px' }">{{ t.label }}</span></div>
@@ -196,7 +196,7 @@ async function addNote() {
         <div v-else style="font-size:13px;color:var(--c-text-muted);">Nenhum follow-up agendado. Crie um para não perder o lead de vista.</div>
       </div>
 
-      <div style="display:grid;grid-template-columns:1fr 1.2fr;gap:18px;margin-top:18px;">
+      <div class="r-col-1" style="display:grid;grid-template-columns:1fr 1.2fr;gap:18px;margin-top:18px;">
         <div style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:22px 24px;">
           <div style="font-size:15px;font-weight:700;margin-bottom:16px;">Detalhes</div>
           <div style="display:flex;flex-direction:column;gap:13px;">

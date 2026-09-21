@@ -43,16 +43,25 @@ function isActive(s: Screen) {
 // está aberta no chat, para o teclado/composer ocuparem a tela toda.
 const hideOnMobile = computed(() => isMobile.value && (isActive('chat') || route.path.startsWith('/chat-')) && crm.chatOpen)
 const railStyle = computed(() => isMobile.value
-  ? { order: 2, width: '100%', height: '58px', flexShrink: 0, background: 'var(--c-surface-2)', borderTop: '1px solid var(--c-border)', display: hideOnMobile.value ? 'none' : 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', padding: '0 4px', gap: '2px', overflowX: 'auto' }
+  ? { order: 2, width: '100%', minHeight: '58px', flexShrink: 0, background: 'var(--c-surface-2)', borderTop: '1px solid var(--c-border)', display: hideOnMobile.value ? 'none' : 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: '0 6px', gap: '2px' }
   : { width: '76px', flexShrink: 0, background: 'var(--c-surface-2)', borderRight: '1px solid var(--c-border)', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '18px 0', gap: '6px' })
 
 function nav(active: boolean) {
-  return {
-    width: '46px', height: '46px', borderRadius: '14px', display: 'flex',
+  const base = {
+    borderRadius: '14px', display: 'flex',
     alignItems: 'center', justifyContent: 'center', border: 'none', cursor: 'pointer',
     transition: 'all .15s', background: active ? 'rgba(var(--accent-rgb),0.14)' : 'transparent',
     color: active ? 'var(--accent)' : 'var(--c-text-muted)',
   }
+  /*
+    No celular os botões dividem a largura em vez de medirem 46px fixos. Com as
+    3 seções de admin ligadas são 8 ícones + avatar = ~424px, mais que os 360px
+    de um aparelho comum: a barra ganhava `overflow-x` e escondia seções inteiras
+    sem nenhuma pista de que havia mais coisa à direita.
+  */
+  return isMobile.value
+    ? { ...base, flex: '1 1 0', minWidth: 0, maxWidth: '54px', height: '44px' }
+    : { ...base, width: '46px', height: '46px' }
 }
 
 const initials = computed(() => {
@@ -108,7 +117,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <nav :style="railStyle">
+  <nav :class="isMobile ? 'r-safe-bottom' : undefined" :style="railStyle">
     <img v-if="!isMobile && companyLogo" :src="companyLogo" alt="Logo" style="width:42px;height:42px;border-radius:13px;object-fit:contain;margin-bottom:14px;">
     <div v-else-if="!isMobile" style="width:42px;height:42px;border-radius:13px;background:var(--accent);display:flex;align-items:center;justify-content:center;margin-bottom:14px;box-shadow:0 6px 16px rgba(var(--accent-rgb),.35);">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 3c-4.97 0-9 3.58-9 8 0 2.5 1.3 4.7 3.3 6.1L5.5 21l3.6-1.5c.9.25 1.9.4 2.9.4 4.97 0 9-3.58 9-8s-4.03-8.9-9-8.9Z" fill="var(--accent-ink)" /></svg>

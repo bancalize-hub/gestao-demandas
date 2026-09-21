@@ -252,8 +252,8 @@ const cols = computed(() => crm.stages.map((st) => {
 
 <template>
   <div style="flex:1;display:flex;flex-direction:column;min-width:0;background:var(--c-bg-deep);">
-    <div style="padding:22px 30px 0;">
-      <div style="display:flex;align-items:center;justify-content:space-between;">
+    <div style="padding:22px clamp(12px,4vw,30px) 0;">
+      <div class="r-wrap" style="display:flex;align-items:center;justify-content:space-between;">
         <div>
           <div style="font-size:23px;font-weight:800;letter-spacing:-.3px;">Funil de vendas</div>
           <div style="display:flex;align-items:center;gap:14px;font-size:12px;color:var(--c-text-muted);margin-top:5px;flex-wrap:wrap;">
@@ -294,7 +294,7 @@ const cols = computed(() => crm.stages.map((st) => {
       </div>
     </div>
 
-    <div style="flex:1;overflow-x:auto;overflow-y:hidden;padding:22px 30px 26px;">
+    <div style="flex:1;overflow-x:auto;overflow-y:hidden;padding:22px clamp(12px,4vw,30px) 26px;">
       <div style="display:flex;gap:16px;height:100%;min-width:max-content;">
         <div v-for="col in cols" :key="col.id" style="width:280px;display:flex;flex-direction:column;background:var(--c-bg-deep);border-radius:14px;padding:13px;flex-shrink:0;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:13px;padding:0 3px;">
@@ -354,7 +354,7 @@ const cols = computed(() => crm.stages.map((st) => {
         <div style="display:flex;flex-direction:column;gap:15px;">
           <label style="display:flex;flex-direction:column;gap:7px;"><span style="font-size:12.5px;font-weight:600;color:var(--c-text-secondary);">Nome*</span><input v-model="form.name" placeholder="Ex: Vértice Pro — 12 licenças" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:11px;padding:11px 13px;color:var(--c-text);font-family:inherit;font-size:14px;outline:none;"></label>
           <label style="display:flex;flex-direction:column;gap:7px;"><span style="font-size:12.5px;font-weight:600;color:var(--c-text-secondary);">Cliente / contato</span><input v-model="form.sub" placeholder="Ex: Mariana Costa" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:11px;padding:11px 13px;color:var(--c-text);font-family:inherit;font-size:14px;outline:none;"></label>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+          <div class="r-col-1" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
             <label style="display:flex;flex-direction:column;gap:7px;"><span style="font-size:12.5px;font-weight:600;color:var(--c-text-secondary);">Valor</span><input v-model="form.value" placeholder="R$ 4.200" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:11px;padding:11px 13px;color:var(--c-text);font-family:inherit;font-size:14px;outline:none;"></label>
             <label style="display:flex;flex-direction:column;gap:7px;"><span style="font-size:12.5px;font-weight:600;color:var(--c-text-secondary);">Etapa</span><select v-model="form.stage" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:11px;padding:11px 13px;color:var(--c-text);font-family:inherit;font-size:14px;outline:none;color-scheme:dark;"><option v-for="s in stages" :key="s.id" :value="s.id">{{ s.title }}</option></select></label>
           </div>

@@ -23,6 +23,12 @@ export default defineNuxtConfig({
     head: {
       title: 'CRM com chat ao vivo',
       htmlAttrs: { lang: 'pt-BR' },
+      // Declarada à mão (o Nuxt já põe uma por padrão) por causa do `viewport-fit=cover`:
+      // sem ele o `env(safe-area-inset-bottom)` devolve 0 e a barra de navegação de baixo
+      // fica embaixo da home indicator do iPhone.
+      meta: [
+        { name: 'viewport', content: 'width=device-width, initial-scale=1, viewport-fit=cover' },
+      ],
       link: [
         { rel: 'preconnect', href: 'https://fonts.googleapis.com' },
         { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: '' },

@@ -263,7 +263,7 @@ onBeforeUnmount(stopPolling)
 </script>
 
 <template>
-  <div style="display:flex;height:100dvh;background:var(--c-bg-deepest);color:var(--c-text);font-family:'JetBrains Mono',ui-monospace,monospace;position:relative;overflow:hidden;">
+  <div style="display:flex;height:100%;min-height:0;background:var(--c-bg-deepest);color:var(--c-text);font-family:'JetBrains Mono',ui-monospace,monospace;position:relative;overflow:hidden;">
     <!-- sessões: fixa no desktop, gaveta no mobile -->
     <aside
       :style="{

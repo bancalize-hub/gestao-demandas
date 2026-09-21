@@ -59,14 +59,14 @@ const cols = computed(() => crm.tasks.map((col) => {
 
 <template>
   <div style="flex:1;display:flex;flex-direction:column;min-width:0;background:var(--c-bg-deep);">
-    <div style="padding:22px 30px 0;display:flex;align-items:center;justify-content:space-between;">
+    <div class="r-wrap" style="padding:22px clamp(12px,4vw,30px) 0;display:flex;align-items:center;justify-content:space-between;">
       <div>
         <div style="font-size:23px;font-weight:800;letter-spacing:-.3px;">Tarefas</div>
         <div style="font-size:13.5px;color:var(--c-text-muted);margin-top:3px;">Clique numa tarefa para ver os detalhes · arraste para mover entre as etapas</div>
       </div>
       <button class="wabtn" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:13.5px;font-weight:700;padding:10px 17px;border-radius:11px;cursor:pointer;display:flex;align-items:center;gap:7px;" @click="crm.go('form')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14" stroke-linecap="round" /></svg>Nova tarefa</button>
     </div>
-    <div style="flex:1;overflow-x:auto;overflow-y:hidden;padding:22px 30px 26px;">
+    <div style="flex:1;overflow-x:auto;overflow-y:hidden;padding:22px clamp(12px,4vw,30px) 26px;">
       <div style="display:flex;gap:16px;height:100%;min-width:max-content;">
         <div v-for="col in cols" :key="col.id" style="width:288px;display:flex;flex-direction:column;background:var(--c-bg-deep);border-radius:14px;padding:13px;flex-shrink:0;">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:13px;padding:0 3px;"><span :style="{ width: '9px', height: '9px', borderRadius: '50%', background: col.dot }" /><span style="font-weight:700;font-size:13.5px;">{{ col.title }}</span><span style="font-size:12px;color:var(--c-text-muted);background:var(--c-surface-1);min-width:20px;height:20px;border-radius:6px;display:flex;align-items:center;justify-content:center;padding:0 6px;">{{ col.count }}</span></div>

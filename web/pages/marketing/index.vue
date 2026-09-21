@@ -460,7 +460,7 @@ const rodapeSemAtrib = computed(() => semAtribuicao.value
 <template>
   <div style="flex:1;min-width:0;background:var(--c-bg-deep);display:flex;flex-direction:column;overflow:hidden;">
     <!-- cabeçalho -->
-    <div style="padding:16px 50px;border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;gap:12px;flex-shrink:0;">
+    <div class="r-wrap" style="padding:16px clamp(12px,4vw,50px);border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;gap:12px;flex-shrink:0;">
       <div style="width:34px;height:34px;border-radius:10px;background:var(--accent);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-ink)" stroke-width="1.9"><path d="M3 11v2a1 1 0 0 0 1 1h2v4h2v-4l10 4.5v-15L8 8H4a1 1 0 0 0-1 1Z" stroke-linecap="round" stroke-linejoin="round" /></svg>
       </div>
@@ -475,7 +475,7 @@ const rodapeSemAtrib = computed(() => semAtribuicao.value
     </div>
 
     <!-- controles: período, calendário e editor de colunas -->
-    <div style="padding:10px 50px;border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;gap:6px;flex-shrink:0;flex-wrap:wrap;">
+    <div style="padding:10px clamp(12px,4vw,50px);border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;gap:6px;flex-shrink:0;flex-wrap:wrap;">
       <button
         v-for="p in periodos" :key="p.value"
         :style="{ background: periodo === p.value ? 'var(--c-surface-0)' : 'transparent', border: '1px solid ' + (periodo === p.value ? 'var(--c-surface-3)' : 'transparent'), color: periodo === p.value ? 'var(--c-text)' : 'var(--c-text-faint)', fontFamily: 'inherit', fontSize: '11.5px', fontWeight: 700, padding: '5px 11px', borderRadius: '7px', cursor: 'pointer' }"
@@ -551,10 +551,10 @@ const rodapeSemAtrib = computed(() => semAtribuicao.value
       >{{ loadingPainel ? '…' : '↻ Atualizar' }}</button>
     </div>
 
-    <div v-if="erroPainel" style="padding:11px 50px;background:rgba(255,170,0,.12);border-bottom:1px solid rgba(255,170,0,.35);font-size:12.5px;font-weight:600;color:var(--c-warn-soft);flex-shrink:0;">
+    <div v-if="erroPainel" style="padding:11px clamp(12px,4vw,50px);background:rgba(255,170,0,.12);border-bottom:1px solid rgba(255,170,0,.35);font-size:12.5px;font-weight:600;color:var(--c-warn-soft);flex-shrink:0;">
       ⚠ O Facebook não respondeu: {{ erroPainel }}
     </div>
-    <div v-if="erroStats" style="padding:11px 50px;background:rgba(255,170,0,.12);border-bottom:1px solid rgba(255,170,0,.35);font-size:12.5px;font-weight:600;color:var(--c-warn-soft);flex-shrink:0;">
+    <div v-if="erroStats" style="padding:11px clamp(12px,4vw,50px);background:rgba(255,170,0,.12);border-bottom:1px solid rgba(255,170,0,.35);font-size:12.5px;font-weight:600;color:var(--c-warn-soft);flex-shrink:0;">
       ⚠ Leads, reuniões e vendas fora do ar: {{ erroStats }}
     </div>
 
@@ -575,7 +575,7 @@ const rodapeSemAtrib = computed(() => semAtribuicao.value
         Sendo `inline-block`, ele encolhe até o tamanho da tabela e leva as duas margens
         junto; o `min-width:100%` mantém o recuo mesmo quando a tabela é estreita.
       -->
-      <div style="display:inline-block;min-width:100%;box-sizing:border-box;padding:0 50px;">
+      <div style="display:inline-block;min-width:100%;box-sizing:border-box;padding:0 clamp(12px,4vw,50px);">
         <table style="width:100%;border-collapse:collapse;font-size:12.5px;white-space:nowrap;">
         <thead>
           <tr style="position:sticky;top:0;z-index:2;background:var(--c-bg-deepest);border-bottom:1px solid var(--c-surface-1);">

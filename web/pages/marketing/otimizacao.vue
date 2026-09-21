@@ -93,7 +93,7 @@ const td = 'font-size:12px;padding:7px 10px;border-top:1px solid var(--c-surface
       <template v-else-if="dados">
         <!-- A base primeiro: sem saber de quantos leads se está falando, nenhuma
              porcentagem abaixo quer dizer coisa alguma. -->
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:16px;">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(120px,100%),1fr));gap:10px;margin-bottom:16px;">
           <div v-for="m in [
             { r: 'Leads', v: dados.base.leads, s: `${dados.base.de_anuncio} de anúncio` },
             { r: 'Triados', v: dados.base.triados, s: `${dados.base.sem_triagem} sem triagem` },

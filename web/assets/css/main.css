@@ -35,6 +35,41 @@ body {
   background: transparent;
 }
 
+/*
+  Utilitários de responsividade.
+
+  O app é estilizado quase todo com `style="..."` inline, e estilo inline não
+  aceita media query — por isso estas regras usam `!important`: é o único jeito
+  de uma folha de estilo vencer o inline sem reescrever cada nó para `:style`
+  objeto. Aplique a classe no elemento e o inline continua valendo no desktop.
+
+  Ponto de corte 820px = mesmo do composable useIsMobile, para o layout não
+  discordar de si mesmo na faixa entre um valor e outro.
+*/
+@media (max-width: 820px) {
+  /* Grade de N colunas fixas vira coluna única. */
+  .r-col-1 { grid-template-columns: 1fr !important; }
+  /* Grade de N colunas fixas vira duas (KPIs curtos, que cabem em par). */
+  .r-col-2 { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  /*
+    Linha que precisa quebrar em vez de espremer os filhos. Só o `row-gap` é
+    forçado: sem ele as linhas quebradas ficam coladas, e mexer no `column-gap`
+    estragaria o espaçamento horizontal que cada tela escolheu.
+  */
+  .r-wrap { flex-wrap: wrap !important; row-gap: 10px !important; }
+  /* Linha que vira pilha. */
+  .r-stack { flex-direction: column !important; align-items: stretch !important; }
+  /* Elemento de largura fixa que passa a ocupar a tela. */
+  .r-full { width: 100% !important; max-width: 100% !important; flex-basis: auto !important; }
+  /* Sai da tela no celular (decoração, coluna secundária). */
+  .r-hide { display: none !important; }
+  /* Altura fixa que atrapalha quando o teclado abre. */
+  .r-h-auto { height: auto !important; min-height: 0 !important; }
+}
+
+/* Barra inferior de navegação: respeita a home indicator do iPhone. */
+.r-safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0px) !important; }
+
 /* Animações usadas pelo design */
 @keyframes recpulse {
   0%, 100% { opacity: 1; }

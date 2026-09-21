@@ -118,7 +118,7 @@ const td = 'padding:11px 12px;font-size:12px;vertical-align:middle;white-space:n
 </script>
 
 <template>
-  <div style="display:flex;flex-direction:column;height:100dvh;background:var(--c-bg-deepest);color:var(--c-text);font-family:'JetBrains Mono',ui-monospace,monospace;overflow:hidden;">
+  <div style="display:flex;flex-direction:column;height:100%;min-height:0;background:var(--c-bg-deepest);color:var(--c-text);font-family:'JetBrains Mono',ui-monospace,monospace;overflow:hidden;">
     <!-- barra do topo -->
     <header style="display:flex;align-items:center;gap:12px;padding:12px clamp(12px,4vw,28px);border-bottom:1px solid var(--c-surface-1);flex-shrink:0;">
       <button
@@ -316,7 +316,7 @@ const td = 'padding:11px 12px;font-size:12px;vertical-align:middle;white-space:n
 
       <!-- ============ SERVIDOR ============ -->
       <template v-else>
-        <div v-if="plataforma" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;">
+        <div v-if="plataforma" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(260px,100%),1fr));gap:12px;">
           <div :style="cardBase">
             <div style="font-size:10.5px;font-weight:700;color:var(--c-text-faint);text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px;">
               Serviços

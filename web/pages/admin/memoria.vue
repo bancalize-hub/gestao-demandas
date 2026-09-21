@@ -335,7 +335,7 @@ onMounted(() => { load(); loadAi(); loadMaterials(); loadSettings() })
 
 <template>
   <div style="flex:1;min-width:0;background:var(--c-bg-deep);display:flex;flex-direction:column;overflow-y:auto;">
-    <div style="padding:16px 30px;border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;gap:11px;flex-shrink:0;">
+    <div class="r-wrap" style="padding:16px clamp(12px,4vw,30px);border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;gap:11px;flex-shrink:0;">
       <div style="width:34px;height:34px;border-radius:10px;background:var(--c-ai);display:flex;align-items:center;justify-content:center;font-size:17px;">🧠</div>
       <div>
         <div style="font-weight:800;font-size:15px;">Memória da IA</div>

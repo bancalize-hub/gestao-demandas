@@ -52,7 +52,7 @@ function reset() {
 
 <template>
   <div style="flex:1;min-width:0;background:var(--c-bg-deep);display:flex;flex-direction:column;overflow-y:auto;">
-    <div style="padding:16px 30px;border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+    <div class="r-wrap" style="padding:16px clamp(12px,4vw,30px);border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
       <div style="display:flex;align-items:center;gap:11px;">
         <CrmBrandLogo :company="branding" fallback-name="Portal de solicitações" :height="34" />
         <div style="font-size:12px;color:var(--c-text-muted);">{{ branding?.name ? `${branding.name} · canal do cliente` : 'canal do cliente' }}</div>
@@ -67,7 +67,7 @@ function reset() {
           <div style="font-size:14px;color:var(--c-text-muted);margin-top:6px;">Conte o que você precisa que a equipe Vértice faça. Vamos priorizar e te retornar pelo WhatsApp.</div>
 
           <div style="margin-top:26px;display:flex;flex-direction:column;gap:20px;">
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+            <div class="r-col-1" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
               <label style="display:flex;flex-direction:column;gap:7px;"><span style="font-size:12.5px;font-weight:600;color:var(--c-text-secondary);">Nome*</span><input v-model="name" placeholder="Seu nome" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:11px;padding:11px 13px;color:var(--c-text);font-family:inherit;font-size:14px;outline:none;"></label>
               <label style="display:flex;flex-direction:column;gap:7px;"><span style="font-size:12.5px;font-weight:600;color:var(--c-text-secondary);">Empresa</span><input v-model="company" placeholder="Sua empresa (opcional)" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:11px;padding:11px 13px;color:var(--c-text);font-family:inherit;font-size:14px;outline:none;"></label>
             </div>
@@ -88,7 +88,7 @@ function reset() {
 
             <label style="display:flex;flex-direction:column;gap:7px;"><span style="font-size:12.5px;font-weight:600;color:var(--c-text-secondary);">Descrição*</span><textarea v-model="desc" rows="4" placeholder="Descreva o que você precisa com o máximo de detalhes" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:11px;padding:12px 13px;color:var(--c-text);font-family:inherit;font-size:14px;outline:none;resize:vertical;line-height:1.5;" /></label>
 
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+            <div class="r-col-1" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
               <label style="display:flex;flex-direction:column;gap:7px;"><span style="font-size:12.5px;font-weight:600;color:var(--c-text-secondary);">Prazo desejado</span><input v-model="due" type="date" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:11px;padding:11px 13px;color:var(--c-text);font-family:inherit;font-size:14px;outline:none;color-scheme:dark;"></label>
               <div />
             </div>

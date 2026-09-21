@@ -274,6 +274,16 @@ async function removeEvent() {
 const viewMode = ref<'dia' | 'semana' | 'mes'>('semana')
 const focusedDay = ref(new Date()) // dia em foco na visão "dia"
 
+/*
+  No celular a semana abre em "dia": sete colunas em 360px dão ~43px cada, que
+  não cabe nem o horário. Continua sendo só o PADRÃO — quem quiser a semana
+  ainda troca no seletor, e aí a grade rola na horizontal (ver gridMinW).
+*/
+const isMobile = useIsMobile()
+onMounted(() => {
+  if (isMobile.value && viewMode.value === 'semana') viewMode.value = 'dia'
+})
+
 // Status de uma reunião (só vale p/ eventos com cliente vinculado / Meet).
 type EvStatus = 'compareceu' | 'faltou' | 'aovivo' | 'pendente' | 'futura' | 'simples'
 function evStatus(ev: CalEvent): EvStatus {
@@ -393,7 +403,20 @@ function eventsOfDay(day: Date) {
 }
 // Dias mostrados na grade conforme a visão (semana=7, dia=1).
 const gridDays = computed(() => viewMode.value === 'dia' ? [focusedDay.value] : weekDays.value)
-const gridCols = computed(() => `54px repeat(${gridDays.value.length},1fr)`)
+/*
+  `minmax(92px,1fr)` em vez de `1fr`: no desktop o `1fr` continua mandando (as
+  colunas passam de 92px de sobra), mas na tela estreita a coluna para de ser
+  espremida até virar risco e a grade rola na horizontal.
+*/
+const COL_MIN = 92
+const gridCols = computed(() => `54px repeat(${gridDays.value.length},minmax(${COL_MIN}px,1fr))`)
+/*
+  Largura mínima repetida no cabeçalho E no invólucro das linhas. Sem isso, a
+  grade transborda mas o invólucro `position:relative` fica com a largura do
+  container — e a camada de eventos (`position:absolute;inset:0`) se ancora na
+  largura errada, deslocando todo evento em relação à coluna do dia.
+*/
+const gridMinW = computed(() => 54 + gridDays.value.length * COL_MIN)
 
 // Rótulo do período conforme a visão.
 const periodLabel = computed(() => {
@@ -611,7 +634,7 @@ async function excluirDoDetalhe(ev: CalEvent) {
   <div style="flex:1;display:flex;min-width:0;background:var(--c-bg-deep);">
     <div style="flex:1;display:flex;flex-direction:column;min-width:0;">
       <!-- Cabeçalho -->
-      <div style="padding:22px 30px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--c-surface-1);">
+      <div class="r-wrap" style="padding:22px clamp(12px,4vw,30px);display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--c-surface-1);">
         <div>
           <div style="display:flex;align-items:center;gap:12px;">
             <div style="font-size:23px;font-weight:800;letter-spacing:-.3px;">Agenda</div>
@@ -661,7 +684,7 @@ async function excluirDoDetalhe(ev: CalEvent) {
       </div>
 
       <!-- Legenda das cores -->
-      <div v-if="crm.hasCalendars" style="display:flex;flex-wrap:wrap;gap:14px;padding:10px 30px;border-bottom:1px solid var(--c-surface-1);">
+      <div v-if="crm.hasCalendars" style="display:flex;flex-wrap:wrap;gap:14px;padding:10px clamp(12px,4vw,30px);border-bottom:1px solid var(--c-surface-1);">
         <span v-for="l in LEGEND" :key="l.label" style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--c-text-muted);font-weight:600;"><span :style="{ width: '9px', height: '9px', borderRadius: '3px', background: l.color }" />{{ l.label }}</span>
       </div>
 
@@ -682,9 +705,9 @@ async function excluirDoDetalhe(ev: CalEvent) {
       </div>
 
       <!-- Grade da semana / dia -->
-      <div v-else-if="viewMode !== 'mes'" ref="gradeRef" style="flex:1;overflow:auto;padding:0 30px 24px;">
+      <div v-else-if="viewMode !== 'mes'" ref="gradeRef" style="flex:1;overflow:auto;padding:0 clamp(12px,4vw,30px) 24px;">
         <!-- Cabeçalho dos dias -->
-        <div :style="`display:grid;grid-template-columns:${gridCols};position:sticky;top:0;background:var(--c-bg-deep);z-index:3;padding-top:14px;`">
+        <div :style="`display:grid;grid-template-columns:${gridCols};position:sticky;top:0;background:var(--c-bg-deep);z-index:3;padding-top:14px;min-width:${gridMinW}px;`">
           <div />
           <div v-for="d in gridDays" :key="d.toISOString()" style="text-align:center;padding-bottom:12px;">
             <div :style="`font-size:11.5px;${isToday(d) ? 'color:var(--accent);font-weight:700;' : 'color:var(--c-text-muted);'}`">{{ DAY_NAMES[d.getDay()] }}</div>
@@ -696,7 +719,7 @@ async function excluirDoDetalhe(ev: CalEvent) {
         </div>
 
         <!-- Linhas de hora + colunas -->
-        <div style="position:relative;">
+        <div :style="`position:relative;min-width:${gridMinW}px;`">
           <div v-for="h in HOURS" :key="h" :style="`display:grid;grid-template-columns:${gridCols};`">
             <div :style="`font-size:11px;color:var(--c-text-muted);text-align:right;padding:0 10px;height:${HOUR_H}px;border-top:1px solid var(--c-surface-0);`">{{ String(h).padStart(2, '0') }}:00</div>
             <div v-for="d in gridDays" :key="h + d.toISOString()" style="border-top:1px solid var(--c-surface-0);border-left:1px solid var(--c-surface-0);cursor:pointer;" @click="openNew(d)" @dragover.prevent @drop.prevent="onSlotDrop(d, h, $event)" />
@@ -739,11 +762,11 @@ async function excluirDoDetalhe(ev: CalEvent) {
       </div>
 
       <!-- Visão mês -->
-      <div v-else style="flex:1;overflow:auto;padding:14px 30px 24px;">
-        <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:1px;margin-bottom:6px;">
+      <div v-else style="flex:1;overflow:auto;padding:14px clamp(12px,4vw,30px) 24px;">
+        <div style="display:grid;grid-template-columns:repeat(7,1fr);min-width:560px;gap:1px;margin-bottom:6px;">
           <div v-for="dn in DAY_NAMES" :key="dn" style="text-align:center;font-size:11px;color:var(--c-text-muted);font-weight:700;padding:4px 0;">{{ dn }}</div>
         </div>
-        <div style="display:grid;grid-template-columns:repeat(7,1fr);grid-auto-rows:1fr;gap:6px;">
+        <div style="display:grid;grid-template-columns:repeat(7,1fr);min-width:560px;grid-auto-rows:1fr;gap:6px;">
           <div
             v-for="d in monthGrid" :key="d.toISOString()"
             :style="`min-height:96px;background:${isToday(d) ? 'rgba(var(--accent-rgb),.06)' : 'var(--c-bg-deep)'};border:1px solid ${isToday(d) ? 'rgba(var(--accent-rgb),.4)' : 'var(--c-surface-0)'};border-radius:9px;padding:6px;display:flex;flex-direction:column;gap:3px;cursor:pointer;opacity:${d.getMonth() === monthCursor.getMonth() ? 1 : 0.4};`"
@@ -768,7 +791,7 @@ async function excluirDoDetalhe(ev: CalEvent) {
     </div>
 
     <!-- Painel lateral: agendas da empresa + hoje -->
-    <div v-if="crm.hasCalendars" style="width:300px;flex-shrink:0;background:var(--c-bg);border-left:1px solid var(--c-surface-1);display:flex;flex-direction:column;">
+    <div v-if="crm.hasCalendars" class="r-hide" style="width:300px;flex-shrink:0;background:var(--c-bg);border-left:1px solid var(--c-surface-1);display:flex;flex-direction:column;">
       <!-- Seletor de agendas: cada usuário é uma camada que liga/desliga, como no Google Agenda -->
       <div style="padding:16px 20px 14px;border-bottom:1px solid var(--c-surface-1);">
         <div style="display:flex;align-items:center;justify-content:space-between;">

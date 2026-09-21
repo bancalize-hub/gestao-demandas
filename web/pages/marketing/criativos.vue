@@ -331,7 +331,7 @@ function estiloCard(c: Criativo) {
                 : 'Nenhum criativo validado.' }}
       </div>
 
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px;">
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(250px,100%),1fr));gap:14px;">
         <div v-for="c in visiveis" :key="c.id" :style="estiloCard(c)">
           <img
             :src="apiOrigin + c.url" :alt="c.name"

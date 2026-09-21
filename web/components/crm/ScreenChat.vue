@@ -1310,7 +1310,7 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
       </div>
 
       <!-- header -->
-      <div :style="{ display: 'flex', alignItems: 'center', gap: isMobile ? '9px' : '13px', padding: isMobile ? '10px 12px' : '13px 22px', background: 'var(--c-surface-2)', borderBottom: '1px solid var(--c-border)' }">
+      <div :style="{ display: 'flex', alignItems: 'center', flexWrap: isMobile ? 'wrap' : 'nowrap', gap: isMobile ? '9px' : '13px', padding: isMobile ? '10px 12px' : '13px 22px', background: 'var(--c-surface-2)', borderBottom: '1px solid var(--c-border)' }">
         <button v-if="isMobile" title="Voltar" style="background:none;border:none;color:var(--c-text);cursor:pointer;display:flex;align-items:center;padding:0;margin-right:-4px;flex-shrink:0;" @click="backToList">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 19l-7-7 7-7" stroke-linecap="round" stroke-linejoin="round" /></svg>
         </button>

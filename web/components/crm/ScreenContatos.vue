@@ -187,7 +187,7 @@ function remove() {
   <div style="flex:1;display:flex;flex-direction:column;min-width:0;background:var(--c-bg-deep);">
     <!-- ================= CARDS DAS LISTAS ================= -->
     <template v-if="vendo === null">
-      <div style="padding:22px 30px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--c-surface-1);flex-wrap:wrap;gap:10px;">
+      <div style="padding:22px clamp(12px,4vw,30px);display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--c-surface-1);flex-wrap:wrap;gap:10px;">
         <div>
           <div style="font-size:23px;font-weight:800;letter-spacing:-.3px;">Contatos</div>
           <div style="font-size:13.5px;color:var(--c-text-muted);margin-top:3px;">{{ listas.length }} listas · {{ totalGeral }} contatos na agenda</div>
@@ -198,8 +198,8 @@ function remove() {
         </div>
       </div>
 
-      <div style="flex:1;overflow-y:auto;padding:22px 30px 30px;">
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px;">
+      <div style="flex:1;overflow-y:auto;padding:22px clamp(12px,4vw,30px) 30px;">
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(250px,100%),1fr));gap:14px;">
           <!-- todos -->
           <div class="lcard" style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:16px;padding:18px;cursor:pointer;display:flex;flex-direction:column;gap:10px;" @click="abrirLista('todos')">
             <div style="display:flex;align-items:center;gap:10px;">
@@ -237,7 +237,7 @@ function remove() {
 
     <!-- ================= CONTATOS DE UMA LISTA ================= -->
     <template v-else>
-      <div style="padding:18px 30px;display:flex;align-items:center;gap:14px;border-bottom:1px solid var(--c-surface-1);flex-wrap:wrap;">
+      <div style="padding:18px clamp(12px,4vw,30px);display:flex;align-items:center;gap:14px;border-bottom:1px solid var(--c-surface-1);flex-wrap:wrap;">
         <button class="lback" title="Voltar às listas" style="background:var(--c-surface-2);border:none;color:var(--c-text);width:34px;height:34px;border-radius:10px;cursor:pointer;font-size:15px;flex-shrink:0;" @click="voltarParaListas">←</button>
         <div style="flex:1;min-width:0;">
           <div style="font-size:20px;font-weight:800;letter-spacing:-.3px;display:flex;align-items:center;gap:8px;">
@@ -252,21 +252,21 @@ function remove() {
         </button>
       </div>
 
-      <div style="padding:16px 30px 0;">
+      <div style="padding:16px clamp(12px,4vw,30px) 0;">
         <div style="display:flex;align-items:center;gap:9px;background:var(--c-surface-2);border-radius:11px;padding:9px 13px;max-width:420px;">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--c-text-muted)" stroke-width="2"><circle cx="11" cy="11" r="7" /><path d="m20 20-3-3" stroke-linecap="round" /></svg>
           <input v-model="search" placeholder="Buscar por nome, telefone ou e-mail" style="flex:1;background:transparent;border:none;outline:none;color:var(--c-text);font-family:inherit;font-size:13.5px;">
         </div>
       </div>
 
-      <div style="flex:1;overflow-y:auto;padding:16px 30px 28px;">
+      <div style="flex:1;overflow-y:auto;padding:16px clamp(12px,4vw,30px) 28px;">
         <div v-if="carregando" style="text-align:center;color:var(--c-text-muted);font-size:13.5px;margin-top:40px;">Carregando…</div>
         <div v-else-if="!filtered.length" style="text-align:center;color:var(--c-text-muted);font-size:13.5px;margin-top:40px;">
           <template v-if="search">Nenhum contato para essa busca.</template>
           <template v-else-if="listaAtiva">Esta lista ainda está vazia.</template>
           <template v-else>Nenhum contato. Importe uma planilha, puxe do CRM ou conecte o Google na Agenda.</template>
         </div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;">
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(280px,100%),1fr));gap:12px;">
           <div v-for="c in filtered" :key="c.id" class="ccard" style="display:flex;align-items:center;gap:13px;background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:13px;padding:13px 15px;cursor:pointer;" :title="c.phone ? 'Abrir conversa' : 'Sem telefone'" @click="crm.openContactChat(c)">
             <div :style="{ width: '46px', height: '46px', borderRadius: '50%', flexShrink: 0, background: colorFor(c.name || String(c.id)), display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '15px', overflow: 'hidden' }">
               <img v-if="c.avatar && !broken.has(c.id)" :src="c.avatar" referrerpolicy="no-referrer" style="width:100%;height:100%;object-fit:cover;" @error="broken.add(c.id)">

@@ -93,7 +93,7 @@ const box = { background: 'var(--c-surface-2)', border: '1px solid var(--c-borde
       <div :style="box">
         <div style="font-size:15px;font-weight:700;margin-bottom:4px;">Logos</div>
         <div style="font-size:12.5px;color:var(--c-text-muted);margin-bottom:16px;">PNG/SVG/JPG até 2MB. A logo clara é usada no tema claro; a escura, no tema escuro.</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div class="r-col-1" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
           <div v-for="v in (['light', 'dark'] as const)" :key="v" style="border:1px solid var(--c-border);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:12px;">
             <div style="font-size:13px;font-weight:700;color:var(--c-text-secondary);">Logo — tema {{ v === 'light' ? 'claro' : 'escuro' }}</div>
             <div :style="{ height: '76px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: v === 'light' ? '#f0f2f5' : 'var(--c-bg-deep)', border: '1px solid var(--c-border)' }">

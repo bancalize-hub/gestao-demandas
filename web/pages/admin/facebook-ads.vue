@@ -225,7 +225,7 @@ function dataHora(iso: string | null | undefined) {
 <template>
   <div style="flex:1;min-width:0;background:var(--c-bg-deep);display:flex;flex-direction:column;overflow-y:auto;">
     <!-- topo -->
-    <div style="padding:16px 30px;border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;gap:11px;flex-shrink:0;flex-wrap:wrap;">
+    <div style="padding:16px clamp(12px,4vw,30px);border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;gap:11px;flex-shrink:0;flex-wrap:wrap;">
       <div style="width:34px;height:34px;border-radius:10px;background:#1877F2;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="white"><path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z" /></svg>
       </div>
@@ -258,7 +258,7 @@ function dataHora(iso: string | null | undefined) {
     </div>
 
     <!-- resumo -->
-    <div v-if="!loading && Object.keys(metricas).length" style="padding:16px 30px 0;display:flex;gap:12px;flex-wrap:wrap;">
+    <div v-if="!loading && Object.keys(metricas).length" style="padding:16px clamp(12px,4vw,30px) 0;display:flex;gap:12px;flex-wrap:wrap;">
       <div style="background:var(--c-surface-1);border-radius:12px;padding:12px 18px;">
         <div style="font-size:11px;color:var(--c-text-faint);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">Gasto no período</div>
         <div style="font-size:22px;font-weight:800;letter-spacing:-.5px;">{{ brl(gastoTotal()) }}</div>
@@ -277,7 +277,7 @@ function dataHora(iso: string | null | undefined) {
       Métricas indisponíveis: {{ erroMetricas }}
     </div>
 
-    <div style="flex:1;padding:18px 30px 40px;">
+    <div style="flex:1;padding:18px clamp(12px,4vw,30px) 40px;">
       <div v-if="loading" style="color:var(--c-text-muted);font-size:14px;text-align:center;padding:60px;">Carregando campanhas…</div>
 
       <div v-else-if="!campanhas.length" style="text-align:center;color:var(--c-text-muted);font-size:13.5px;padding:60px 20px;">
@@ -286,7 +286,7 @@ function dataHora(iso: string | null | undefined) {
         <NuxtLink to="/marketing" style="color:var(--c-ai);text-decoration:none;font-weight:700;">Agente de Marketing</NuxtLink>.
       </div>
 
-      <div v-else style="display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px;">
+      <div v-else style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(380px,100%),1fr));gap:16px;">
         <div
           v-for="c in campanhas" :key="c.id"
           :style="{

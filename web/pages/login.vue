@@ -38,13 +38,13 @@ async function submit() {
 </script>
 
 <template>
-  <div style="flex:1;display:flex;align-items:center;justify-content:center;padding:24px;background-image:radial-gradient(circle at 20% 30%,rgba(var(--accent-rgb),.05),transparent 42%),radial-gradient(circle at 80% 70%,rgba(124,108,245,.05),transparent 42%);">
+  <div style="flex:1;display:flex;align-items:center;justify-content:center;padding:clamp(16px,5vw,24px);background-image:radial-gradient(circle at 20% 30%,rgba(var(--accent-rgb),.05),transparent 42%),radial-gradient(circle at 80% 70%,rgba(124,108,245,.05),transparent 42%);">
     <div style="width:400px;max-width:100%;">
       <div style="display:flex;justify-content:center;margin-bottom:26px;">
-        <BrandLogo :company="brand" fallback-name="Vértice CRM" :height="48" />
+        <CrmBrandLogo :company="brand" fallback-name="Vértice CRM" :height="48" />
       </div>
 
-      <form style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:30px;display:flex;flex-direction:column;gap:18px;" @submit.prevent="submit">
+      <form style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:clamp(20px,6vw,30px);display:flex;flex-direction:column;gap:18px;" @submit.prevent="submit">
         <div>
           <div style="font-size:21px;font-weight:800;">Entrar</div>
           <div style="font-size:13.5px;color:var(--c-text-muted);margin-top:5px;">Acesse o painel da sua equipe.</div>
@@ -52,12 +52,12 @@ async function submit() {
 
         <label style="display:flex;flex-direction:column;gap:7px;">
           <span style="font-size:12.5px;font-weight:600;color:var(--c-text-secondary);">E-mail</span>
-          <input v-model="email" type="email" autocomplete="email" placeholder="voce@empresa.com" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:11px;padding:12px 13px;color:var(--c-text);font-family:inherit;font-size:14px;outline:none;">
+          <input v-model="email" type="email" autocomplete="email" placeholder="voce@empresa.com" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:11px;padding:12px 13px;color:var(--c-text);font-family:inherit;font-size:16px;outline:none;">
         </label>
 
         <label style="display:flex;flex-direction:column;gap:7px;">
           <span style="font-size:12.5px;font-weight:600;color:var(--c-text-secondary);">Senha</span>
-          <input v-model="password" type="password" autocomplete="current-password" placeholder="••••••••" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:11px;padding:12px 13px;color:var(--c-text);font-family:inherit;font-size:14px;outline:none;">
+          <CrmPasswordField v-model="password" autocomplete="current-password" />
         </label>
 
         <label style="display:flex;align-items:center;gap:9px;font-size:13px;color:var(--c-text-secondary);cursor:pointer;">

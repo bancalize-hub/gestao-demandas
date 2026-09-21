@@ -2,10 +2,12 @@
 
 namespace App\Services;
 
+use App\Models\Company;
 use App\Models\Conversation;
 use App\Models\LeadActivity;
 use App\Models\Meeting;
 use App\Models\User;
+use App\Support\Attendance;
 use App\Support\Claude;
 use App\Support\MetaConversions;
 use Carbon\Carbon;
@@ -50,9 +52,18 @@ class MeetingScheduler
     {
         $preferidoId = $preferActing ? $acting->id : null;
 
-        $time = User::where('company_id', $conversation->company_id)
+        $conectados = User::where('company_id', $conversation->company_id)
             ->whereNotNull('google_refresh_token')
             ->get();
+
+        // Só anfitriões ativos recebem reunião nova (migração Workspace: as contas @gmail
+        // antigas ficam conectadas p/ ler a agenda velha, mas com is_host=false). Se NENHUM
+        // anfitrião ativo tem Google ainda (contas novas não conectadas), cai nos conectados
+        // que sobraram — melhor marcar na conta antiga do que deixar de marcar.
+        $time = $conectados->where('is_host', true)->values();
+        if ($time->isEmpty()) {
+            $time = $conectados;
+        }
 
         // Carga = reuniões ainda por acontecer de cada um. Filtrada pelos ids do time e não
         // pelo escopo de empresa: o agendador também roda no tick, onde nem sempre há tenant
@@ -87,34 +98,52 @@ class MeetingScheduler
      */
     public function decideAndBook(User $user, Conversation $conversation, string $memoryContext = '', bool $preferActingUser = true): array
     {
-        // LEAD REPROVADO NA TRIAGEM NÃO GANHA HORÁRIO.
+        // SÓ LEAD QUALIFICADO GANHA HORÁRIO.
         //
         // Medido em 08/08/2026, contando só quem a triagem avaliou: das 10 pessoas que
         // COMPARECERAM a uma call, 10 eram qualificadas. Desqualificado marcou 5 reuniões
         // e não apareceu em nenhuma — eram horários de comercial reservados para quem já
         // tinha dito, com todas as letras, que queria empréstimo ou conta para uso próprio.
         //
-        // A trava é só em `qualified === 0`, o veredito explícito. Abstenção (NULL) segue
-        // podendo marcar: metade dos leads de anúncio ainda não disse o suficiente para
-        // ser julgada, e tratá-los como reprovados fecharia a porta para quem só não falou
-        // ainda. Ver [[gestao-triagem-leads]] para o porquê de NULL ≠ desqualificado.
+        // Desde 10/08/2026 a trava fechou de vez: abstenção (NULL) também não marca. A IA
+        // primeiro conversa até o lead dizer o suficiente para a triagem aprová-lo (o
+        // prompt do AiReplyService conduz isso), e só então oferece horário. A triagem
+        // re-julga a cada mensagem nova do lead, então a aprovação chega em minutos quando
+        // ele responde — ver QualificarTick.
         //
-        // Quem JÁ tem reunião ativa passa direto: senão o lead reprovado ficaria sem
-        // conseguir nem cancelar nem remarcar pela IA o que já está na agenda.
-        // `qualified` tem cast de boolean: false = reprovado, null = ainda sem triagem.
-        // Comparação estrita é obrigatória aqui — `== false` pegaria o NULL junto.
-        if ($conversation->qualified === false && ! Meeting::activeFor($conversation->id)) {
+        // A exigência de veredito só vale para empresa com triagem ativa (critério
+        // preenchido): sem critério não existe "qualificar antes", e exigir isso travaria
+        // o agendamento das empresas que nem usam triagem. Reprovado, porém, não marca em
+        // empresa nenhuma — o chip pode ter sido posto à mão mesmo com a triagem desligada,
+        // e ele é uma decisão, não uma ausência de dado.
+        //
+        // Quem JÁ tem reunião ativa passa direto: senão o lead ficaria sem conseguir nem
+        // cancelar nem remarcar pela IA o que já está na agenda.
+        // `qualified` tem cast de boolean: true = aprovado, false = reprovado, null = sem
+        // veredito. Comparação estrita é obrigatória — `== false` pegaria o NULL junto.
+        $empresa = Company::find($conversation->company_id);
+        $triagemAtiva = $empresa && $empresa->qualify_enabled && trim((string) $empresa->qualify_criteria) !== '';
+        $bloqueio = match (true) {
+            $conversation->qualified === false => 'Lead reprovado na triagem — a IA não oferece horário. Marque à mão se discordar.',
+            $triagemAtiva && $conversation->qualified === null => 'Lead ainda sem triagem concluída — a IA só marca depois que ele se qualificar. '
+                .'Qualifique pelo chip ou marque à mão se não quiser esperar.',
+            default => null,
+        };
+        if ($bloqueio !== null && ! Meeting::activeFor($conversation->id)) {
             return [
                 'action' => 'nada',
                 'scheduled' => false,
                 'message' => null,
-                'note' => 'Lead reprovado na triagem — a IA não oferece horário. Marque à mão se discordar.',
+                'note' => $bloqueio,
             ];
         }
 
         $durationMin = 60; // reuniões de 1 hora
         $hosts = $this->hosts($conversation, $user, $preferActingUser);
-        $slots = $this->google->freeSlotsForHosts($hosts, $durationMin);
+        // Só oferece horário dentro do atendimento da empresa (Admin → Horário de
+        // atendimento) — oferecer 20h que ninguém vai atender queima o lead.
+        [$iniHora, $fimHora] = Attendance::horas($empresa);
+        $slots = $this->google->freeSlotsForHosts($hosts, $durationMin, 10, $iniHora, $fimHora, 14, Attendance::dias($empresa));
 
         $transcript = $conversation->messages()
             ->where(function ($q) {
@@ -156,9 +185,16 @@ class MeetingScheduler
         $allowedDays = [];
         $daysList = '';
         $cursor = Carbon::now($tz)->startOfDay();
-        for ($d = 0; $d <= 21; $d++) {
+        $diasAtendimento = Attendance::dias($empresa);
+        // HOJE fica fora da lista (antecedência mínima, padrão 1 dia). Esta lista é a trava
+        // do servidor: `resolveStart` só aceita um book_day que esteja aqui, então o dia de
+        // hoje é recusado mesmo que o lead peça e o modelo tente confirmar.
+        $antecedencia = (int) config('services.agenda.antecedencia_dias', 1);
+        for ($d = max(0, $antecedencia); $d <= 21 + $antecedencia; $d++) {
             $day = $cursor->copy()->addDays($d);
-            if ($day->isWeekend()) {
+            // Mesma régua dos slots ofertados — divergir aqui fazia a IA oferecer um dia
+            // que depois se recusava a marcar (ou vice-versa).
+            if (! in_array($day->isoWeekday(), $diasAtendimento, true)) {
                 continue;
             }
             $iso = $day->format('Y-m-d');
@@ -166,8 +202,28 @@ class MeetingScheduler
             $daysList .= "- {$iso}  ({$day->locale('pt_BR')->isoFormat('dddd, DD/MM')})\n";
         }
 
+        // As sugestões já saem sem as horas despriorizadas (9h e meio-dia, por padrão). O modelo
+        // precisa saber que isso é PREFERÊNCIA e não proibição — sem esta linha ele recusa o
+        // lead que pede 9h, que é o oposto do combinado.
+        $horasEvitadas = (array) config('services.agenda.horas_despriorizadas', []);
+        $regraHoras = $horasEvitadas
+            ? 'PREFERÊNCIA DE HORÁRIO: as sugestões acima evitam de propósito '.implode('h e ', $horasEvitadas).'h — proponha sempre os horários sugeridos primeiro. '
+                .'Mas se o LEAD pedir '.implode('h ou ', $horasEvitadas).'h, ou se já tiver combinado um deles na conversa, MARQUE normalmente: '
+                .'esses horários não são proibidos, só não são a primeira oferta.'
+            : '';
+
         $agora = Carbon::now($tz);
         $agoraStr = $agora->locale('pt_BR')->isoFormat('dddd, DD/MM/YYYY HH:mm');
+
+        // Sem esta linha o modelo aceita "pode ser hoje às 15h" e devolve a data de hoje —
+        // que o servidor recusa em silêncio (não está em DIAS DISPONÍVEIS) e o lead fica
+        // achando que marcou. Melhor o modelo já conduzir para o próximo dia útil.
+        $regraAntecedencia = $antecedencia > 0
+            ? 'NUNCA marque para HOJE nem para nenhum dia fora da lista acima: a reunião precisa ser com pelo menos '
+                .($antecedencia === 1 ? 'um dia' : "{$antecedencia} dias").' de antecedência. '
+                .'Se o lead pedir hoje ("pode ser hoje à tarde?", "consegue agora?"), NÃO marque — responda que consegue '
+                .'a partir do próximo dia disponível e ofereça 2 ou 3 das SUGESTÕES acima.'
+            : '';
 
         // REGRA DE OURO — consulta obrigatória: este contato já tem agendamento ativo?
         $active = Meeting::activeFor($conversation->id);
@@ -189,9 +245,11 @@ class MeetingScheduler
 
         SUGESTÕES DE HORÁRIO LIVRE (use ao PROPOR horários ao lead):
         {$slotsList}
+        {$regraHoras}
 
         DIAS DISPONÍVEIS NA AGENDA (use o YYYY-MM-DD ao confirmar):
         {$daysList}
+        {$regraAntecedencia}
         {$rulesBlock}
 
         AO MARCAR OU REMARCAR ("action": "marcar" ou "remarcar"), preencha:
@@ -231,7 +289,7 @@ class MeetingScheduler
             return ['action' => 'nada', 'scheduled' => false, 'message' => $message];
         }
 
-        $start = $this->resolveStart($data, $allowedDays, $tz);
+        $start = $this->resolveStart($data, $allowedDays, $tz, Attendance::horas($empresa));
 
         // Lead "confirmou", mas não obtivemos um dia/horário válido → não arrisca.
         if (! $start) {
@@ -369,7 +427,8 @@ class MeetingScheduler
     }
 
     /** Converte book_day/book_time da IA num Carbon válido (ou null se não der para confiar). */
-    private function resolveStart(array $data, array $allowedDays, string $tz): ?Carbon
+    /** @param array{0: int, 1: int} $horas janela [início, fim] do atendimento da empresa */
+    private function resolveStart(array $data, array $allowedDays, string $tz, array $horas = [7, 21]): ?Carbon
     {
         $bookDay = trim((string) ($data['book_day'] ?? ''));
         $bookTime = trim((string) ($data['book_time'] ?? ''));
@@ -389,7 +448,9 @@ class MeetingScheduler
             return null;
         }
 
-        if (! $start || (int) $start->format('G') < 7 || (int) $start->format('G') > 21) {
+        // A trava acompanha o horário de atendimento — fixa em 7–21 ela recusava horário
+        // que o próprio sistema tinha acabado de oferecer numa janela mais larga.
+        if (! $start || (int) $start->format('G') < $horas[0] || (int) $start->format('G') >= $horas[1]) {
             return null;
         }
 

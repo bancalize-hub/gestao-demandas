@@ -311,7 +311,9 @@ function convOf(ev: CalEvent) {
 }
 function openWhatsApp(ev: CalEvent) {
   const c = convOf(ev)
-  if (c) { crm.activeId = c.id; crm.go('chat') }
+  // selectConv (não activeId direto): é ele que carrega a thread e marca chatOpen —
+  // sem isso o chat abre vazio.
+  if (c) { crm.selectConv(c.id); crm.go('chat') }
 }
 
 // Leads oferecidos para vincular à reunião: os visíveis (reprovado na triagem sai da tela)
@@ -401,6 +403,77 @@ const periodLabel = computed(() => {
     return `${DAY_NAMES[d.getDay()]}, ${d.getDate()} de ${MONTHS[d.getMonth()]} ${d.getFullYear()}`
   }
   return rangeLabel.value
+})
+
+/**
+ * Começo e fim do período que está na tela, conforme a visão escolhida.
+ *
+ * Deriva das MESMAS fontes que desenham a grade (`focusedDay`, `weekDays`, `monthCursor`),
+ * e não de um cálculo próprio — se um dia a semana passar a começar no domingo, a contagem
+ * acompanha sozinha em vez de divergir do que está desenhado.
+ */
+const periodRange = computed<[number, number]>(() => {
+  const inicioDoDia = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  const fimDoDia = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999).getTime()
+
+  if (viewMode.value === 'mes') {
+    const y = monthCursor.value.getFullYear(); const m = monthCursor.value.getMonth()
+    return [new Date(y, m, 1).getTime(), fimDoDia(new Date(y, m + 1, 0))]
+  }
+  if (viewMode.value === 'dia')
+    return [inicioDoDia(focusedDay.value), fimDoDia(focusedDay.value)]
+
+  return [inicioDoDia(weekDays.value[0]), fimDoDia(weekDays.value[6])]
+})
+
+/**
+ * Quantas reuniões há no período que está na tela.
+ *
+ * Conta evento COM HORÁRIO: "dia inteiro" é bloqueio de agenda (férias, feriado), não
+ * reunião, e somá-lo faria a semana parecer mais cheia do que está.
+ *
+ * O "não compareceu" vem junto porque é o único número da agenda que exige ação — os
+ * outros são passado ou já estão na grade.
+ */
+const periodCounts = computed(() => {
+  const [ini, fim] = periodRange.value
+  let total = 0; let compareceu = 0; let faltou = 0; let pendente = 0
+
+  // `visibleEvents`, não `events`: é o que a grade desenha. Lendo a lista completa, o
+  // número continuaria o mesmo ao desmarcar uma agenda no seletor, contradizendo a tela.
+  for (const e of crm.visibleEvents) {
+    if (e.all_day || !e.starts_at) continue
+    const t = new Date(e.starts_at).getTime()
+    if (t < ini || t > fim) continue
+
+    total++
+    const s = evStatus(e)
+    if (s === 'compareceu') compareceu++
+    else if (s === 'faltou') faltou++
+    else if (s === 'pendente') pendente++
+  }
+
+  return { total, compareceu, faltou, pendente }
+})
+
+/**
+ * Reuniões do período por dono da agenda — o número que aparece ao lado de cada pessoa
+ * no seletor. Ignora `hiddenCalendars` de propósito: some quem está desmarcado é o
+ * checkbox, não a contagem; ver o volume do colega é justamente o motivo de ligar a
+ * agenda dele.
+ */
+const countsByOwner = computed(() => {
+  const [ini, fim] = periodRange.value
+  const por = new Map<number, number>()
+
+  for (const e of crm.events) {
+    if (e.all_day || !e.starts_at || e.owner_id == null) continue
+    const t = new Date(e.starts_at).getTime()
+    if (t < ini || t > fim) continue
+    por.set(e.owner_id, (por.get(e.owner_id) ?? 0) + 1)
+  }
+
+  return por
 })
 
 // Navegação anterior/próximo adaptada à visão.
@@ -554,7 +627,24 @@ async function excluirDoDetalhe(ev: CalEvent) {
               <span style="color:var(--accent-soft);"> · {{ ehHoje(proxima) ? faltam(proxima) : 'outro dia' }}</span>
             </button>
           </div>
-          <div style="font-size:13.5px;color:var(--c-text-muted);margin-top:3px;">{{ periodLabel }}</div>
+          <div style="font-size:13.5px;color:var(--c-text-muted);margin-top:3px;display:flex;align-items:center;gap:9px;flex-wrap:wrap;">
+            <span>{{ periodLabel }}</span>
+            <span
+              v-if="periodCounts.total"
+              :title="`${periodCounts.total} reunião(ões) com horário neste período. Evento de dia inteiro não entra na conta.`"
+              style="background:var(--c-surface-1);color:var(--c-text-secondary);font-weight:700;font-size:12px;padding:2px 9px;border-radius:999px;font-variant-numeric:tabular-nums;"
+            >{{ periodCounts.total }} {{ periodCounts.total === 1 ? 'reunião' : 'reuniões' }}</span>
+            <span
+              v-if="periodCounts.faltou"
+              title="Leads que não apareceram — vale retomar"
+              style="color:var(--c-orange-soft);font-weight:700;font-size:12px;font-variant-numeric:tabular-nums;"
+            >{{ periodCounts.faltou }} não compareceu</span>
+            <span
+              v-if="periodCounts.pendente"
+              title="Reunião que já passou e ainda não teve a presença apurada"
+              style="color:var(--c-warn);font-weight:700;font-size:12px;font-variant-numeric:tabular-nums;"
+            >{{ periodCounts.pendente }} aguardando apuração</span>
+          </div>
         </div>
         <div v-if="crm.hasCalendars" style="display:flex;gap:10px;align-items:center;">
           <!-- Seletor de visão -->
@@ -700,7 +790,12 @@ async function excluirDoDetalhe(ev: CalEvent) {
             @change="crm.toggleCalendar(c.user_id)"
           >
           <span :style="`width:10px;height:10px;border-radius:3px;background:${c.color};flex-shrink:0;`" />
-          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ c.name }}<span v-if="c.is_me" style="color:var(--c-text-muted);"> (você)</span></span>
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;">{{ c.name }}<span v-if="c.is_me" style="color:var(--c-text-muted);"> (você)</span></span>
+          <span
+            v-if="countsByOwner.get(c.user_id)"
+            :title="`${countsByOwner.get(c.user_id)} reunião(ões) de ${c.name} no período mostrado`"
+            style="flex-shrink:0;font-size:11px;font-weight:700;color:var(--c-text-secondary);background:var(--c-surface-1);padding:1px 7px;border-radius:999px;font-variant-numeric:tabular-nums;"
+          >{{ countsByOwner.get(c.user_id) }}</span>
         </label>
         <button
           v-if="!crm.googleConnected"

@@ -105,7 +105,7 @@ class FacebookAds
     public function resumoConta(): array
     {
         return $this->call('GET', '/'.$this->conta(), [
-            'fields' => 'name,account_status,currency,timezone_name,amount_spent,balance',
+            'fields' => 'name,account_status,currency,timezone_name,amount_spent,balance,funding_source_details',
         ]);
     }
 
@@ -525,6 +525,23 @@ class FacebookAds
      * Atualiza uma campanha existente: status (ACTIVE|PAUSED) e/ou orçamento diário.
      * Não cria nada — é gestão do que já existe no Facebook.
      */
+    /**
+     * Atualiza um ANÚNCIO (o uso real é pausar quem não qualifica — ver fbads:rotacao-tick).
+     * Só aceita as chaves que interessam: `status` sai daqui, orçamento nunca.
+     *
+     * @param  array<string, mixed>  $params
+     * @return array<string, mixed>
+     */
+    public function atualizarAnuncio(string $anuncioId, array $params): array
+    {
+        $permitidas = array_intersect_key($params, array_flip(['status', 'name']));
+        if (! $permitidas) {
+            throw new \RuntimeException('Nada para atualizar no anúncio.');
+        }
+
+        return $this->call('POST', '/'.$anuncioId, $permitidas);
+    }
+
     public function atualizarCampanha(string $campanhaId, array $params): array
     {
         $data = [];

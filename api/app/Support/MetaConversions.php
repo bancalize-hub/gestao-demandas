@@ -33,10 +33,11 @@ class MetaConversions
      * Os quatro momentos do funil, mapeados no vocabulário que a Meta aceita.
      *
      * NÃO INVENTE NOME AQUI. Com `action_source: business_messaging` a Graph API recusa
-     * qualquer evento fora de uma lista fechada — testei 28 candidatos contra a conta real
-     * e passaram exatamente QUATRO: `Purchase`, `LeadSubmitted`, `InitiateCheckout` e
-     * `ViewContent`. "Schedule", "Lead", "Contact", "MeetingCompleted" e companhia são
-     * recusados com "nome de evento inválido" (subcode 2804066).
+     * qualquer evento fora de uma lista fechada. Em 04/08 passavam quatro nomes
+     * (`Purchase`, `LeadSubmitted`, `InitiateCheckout`, `ViewContent`); em 10/08 o
+     * `QualifiedLead` passou a ser aceito também (testado na conta real; `OrderCreated`
+     * e `Schedule` continuam recusados). Antes de usar um nome novo, teste — a lista da
+     * FAQ pública promete mais do que a conta aceita.
      *
      * Por isso as duas etapas do meio usam nomes que não descrevem o que aconteceu: são
      * os únicos slots livres.
@@ -56,22 +57,21 @@ class MetaConversions
      */
 
     /**
-     * Lead QUALIFICADO — não "chegou um lead".
-     *
-     * Este nome já significou "lead entrou no CRM" e foi remanejado em 08/08/2026. O
-     * motivo: sendo o nome do evento a única coisa que a Meta separa (ver acima), gastar
-     * um dos quatro slots com "chegou lead" é desperdiçá-lo — a Meta JÁ conta isso
-     * nativamente como conversa iniciada (`messaging_conversation_started_7d`), e a conta
-     * já mediu que lead barato e lead bom andam em direções opostas. Agora a coluna
-     * "Lead" do Gerenciador quer dizer lead que a triagem aprovou.
+     * Lead QUALIFICADO = evento 'Purchase' — decisão do usuário em 10/08/2026, depois de
+     * o caminho limpo ser esgotado NA TELA: Cadastros+mensagens só oferece conversa ou
+     * formulário (provado em campanha limpa), e o único trilho de otimização por mensagem
+     * que a Meta libera é o de COMPRAS, no objetivo Vendas. Consequência assumida: a
+     * coluna "Compras" do Gerenciador significa LEAD QUALIFICADO. A venda de verdade
+     * usa QualifiedLead. O histórico completo do beco está na memória
+     * gestao-meta-campanha-conversao — não reverta sem ler.
      */
-    public const LEAD = 'LeadSubmitted';
+    public const LEAD = 'Purchase';
 
     public const REUNIAO_MARCADA = 'InitiateCheckout';
 
     public const REUNIAO_REALIZADA = 'ViewContent';
 
-    public const VENDA = 'Purchase';
+    public const VENDA = 'QualifiedLead';
 
     /**
      * A etapa continua indo no `custom_data`, mas NÃO é ela que separa nada para a Meta —
@@ -154,7 +154,14 @@ class MetaConversions
                 // regra tenha só a condição de evento ("A conversion rule is required at
                 // creation time"), exige uma segunda. É esta. De quebra, separa o evento
                 // vindo do CRM do que o pixel do site dispara com o mesmo nome.
-                'custom_data' => ['origem' => self::ORIGEM] + $custom,
+                // Purchase é o único evento que EXIGE moeda e valor — sem eles a Graph
+                // recusa com um "Invalid parameter" seco (descoberto no remap de 10/08:
+                // 27 envios recusados até isto existir). O valor 1 é nominal de propósito:
+                // a otimização usada é "número de compras", não valor; se um dia formos
+                // otimizar por valor, aqui entra o ticket real.
+                'custom_data' => ['origem' => self::ORIGEM]
+                    + ($evento === 'Purchase' ? ['currency' => 'BRL', 'value' => 1] : [])
+                    + $custom,
             ], fn ($v) => $v !== null)],
         ];
         if (filled($cred->capi_test_code)) {

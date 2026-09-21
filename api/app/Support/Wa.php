@@ -28,10 +28,25 @@ class Wa
         return new EvolutionChannel($account);
     }
 
-    /** Canal do número que atende esta conversa. */
+    /**
+     * Canal do número que atende esta conversa.
+     *
+     * Se o dono da conversa for um número marcado como SOMENTE FOTOS, a mensagem sai pelo
+     * número principal da empresa, não por ele. É o caso das conversas antigas que ficaram
+     * apontando para o número da Evolution: a conversa continua dele no histórico, mas
+     * quem fala com o lead hoje é o oficial — inclusive porque foi o oficial que mandou o
+     * template de reativação, e responder por outro número quebraria a conversa em duas na
+     * tela do lead.
+     */
     public static function forConversation(Conversation $conversation): WaChannel
     {
-        return self::for($conversation->account);
+        $account = $conversation->account;
+
+        if ($account?->somenteFotos()) {
+            $account = WaAccount::primary() ?? $account;
+        }
+
+        return self::for($account);
     }
 
     /** Canal do número principal da empresa atual. */

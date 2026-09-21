@@ -29,7 +29,11 @@ class WppBackfill extends Command
 
         // Números conectados agrupados por empresa: cada empresa é varrida no SEU contexto,
         // usando as SUAS instâncias — histórico e enriquecimento ficam isolados.
-        $byCompany = WaAccount::where('is_active', true)->get()->groupBy('company_id');
+        // Conta "só fotos" fica de fora: ela existe para fornecer avatar, não histórico —
+        // varrê-la importaria os chats pessoais do número para a lista do CRM.
+        $byCompany = WaAccount::where('is_active', true)->get()
+            ->reject(fn (WaAccount $a) => $a->somenteFotos())
+            ->groupBy('company_id');
 
         foreach ($byCompany as $companyId => $accounts) {
             if (! $companyId) {

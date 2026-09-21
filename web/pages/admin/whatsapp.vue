@@ -18,6 +18,7 @@ interface Account {
   phone_number_id?: string | null
   waba_id?: string | null
   coexistence?: boolean
+  avatars_only?: boolean
   has_token?: boolean
   has_app_secret?: boolean
   webhook_url?: string
@@ -138,6 +139,19 @@ async function setActive(acc: Account, ativo: boolean) {
   if (!ativo && !confirm(`Desligar "${acc.name}"? O CRM para de enviar e receber por este número.`)) return
   try {
     await api(`/api/wpp/accounts/${acc.id}/active`, { method: 'POST', body: { is_active: ativo } })
+    await loadAccounts()
+  }
+  catch (e: any) { alert(e?.response?._data?.message || 'Não consegui alterar o número.') }
+}
+
+// Número da Evolution mantido conectado só como fonte de foto de perfil: a API oficial
+// da Meta não entrega foto de contato, e uma instância Baileys logada consulta a foto de
+// qualquer telefone. Ligando isto, ela para de receber e de enviar mensagem — as conversas
+// que ainda apontam para ela passam a falar pelo número principal.
+async function setAvatarsOnly(acc: Account, somenteFotos: boolean) {
+  if (somenteFotos && !confirm(`Deixar "${acc.name}" só para fotos de perfil?\n\nEle continua conectado, mas para de receber e enviar mensagem. As conversas dele passam a ser respondidas pelo número principal.`)) return
+  try {
+    await api(`/api/wpp/accounts/${acc.id}/avatars-only`, { method: 'POST', body: { avatars_only: somenteFotos } })
     await loadAccounts()
   }
   catch (e: any) { alert(e?.response?._data?.message || 'Não consegui alterar o número.') }
@@ -319,6 +333,7 @@ function stateColor(s: string) {
                 <!-- oficial: não há sessão para derrubar, é ligar/desligar o número na Meta -->
                 <button v-if="acc.provider === 'cloud' && !acc.is_active" style="background:var(--accent);border:none;color:var(--accent-ink);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 14px;border-radius:9px;cursor:pointer;" @click="setActive(acc, true)">Ligar</button>
                 <button v-else-if="acc.provider === 'cloud'" style="background:rgba(255,77,77,.1);border:1px solid rgba(255,77,77,.25);color:var(--c-danger-soft);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 12px;border-radius:9px;cursor:pointer;" @click="setActive(acc, false)">Desligar</button>
+                <button v-if="acc.provider !== 'cloud' && acc.role !== 'primary'" :title="acc.avatars_only ? 'Voltar a usar este número para conversas' : 'Manter conectado só para puxar foto de perfil — não recebe nem envia mensagem'" :style="{ background: acc.avatars_only ? 'rgba(124,108,245,.16)' : 'var(--c-surface-2)', border: 'none', color: acc.avatars_only ? 'var(--c-ai-soft)' : 'var(--c-text)', fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 700, padding: '8px 14px', borderRadius: '9px', cursor: 'pointer' }" @click="setAvatarsOnly(acc, !acc.avatars_only)">{{ acc.avatars_only ? 'Só fotos ✓' : 'Só fotos' }}</button>
                 <button v-if="acc.provider !== 'cloud' && acc.state === 'open'" style="background:rgba(255,77,77,.1);border:1px solid rgba(255,77,77,.25);color:var(--c-danger-soft);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 12px;border-radius:9px;cursor:pointer;" @click="disconnect(acc)">Desconectar</button>
                 <button v-if="acc.role !== 'primary'" title="Remover número" style="background:none;border:1px solid var(--c-surface-3);color:var(--c-text-faint);font-family:inherit;font-size:12.5px;font-weight:700;padding:8px 11px;border-radius:9px;cursor:pointer;" @click="removeAccount(acc)">✕</button>
               </div>

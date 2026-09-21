@@ -13,6 +13,7 @@ use App\Models\WaAccount;
 use App\Services\LeadsDeAnuncio;
 use App\Support\Channels\CloudChannel;
 use App\Support\Evolution;
+use App\Support\OptOut;
 use App\Support\Realtime;
 use App\Support\Tenancy;
 use App\Support\Wa;
@@ -314,6 +315,27 @@ class WhatsAppController extends Controller
         }
 
         return response()->json(['message' => 'ok', 'is_active' => $account->is_active, 'state' => $account->state]);
+    }
+
+    /**
+     * Liga/desliga o modo SOMENTE FOTOS: a instância segue conectada alimentando as fotos
+     * de perfil, mas sai do caminho de mensagem — não recebe e não envia.
+     *
+     * Recusa no número principal: seria desligar o atendimento da empresa por um botão que
+     * se anuncia como sendo de foto.
+     */
+    public function setAvatarsOnly(Request $request, WaAccount $account)
+    {
+        $this->ensureAdmin($request);
+
+        $somenteFotos = $request->boolean('avatars_only');
+
+        abort_if($account->isCloud(), 422, 'Só faz sentido em número da Evolution — a API oficial não fornece foto de contato.');
+        abort_if($somenteFotos && $account->isPrimary(), 422, 'Este é o número principal: eleja outro antes de deixá-lo só para fotos.');
+
+        $account->update(['avatars_only' => $somenteFotos]);
+
+        return response()->json(['message' => 'ok', 'avatars_only' => $account->avatars_only]);
     }
 
     /** Remove um número de prospecção (logout + delete na Evolution). O principal é protegido. */
@@ -696,6 +718,13 @@ class WhatsAppController extends Controller
             return response()->json(['ok' => true, 'ignored' => 'unknown-instance']);
         }
 
+        // Número mantido só como fonte de foto: nada de mensagem entra por ele. `connection.*`
+        // continua passando de propósito — é o que mantém `state` em dia, e sem `state=open`
+        // o `wa:avatars` considera a empresa sem fonte de foto e para de buscar.
+        if ($account->somenteFotos() && ! str_starts_with((string) $event, 'connection.')) {
+            return response()->json(['ok' => true, 'ignored' => 'avatars-only']);
+        }
+
         if (in_array($event, ['messages.update', 'messages.edit'], true)) {
             Evolution::log('webhook.recebido', [
                 'event' => $event,
@@ -891,6 +920,15 @@ class WhatsAppController extends Controller
     public function ingestMessage(array $m, ?WaAccount $account = null, bool $broadcast = true): void
     {
         $account ??= WaAccount::primary();
+
+        // Número mantido só como fonte de foto: NENHUMA mensagem dele vira conversa.
+        // O webhook já barra na porta, mas o backfill agendado e o import deferido do
+        // loadFull chegam aqui por outros caminhos — sem este guard, o número "só fotos"
+        // continuava despejando conversas na lista a cada meia hora.
+        if ($account?->somenteFotos()) {
+            return;
+        }
+
         $key = $m['key'] ?? [];
         $remoteJid = (string) ($key['remoteJid'] ?? '');
         if ($remoteJid === '' || str_ends_with($remoteJid, '@g.us') || str_contains($remoteJid, 'broadcast')) {
@@ -1002,6 +1040,9 @@ class WhatsAppController extends Controller
             // Atendimento automático ligado: agenda uma resposta da IA. Cada nova mensagem do
             // lead empurra o prazo (debounce) para não responder no meio de uma rajada.
             // SÓ no número principal (anúncios): prospecção é atendida por humano.
+            // Pedido explícito de parar ("para de mandar", "não quero mais") desliga o
+            // atendimento automático desta conversa antes de agendar resposta.
+            OptOut::aplicar($conv, $p['preview'] ?? null);
             if ($conv->auto_reply && (! $account || $account->isPrimary())) {
                 $conv->auto_reply_due_at = now()->addSeconds(10);
             }

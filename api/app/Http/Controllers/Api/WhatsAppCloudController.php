@@ -11,6 +11,7 @@ use App\Models\WaAccount;
 use App\Services\LeadsDeAnuncio;
 use App\Support\Channels\CloudChannel;
 use App\Support\Evolution;
+use App\Support\OptOut;
 use App\Support\Realtime;
 use App\Support\Tenancy;
 use App\Support\Wa;
@@ -438,6 +439,10 @@ class WhatsAppCloudController extends Controller
 
         if (! $isOut) {
             $conv->unread = (int) $conv->unread + 1;
+            // "para de mandar", "não quero mais": cala o robô nesta conversa antes de
+            // agendar qualquer resposta. Insistir depois disso é o que trouxe a
+            // restrição por spam.
+            OptOut::aplicar($conv, $preview);
             if ($conv->auto_reply && $account->isPrimary()) {
                 $conv->auto_reply_due_at = now()->addSeconds(10);
             }
@@ -498,12 +503,17 @@ class WhatsAppCloudController extends Controller
         }
 
         if ($status === 'error') {
-            Log::warning('wa-cloud: envio falhou', [
+            // Vai para o canal 'whatsapp' (nível info): o laravel.log roda com LOG_LEVEL=error
+            // e engolia este aviso, deixando "não chegou" sem causa no log.
+            Evolution::log('cloud.recibo.falha', [
                 'wa_id' => $waId,
                 'message_id' => $msg->id,
+                'conversation_id' => $msg->conversation_id,
                 'code' => $s['errors'][0]['code'] ?? null,
                 'title' => $s['errors'][0]['title'] ?? null,
-            ]);
+                'details' => $s['errors'][0]['error_data']['details'] ?? null,
+                'recibo' => $s,
+            ], 'error');
         }
 
         $rank = ['pending' => 0, 'sent' => 1, 'delivered' => 2, 'read' => 3];

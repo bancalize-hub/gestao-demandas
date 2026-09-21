@@ -28,8 +28,9 @@ class Campaign extends Model
     ];
 
     /**
-     * Teto diário, intervalo entre envios e janela de horário são anti-ban do Baileys.
-     * No canal oficial a Meta cuida do ritmo — lá só vale a hora de começar.
+     * Hoje só decide UMA coisa no tick: o teto diário DO NÚMERO (warmup do Baileys).
+     * Janela de horário, teto da campanha e intervalo entre envios valem em todo canal
+     * desde 10/08/2026 — no oficial protegem a qualidade da WABA, não o ban.
      */
     public function usaAntiBan(): bool
     {

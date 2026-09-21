@@ -25,6 +25,7 @@ class WaAccount extends Model
         'sent_date' => 'date',
         'last_sent_at' => 'datetime',
         'coexistence' => 'boolean',
+        'avatars_only' => 'boolean',
         // Token e segredo do app da Meta são credenciais de longa duração: ficam
         // criptografados no banco (dump/backup vazado não entrega o WhatsApp da empresa).
         'access_token' => 'encrypted',
@@ -37,6 +38,18 @@ class WaAccount extends Model
     public function conversations(): HasMany
     {
         return $this->hasMany(Conversation::class);
+    }
+
+    /**
+     * Número mantido conectado só como fonte de foto de perfil: não recebe e não envia.
+     *
+     * Só faz sentido na Evolution — é ela que consulta foto de qualquer telefone, e é ela
+     * que a gente quer fora do caminho de mensagem. Marcar um número da Cloud API assim
+     * não teria efeito nenhum de foto e ainda o tiraria do ar, então a flag é ignorada lá.
+     */
+    public function somenteFotos(): bool
+    {
+        return (bool) $this->avatars_only && ! $this->isCloud();
     }
 
     public function isPrimary(): bool

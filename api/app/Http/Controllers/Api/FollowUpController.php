@@ -21,7 +21,9 @@ class FollowUpController extends Controller
     {
         return Task::where('conversation_id', $conversation->id)
             ->where('type', 'followup')
-            ->orderByRaw("column = 'done'")            // pendentes antes
+            // `column` é palavra reservada no MySQL: sem crase, a lista inteira morria em
+            // erro de sintaxe (1064) e a ficha do lead ficava sem os follow-ups.
+            ->orderByRaw("`column` = 'done'")          // pendentes antes
             ->orderByRaw('starts_at IS NULL, starts_at')
             ->orderBy('id')
             ->get();

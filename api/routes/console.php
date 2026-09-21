@@ -142,6 +142,19 @@ Schedule::command('meetings:analisar-calls --limite=6')
     ->withoutOverlapping()
     ->runInBackground();
 
+// O que a auditoria aprendeu só vale se chegar na IA que atende. Em sequência, depois da
+// análise: classificar as objeções da noite e transformá-las em conteúdo de contorno na base
+// de conhecimento. Espaçado porque cada passo é uma chamada de IA em cima da call inteira.
+Schedule::command('meetings:objecoes')
+    ->dailyAt('22:40')
+    ->withoutOverlapping()
+    ->runInBackground();
+
+Schedule::command('meetings:contornos --limite=6')
+    ->dailyAt('23:10')
+    ->withoutOverlapping()
+    ->runInBackground();
+
 // Importa reuniões com Meet criadas direto no Google Agenda → tabela meetings (casa com o lead),
 // para o pós-reunião também processá-las. Roda antes do attendance-tick.
 Schedule::command('meetings:calendar-sync')

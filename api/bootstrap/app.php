@@ -20,6 +20,7 @@ return Application::configure(basePath: dirname(__DIR__))
         // Vincula a empresa (tenant) do usuário autenticado. Usado no grupo auth:sanctum.
         $middleware->alias([
             'set.tenant' => \App\Http\Middleware\SetTenant::class,
+            'admin' => \App\Http\Middleware\EnsureAdmin::class,
             'super.admin' => \App\Http\Middleware\EnsureSuperAdmin::class,
         ]);
 

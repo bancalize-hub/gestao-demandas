@@ -58,18 +58,21 @@ class CampaignController extends Controller
         if ($c->starts_at && now()->lt($c->starts_at)) {
             return 'agendada para '.$c->starts_at->format('d/m/Y \à\s H:i');
         }
-        // Limites de ritmo só existem no canal não-oficial (anti-ban).
-        if ($c->usaAntiBan()) {
-            $hm = now()->format('H:i');
-            if ($hm < $c->window_start || $hm > $c->window_end) {
-                return "fora da janela ({$c->window_start}–{$c->window_end})";
-            }
-            if ($acct->remainingToday() <= 0) {
-                return 'teto diário do número atingido';
-            }
-            if ($c->daily_cap > 0 && $c->sent_today >= $c->daily_cap) {
-                return 'teto diário da campanha atingido';
-            }
+        // Espelha o CampaignTick: janela, dia e teto da campanha valem em TODO canal;
+        // só o teto do número (warmup) é exclusivo da Evolution. Divergir daqui é a tela
+        // mostrando "disparando" com a campanha parada sem motivo.
+        $hm = now()->format('H:i');
+        if ($hm < $c->window_start || $hm > $c->window_end) {
+            return "fora da janela ({$c->window_start}–{$c->window_end})";
+        }
+        if (! in_array(now()->isoWeekday(), \App\Support\Attendance::dias(\App\Models\Company::find($c->company_id)), true)) {
+            return 'fora dos dias de atendimento (Admin → Horário de atendimento)';
+        }
+        if ($c->daily_cap > 0 && $c->sent_today >= $c->daily_cap) {
+            return 'teto diário da campanha atingido';
+        }
+        if ($c->usaAntiBan() && $acct->remainingToday() <= 0) {
+            return 'teto diário do número atingido';
         }
         if ($c->pending === 0) {
             return 'sem contatos pendentes';
@@ -132,8 +135,11 @@ class CampaignController extends Controller
             'min_gap_s' => $data['min_gap_s'] ?? 60,
             'max_gap_s' => max($data['min_gap_s'] ?? 60, $data['max_gap_s'] ?? 180),
             'daily_cap' => $data['daily_cap'] ?? 40,
-            'window_start' => $data['window_start'] ?? '09:00',
-            'window_end' => $data['window_end'] ?? '18:00',
+            // Sem janela explícita, a campanha nasce com o horário de atendimento da
+            // empresa (Admin → Horário de atendimento). Quem quiser diferente ajusta na
+            // própria campanha — o campo dela continua mandando.
+            'window_start' => $data['window_start'] ?? \App\Support\Attendance::da($request->user()->company)['start'],
+            'window_end' => $data['window_end'] ?? \App\Support\Attendance::da($request->user()->company)['end'],
             'starts_at' => $data['starts_at'] ?? null,
             'template_name' => $data['template_name'] ?? null,
             'template_language' => $data['template_language'] ?? null,

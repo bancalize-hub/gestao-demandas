@@ -53,6 +53,12 @@ class AiReplyService
                     ->orWhere(fn ($v) => $v->where('type', 'voice')->whereNotNull('transcript')->where('transcript', '!=', ''))
                     ->orWhere('type', 'image');
             })
+            // Mensagem NOSSA que falhou o cliente nunca leu (ex.: as 72 recusadas com
+            // 131031 em 14/08/2026, conta travada). Deixá-las no histórico faz a IA
+            // continuar de onde ELA acha que parou — "como eu te expliquei" sobre algo
+            // que do outro lado nunca chegou. COALESCE porque status nulo (Evolution,
+            // envio ainda sem recibo) é mensagem boa e precisa continuar entrando.
+            ->whereRaw("NOT (is_out = 1 AND COALESCE(status, '') = 'error')")
             ->reorder()->orderByRaw('ts IS NULL DESC, ts DESC')->orderByDesc('id')
             ->take(80)
             ->get(['is_out', 'type', 'text', 'transcript'])
@@ -108,28 +114,68 @@ class AiReplyService
             ."Se for cumprimentar, a saudação correta para este horário é \"{$saudacao}\". "
             ."NUNCA use uma saudação que não combine com a hora atual.\n\n";
 
+        // TRIAGEM ANTES DA AGENDA: a IA só marca reunião com lead qualificado (a trava de
+        // verdade está em MeetingScheduler::decideAndBook; aqui é o lado da conversa).
+        // Enquanto o veredito não sai, esconder os horários é o que impede o papo de
+        // chegar a um "pode ser terça às 10h?" que o agendador vai recusar: sem lista, a
+        // IA não tem o que oferecer — e a regra abaixo a põe para levantar exatamente a
+        // informação que o critério da triagem precisa. A triagem re-julga a cada
+        // mensagem nova do lead (QualificarTick), então assim que ele responder o que
+        // falta o `qualified` vira true e a agenda reaparece sozinha no tick seguinte.
+        // Lead com reunião ativa fica de fora: ele já passou da porta, e a IA precisa
+        // dos horários para remarcar.
+        $empresa = \App\Models\Company::find($conversation->company_id);
+        $criterio = trim((string) ($empresa?->qualify_criteria ?? ''));
+        $qualificarAntes = $empresa && $empresa->qualify_enabled && $criterio !== ''
+            && $conversation->qualified !== true
+            && ! \App\Models\Meeting::activeFor($conversation->id);
+
         // Horários REAIS livres da agenda — para a IA propor reunião sem inventar data/hora.
         // Best-effort: se não houver Google conectado ou a API falhar, ela só pergunta a preferência.
         $agendaBlock = '';
+        $triagemBlock = '';
         $agendaRule = '- Para marcar reunião, pergunte ao lead qual dia/horário ele prefere. NUNCA invente datas ou horários específicos.';
-        try {
-            // TODAS as agendas conectadas DESTA empresa: os horários oferecidos têm de ser os
-            // mesmos que o agendador consegue marcar, e ele já trabalha com o time inteiro —
-            // com dois anfitriões, oferecer só a agenda de um esconderia metade da capacidade.
-            // O filtro por empresa não é decorativo: `User` não tem escopo de tenant, então
-            // sem ele a IA de uma empresa proporia o horário livre da agenda de outra.
-            $hosts = User::where('company_id', $conversation->company_id)
-                ->whereNotNull('google_refresh_token')->get();
-            if ($hosts->isNotEmpty()) {
-                $slots = app(GoogleCalendarService::class)->freeSlotsForHosts($hosts, 60);
-                if ($slots) {
-                    $list = collect($slots)->take(8)->map(fn ($s) => '- '.$s['label'])->implode("\n");
-                    $agendaBlock = "HORÁRIOS REAIS LIVRES NA AGENDA (são os ÚNICOS disponíveis; reunião dura 1 hora):\n{$list}\n\n";
-                    $agendaRule = '- Ao propor reunião, ofereça 2 ou 3 dos HORÁRIOS REAIS LIVRES listados acima, copiando exatamente (dia e hora). NUNCA invente nem ofereça datas/horários fora dessa lista. Cada reunião dura 1 hora.';
+        if ($qualificarAntes) {
+            $triagemBlock = "TRIAGEM PENDENTE — este lead ainda NÃO está qualificado. Critério de qualificação da empresa:\n{$criterio}\n\n";
+            $agendaRule = '- NÃO ofereça nem confirme dia/horário de reunião: reunião só é marcada com lead qualificado, e este ainda não é. '
+                .'Se ele pedir um horário, diga que vai verificar a agenda e volta já — sem prometer data — e aproveite a mensagem para avançar a triagem. '
+                .'Sua prioridade agora é descobrir, de forma natural (UMA pergunta por mensagem, nada de questionário), '
+                .'se ele se encaixa no critério de qualificação acima.';
+        } else {
+            try {
+                // TODAS as agendas conectadas DESTA empresa: os horários oferecidos têm de ser os
+                // mesmos que o agendador consegue marcar, e ele já trabalha com o time inteiro —
+                // com dois anfitriões, oferecer só a agenda de um esconderia metade da capacidade.
+                // O filtro por empresa não é decorativo: `User` não tem escopo de tenant, então
+                // sem ele a IA de uma empresa proporia o horário livre da agenda de outra.
+                $hosts = User::where('company_id', $conversation->company_id)
+                    ->whereNotNull('google_refresh_token')->get();
+                if ($hosts->isNotEmpty()) {
+                    [$iniHora, $fimHora] = \App\Support\Attendance::horas($empresa);
+                    $slots = app(GoogleCalendarService::class)->freeSlotsForHosts($hosts, 60, 10, $iniHora, $fimHora, 14, \App\Support\Attendance::dias($empresa));
+                    if ($slots) {
+                        $list = collect($slots)->take(8)->map(fn ($s) => '- '.$s['label'])->implode("\n");
+                        $agendaBlock = "HORÁRIOS REAIS LIVRES NA AGENDA (são os ÚNICOS disponíveis; reunião dura 1 hora):\n{$list}\n\n";
+                        $agendaRule = '- Ao propor reunião, ofereça 2 ou 3 dos HORÁRIOS REAIS LIVRES listados acima, copiando exatamente (dia e hora). NUNCA invente nem ofereça datas/horários fora dessa lista. Cada reunião dura 1 hora.'
+                            // A lista já vem sem 9h e meio-dia (services.agenda.horas_despriorizadas). Sem esta
+                            // exceção o modelo trata a lista como muralha e empurra outro horário para quem pediu 9h.
+                            .' EXCEÇÃO: se o próprio lead PEDIR um horário fora da lista (ex.: 9h ou meio-dia), não recuse nem ofereça outro em troca — aceite o horário dele; a disponibilidade real é conferida na hora de marcar.';
+                    }
                 }
+            } catch (\Throwable $e) {
+                // sem agenda disponível → mantém a regra de perguntar a preferência
             }
-        } catch (\Throwable $e) {
-            // sem agenda disponível → mantém a regra de perguntar a preferência
+
+            // Antecedência mínima (padrão: só a partir de amanhã). Vale para as duas regras
+            // acima, inclusive a exceção do horário pedido pelo lead: aceitar "hoje às 15h"
+            // aqui não marca nada — o MeetingScheduler recusa o dia de hoje — e o lead sairia
+            // da conversa achando que tem reunião.
+            $antecedencia = (int) config('services.agenda.antecedencia_dias', 1);
+            if ($antecedencia > 0) {
+                $agendaRule .= ' A reunião é sempre para OUTRO DIA, nunca para hoje (mínimo de '
+                    .($antecedencia === 1 ? 'um dia' : "{$antecedencia} dias").' de antecedência): se o lead pedir hoje '
+                    .'ou "agora", diga que o primeiro horário possível é a partir do próximo dia disponível e ofereça as opções.';
+            }
         }
 
         // Anti-insistência. O objetivo do time é "agendar a reunião", e o modelo fecha
@@ -139,6 +185,7 @@ class AiReplyService
         // a dúvida dele.
         $ultimasNossas = $conversation->messages()
             ->where('is_out', true)->where('type', 'text')->whereNotNull('text')
+            ->whereRaw("COALESCE(status, '') != 'error'") // convite que não foi entregue não conta como insistência
             ->reorder()->orderByDesc('ts')->orderByDesc('id')->take(2)->pluck('text');
         $ultimaDoLead = (string) $conversation->messages()
             ->where('is_out', false)
@@ -155,6 +202,10 @@ class AiReplyService
             ? '- Você JÁ convidou para a reunião e o lead não respondeu sobre isso. NÃO convide de novo nesta mensagem: '
                 .'fique no assunto que ele levantou e pare por aí. Insistir a cada mensagem afasta o lead.'
             : '- Se fizer sentido, convide para a reunião UMA vez — nunca em duas mensagens seguidas.';
+        if ($qualificarAntes) {
+            // Convidar agora criaria a reunião que o agendador vai recusar — primeiro a triagem.
+            $regraConvite = '- NÃO convide para reunião nesta mensagem: antes disso o lead precisa passar pela triagem (regra da agenda acima).';
+        }
 
         // Materiais (PDF etc.): a IA recebe a lista com o "quando" de cada um e decide se
         // algum ajuda AGORA — em vez de a configuração ter que adivinhar o momento certo.
@@ -184,7 +235,7 @@ class AiReplyService
         Você é o ATENDENTE escrevendo a próxima mensagem para um lead no WhatsApp.
         Lead: {$conversation->name}. Etapa do funil: {$stageName}.
 
-        {$agora}{$objetivo}{$context}{$materialBlock}{$agendaBlock}
+        {$agora}{$objetivo}{$context}{$materialBlock}{$agendaBlock}{$triagemBlock}
         Conversa (Atendente = você; {$conversation->name} = lead):
         {$transcript}
 
@@ -213,6 +264,33 @@ class AiReplyService
         return Material::where('is_active', true)
             ->where(fn ($q) => $q->whereNull('chat_tab_id')->when($teamId, fn ($w) => $w->orWhere('chat_tab_id', $teamId)))
             ->orderBy('id')->get();
+    }
+
+    /**
+     * O modelo respondeu SOBRE a mensagem em vez de escrever a mensagem?
+     *
+     * Quando a IA se recusa (ex.: o cliente pediu para parar e ela corretamente não
+     * quer insistir), o texto da recusa não pode virar mensagem no WhatsApp. Já
+     * aconteceu com uma cliente em 08/08/2026, que recebeu "Não é possível gerar essa
+     * mensagem neste caso. Thais pediu explicitamente para parar de receber..." —
+     * justo depois de pedir para parar. Quem chama trata como "não gerou".
+     */
+    public static function pareceRecusa(string $reply): bool
+    {
+        $t = mb_strtolower(trim($reply));
+        if ($t === '') {
+            return false;
+        }
+
+        $t = strtr($t, ['á' => 'a', 'à' => 'a', 'â' => 'a', 'ã' => 'a', 'é' => 'e', 'ê' => 'e',
+            'í' => 'i', 'ó' => 'o', 'ô' => 'o', 'õ' => 'o', 'ú' => 'u', 'ç' => 'c']);
+
+        return (bool) preg_match(
+            '/(nao (e|seria) possivel gerar|nao (posso|consigo|devo) gerar|nao seria apropriado|'
+            .'como (uma )?(ia|assistente|modelo)\b|\bas an ai\b|desculpe, mas nao posso|'
+            .'pediu explicitamente para (parar|nao))/u',
+            $t
+        );
     }
 
     /**

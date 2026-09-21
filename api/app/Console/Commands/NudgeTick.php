@@ -9,6 +9,7 @@ use App\Models\Meeting;
 use App\Models\Stage;
 use App\Services\AiReplyService;
 use App\Services\ChatSender;
+use App\Support\Attendance;
 use App\Support\Claude;
 use App\Support\Evolution;
 use App\Support\Tenancy;
@@ -53,7 +54,12 @@ class NudgeTick extends Command
         // "emendar no assunto" em "sumiu e voltou no dia seguinte". Os degraus longos
         // (20h, 3 e 7 dias) continuam presos ao horário comercial: aí sim é abordagem
         // nova, e ninguém quer ser abordado às 4 da manhã.
-        $janela = $this->dentroDaJanela();
+        // A janela agora é POR EMPRESA (Admin → Horário de atendimento). O mapa é
+        // calculado uma vez por tick: são poucas empresas e o relógio não muda no meio.
+        $dentroPorEmpresa = Company::query()->get()
+            ->mapWithKeys(fn ($c) => [$c->id => Attendance::dentro($c)])
+            ->all();
+        $dentroIds = array_keys(array_filter($dentroPorEmpresa));
 
         $max = count($delays);
         $tenancy = app(Tenancy::class);
@@ -69,12 +75,17 @@ class NudgeTick extends Command
             ->where('archived', false)
             ->whereNotNull('phone')
             ->whereNull('auto_reply_due_at')
+            // Humano conduzindo a conversa agora: a retomada automática espera a vez dela.
+            ->where(fn ($q) => $q->whereNull('ai_paused_until')->orWhere('ai_paused_until', '<=', now()))
             ->where('nudge_count', '<', $max)
             ->where('last_message_at', '<=', now()->subMinutes(min($delays)))
-            // Fora do expediente nem adianta carregar quem já passou do teto do primeiro
-            // degrau (3x o próprio degrau): seria varrer a base inteira toda madrugada
-            // para descartar tudo em `processar()`.
-            ->when(! $janela, fn ($q) => $q->where('last_message_at', '>=', now()->subMinutes($delays[0] * 3)))
+            // Empresa DENTRO da janela entra inteira; empresa FORA só contribui com o
+            // candidato QUENTE (últimos 3x o primeiro degrau — é o único que escapa da
+            // janela). Sem esta separação, as conversas de uma empresa fechada enchiam o
+            // limit() e eram todas descartadas em processar() sem mudar de estado — a
+            // empresa aberta ficava faminta olhando a mesma fila parada, tick após tick.
+            ->where(fn ($q) => $q->whereIn('company_id', $dentroIds)
+                ->orWhere('last_message_at', '>=', now()->subMinutes($delays[0] * 3)))
             ->orderByDesc('last_message_at')
             ->limit((int) config('services.nudge.per_tick', 15))
             ->get();
@@ -83,7 +94,7 @@ class NudgeTick extends Command
             $tenancy->set($conv->company_id);
 
             try {
-                $this->processar($conv, $delays, $ai, $sender, $janela);
+                $this->processar($conv, $delays, $ai, $sender, $dentroPorEmpresa[$conv->company_id] ?? false);
             } catch (\Throwable $e) {
                 // Uma conversa problemática nunca derruba o tick (nem as demais).
                 Log::error('nudge: falha na conversa', ['conv' => $conv->id, 'e' => $e->getMessage()]);
@@ -183,6 +194,15 @@ class NudgeTick extends Command
         $reply = $ai->generate($conv, $this->instrucao($tier, $silencio));
         if ($reply === null || trim($reply) === '') {
             Evolution::log('nudge.ia_nao_gerou', ['conversation_id' => $conv->id], 'error');
+
+            return;
+        }
+
+        // A IA recusou escrever a retomada — quase sempre porque o cliente já pediu para
+        // parar. Mandar o texto da recusa seria pior que não mandar nada, e insistir de
+        // novo depois é exatamente o que a Meta chamou de spam: encerra a retomada aqui.
+        if (AiReplyService::pareceRecusa($reply)) {
+            $this->encerrarRodada($conv, $delays, 'nudge.ia_recusou');
 
             return;
         }
@@ -384,20 +404,6 @@ class NudgeTick extends Command
         }
 
         return max(1, (int) round($segundos / 86400)).' dias';
-    }
-
-    /** Dentro do horário comercial configurado (e não é domingo)? */
-    private function dentroDaJanela(): bool
-    {
-        $agora = now();
-        if ($agora->isSunday()) {
-            return false;
-        }
-
-        $hora = (int) $agora->format('G');
-
-        return $hora >= (int) config('services.nudge.start_hour', 9)
-            && $hora < (int) config('services.nudge.end_hour', 19);
     }
 
     /** A conversa está na última etapa do funil (negócio fechado/encerrado)? */

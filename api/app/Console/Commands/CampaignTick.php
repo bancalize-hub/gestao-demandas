@@ -3,10 +3,12 @@
 namespace App\Console\Commands;
 
 use App\Models\Campaign;
+use App\Models\Company;
 use App\Models\CampaignContact;
 use App\Models\Conversation;
 use App\Models\WaAccount;
 use App\Services\CampaignMessageService;
+use App\Support\Attendance;
 use App\Support\Realtime;
 use App\Support\Tenancy;
 use App\Support\Wa;
@@ -78,42 +80,54 @@ class CampaignTick extends Command
 
         // Reset diário do contador + ramp de aquecimento (1 passo por dia ativo).
         $today = now()->toDateString();
-        if ((string) $acct->sent_date !== $today) {
+        // `?->toDateString()`, nunca (string): o cast 'date' vira Carbon e (string) dele
+        // é 'Y-m-d H:i:s' — jamais igual a toDateString(). Com o guard sempre verdadeiro,
+        // sent_today zerava e warmup_day subia A CADA MINUTO, e o teto do número com
+        // aquecimento nunca segurou nada.
+        if ($acct->sent_date?->toDateString() !== $today) {
             $acct->sent_date = $today;
             $acct->sent_today = 0;
             $acct->warmup_day = (int) $acct->warmup_day + 1;
             $acct->save();
         }
 
-        // Teto, intervalo e janela são ANTI-BAN do Baileys: existem porque o WhatsApp
-        // derruba número não-oficial que dispara demais. No canal oficial a Meta cuida
-        // do ritmo (e o próprio tick já limita a 1 envio por minuto por campanha), então
-        // segurar a fila aqui só atrasaria a entrega sem proteger nada.
-        //
-        // Atenção: `remainingToday()` fica 0 quando o número não tem teto configurado —
+        // JANELA, TETO DA CAMPANHA e INTERVALO valem em TODO canal. No Baileys são
+        // anti-ban; no oficial protegem outra coisa — a QUALIDADE da WABA, que a Meta
+        // rebaixa quando template de marketing sai em rajada e fora de hora. Já saiu
+        // disparo de domingo à noite por esta brecha ("no oficial a Meta cuida do
+        // ritmo" — cuida do limite técnico, não da reputação do número).
+        $hm = now()->format('H:i');
+        if ($hm < $campaign->window_start || $hm > $campaign->window_end) {
+            return;
+        }
+
+        // O DIA vem do horário de atendimento da EMPRESA (campanha só tem hora própria):
+        // é o que fecha de vez a brecha do disparo de domingo — janela de hora sozinha
+        // deixava passar qualquer dia da semana.
+        if (! in_array(now()->isoWeekday(), Attendance::dias(Company::find($campaign->company_id)), true)) {
+            return;
+        }
+
+        $sentTodayCampaign = $campaign->contacts()
+            ->whereIn('status', ['sent', 'replied'])
+            ->whereDate('sent_at', $today)
+            ->count();
+        if ($campaign->daily_cap > 0 && $sentTodayCampaign >= $campaign->daily_cap) {
+            return;
+        }
+
+        // Intervalo aleatório desde o último envio DESTE número (vale entre campanhas
+        // que compartilham o número).
+        $gap = random_int($campaign->min_gap_s, max($campaign->min_gap_s, $campaign->max_gap_s));
+        if ($acct->last_sent_at && $acct->last_sent_at->diffInSeconds(now()) < $gap) {
+            return;
+        }
+
+        // Só o teto DO NÚMERO (warmup do Baileys) continua exclusivo da Evolution:
+        // `remainingToday()` devolve 0 quando o número não tem teto configurado, e
         // aplicá-lo ao canal oficial travava a campanha para sempre, sem enviar nada.
-        if ($campaign->usaAntiBan()) {
-            $hm = now()->format('H:i');
-            if ($hm < $campaign->window_start || $hm > $campaign->window_end) {
-                return;
-            }
-
-            if ($acct->remainingToday() <= 0) {
-                return;
-            }
-            $sentTodayCampaign = $campaign->contacts()
-                ->whereIn('status', ['sent', 'replied'])
-                ->whereDate('sent_at', $today)
-                ->count();
-            if ($campaign->daily_cap > 0 && $sentTodayCampaign >= $campaign->daily_cap) {
-                return;
-            }
-
-            // Intervalo aleatório desde o último envio DESTE número (vale entre campanhas que compartilham o número).
-            $gap = random_int($campaign->min_gap_s, max($campaign->min_gap_s, $campaign->max_gap_s));
-            if ($acct->last_sent_at && $acct->last_sent_at->diffInSeconds(now()) < $gap) {
-                return;
-            }
+        if ($campaign->usaAntiBan() && $acct->remainingToday() <= 0) {
+            return;
         }
 
         // Próximo contato pendente (mais antigo primeiro).

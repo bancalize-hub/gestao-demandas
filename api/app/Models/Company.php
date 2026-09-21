@@ -27,6 +27,7 @@ class Company extends Model
             'auto_reply_new_leads' => 'boolean',
             'nudge_enabled' => 'boolean',
             'qualify_enabled' => 'boolean',
+            'attendance' => 'array',
         ];
     }
 

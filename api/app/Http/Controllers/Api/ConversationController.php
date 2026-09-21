@@ -91,6 +91,10 @@ class ConversationController extends Controller
             // Ficha do lead (CRM) — edição manual pela ScreenContact.
             'email', 'company', 'origin', 'responsible', 'role', 'segmento', 'notes', 'custom_fields',
             'qualified',
+            // Dono do negócio (users.id). O campo `responsible` acima é texto livre e está
+            // poluído com nome de lead — ele continua existindo para não quebrar o que já
+            // usa, mas quem manda no watchdog e nos relatórios é este.
+            'owner_user_id',
         ]));
 
         // Triagem feita por gente vence a da IA e passa a ser definitiva: o tick só mexe
@@ -229,6 +233,12 @@ class ConversationController extends Controller
      * Era por isso que as fotos sumiam de todo mundo com o tempo — o `<img>` apontava
      * direto para um link vencido. Aqui o binário é baixado uma vez e fica no disco; a URL
      * do banco passa a ser só a origem, não o que a tela consome.
+     *
+     * NUNCA responde 404: sem foto, redireciona para o avatar desenhado (DiceBear) que o
+     * servidor do front gera em `/_avatares/{seed}.svg`.
+     * É o que permite a tela apontar todo `<img>` para cá sem saber de antemão quem tem
+     * foto — não há estado quebrado, não há placeholder na tela, e a maioria (que não
+     * tem foto visível) ganha um desenho próprio em vez do mesmo círculo azul de todos.
      */
     public function avatar(Conversation $conversation)
     {
@@ -237,11 +247,22 @@ class ConversationController extends Controller
         if (! is_file($path)) {
             // Cache negativo: sem ele, uma conversa cuja foto morreu tentaria baixar de
             // novo a cada renderização da lista — centenas de requisições por tela.
-            abort_if((bool) Cache::get("wa-avatar-miss:{$conversation->id}"), 404);
+            $semFoto = (bool) Cache::get("wa-avatar-miss:{$conversation->id}");
 
-            if (! Avatars::baixar($conversation)) {
+            if ($semFoto || ! Avatars::baixar($conversation)) {
                 Cache::put("wa-avatar-miss:{$conversation->id}", true, now()->addHours(6));
-                abort(404);
+
+                // Sem foto: manda para o avatar desenhado (DiceBear), que mora no
+                // servidor do front — é biblioteca JS, o PHP não roda. Redirecionar em vez
+                // de devolver a imagem mantém UMA url por contato na tela: quem chama não
+                // precisa saber se existe foto, e o navegador guarda o destino.
+                //
+                // A seed é um HASH do slug, nunca o slug: a rota do front é pública e
+                // slug de conversa é `wa-<telefone>`. O prefixo é a versão do estilo —
+                // trocar o estilo muda a seed e fura o cache de um ano de todo mundo.
+                $seed = 'a1-'.substr(hash('sha256', (string) $conversation->slug), 0, 16);
+
+                return redirect()->away(rtrim((string) config('app.frontend_url'), '/')."/_avatares/{$seed}.svg", 302);
             }
         }
 

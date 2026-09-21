@@ -162,7 +162,10 @@ class MessageController extends Controller
         // Atualiza o resumo da conversa na lista.
         if ($data['type'] === 'text') {
             $conversation->update([
-                'preview' => $data['text'] ?? $conversation->preview,
+                // preview é varchar(255): texto longo estourava a coluna e a requisição
+                // morria em 500 DEPOIS de o WhatsApp já ter aceitado a mensagem — a bolha
+                // sumia do chat e parecia "não enviou". 80 é o mesmo corte do resto do CRM.
+                'preview' => isset($data['text']) ? mb_substr((string) $data['text'], 0, 80) : $conversation->preview,
                 'time' => $data['time'] ?? $conversation->time,
                 'unread' => ($data['is_out'] ?? false) ? 0 : $conversation->unread,
                 'last_message_at' => now(),
@@ -173,6 +176,23 @@ class MessageController extends Controller
         // (se o lead sumir depois desta mensagem, a IA volta a ter as 3 tentativas).
         if (($data['is_out'] ?? false) && $conversation->nudge_count) {
             $conversation->update(['nudge_count' => 0, 'nudge_last_at' => null]);
+        }
+
+        if ($data['is_out'] ?? false) {
+            // Carimba último contato nosso e, quando for o caso, a data da proposta.
+            $conversation->registrarSaida($data['text'] ?? null, $data['type'] ?? 'text');
+
+            // A IA CALA QUANDO O HUMANO ASSUME. Esta rota é o painel — do outro lado do
+            // teclado tem gente. Em 12/08/2026 a IA remarcou uma reunião por cima da
+            // atendente que estava pedindo desculpas ao lead pelo no-show, e alguém teve
+            // de desligar o atendimento automático na mão, no meio da conversa.
+            $pausa = (int) config('services.auto_reply.human_pause_minutes', 180);
+            if ($pausa > 0) {
+                $conversation->forceFill([
+                    'ai_paused_until' => now()->addMinutes($pausa),
+                    'auto_reply_due_at' => null,
+                ])->save();
+            }
         }
 
         Realtime::messageCreated($message);

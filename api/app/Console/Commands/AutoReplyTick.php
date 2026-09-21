@@ -35,6 +35,8 @@ class AutoReplyTick extends Command
         $due = Conversation::where('auto_reply', true)
             ->whereNotNull('auto_reply_due_at')
             ->where('auto_reply_due_at', '<=', now())
+            // Humano assumiu a conversa há pouco: a IA não fala por cima dele.
+            ->where(fn ($q) => $q->whereNull('ai_paused_until')->orWhere('ai_paused_until', '<=', now()))
             ->get();
 
         foreach ($due as $conv) {
@@ -195,6 +197,19 @@ class AutoReplyTick extends Command
                         'ia_fora' => Claude::indisponivel(),
                     ], 'error');
                     $this->warn("auto-reply: falha ao gerar para conversa {$conv->id}");
+
+                    continue;
+                }
+
+                // Recusa do modelo ("não é possível gerar essa mensagem...") não pode virar
+                // mensagem para o cliente. Encerra o atendimento automático desta conversa:
+                // se a IA achou que não devia falar, insistir a cada 2 minutos é pior ainda.
+                if (AiReplyService::pareceRecusa($reply)) {
+                    $conv->update(['auto_reply_due_at' => null]);
+                    Evolution::log('auto_reply.ia_recusou', [
+                        'conversation_id' => $conv->id,
+                        'trecho' => mb_substr($reply, 0, 160),
+                    ], 'warning');
 
                     continue;
                 }

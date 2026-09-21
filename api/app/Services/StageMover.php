@@ -52,6 +52,21 @@ class StageMover
         // este é o único lugar por onde toda mudança de etapa passa: arraste no funil,
         // edição na ficha e automação caem todos neste método.
         if ($stage->key === (string) config('services.crm.stage_won', 'fechado')) {
+            // Quando fechou, e não só que fechou: sem data não dá para medir ciclo de venda
+            // (o único negócio fechado em agosto levou 24h da reunião ao pagamento, e isso
+            // só foi possível reconstruir lendo mensagem por mensagem).
+            $conversation->forceFill(['closed_at' => $conversation->closed_at ?: now()])->save();
+
+            // Valor vazio faz o evento de venda subir para a Meta sem `value`, e o
+            // otimizador aprende com um número que não existe. Não bloqueia o fechamento —
+            // registra, para aparecer no log de quem for conferir.
+            if (! is_numeric($conversation->deal_value) || (float) $conversation->deal_value <= 0) {
+                \App\Support\Evolution::log('venda.sem_valor', [
+                    'conversation_id' => $conversation->id,
+                    'lead' => $conversation->name,
+                ], 'warning');
+            }
+
             \App\Support\MetaConversions::enviarUmaVez(
                 $conversation,
                 \App\Support\MetaConversions::VENDA,

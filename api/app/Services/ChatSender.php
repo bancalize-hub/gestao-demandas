@@ -79,6 +79,10 @@ class ChatSender
             'time' => date('H:i', $ts),
             'last_message_at' => now(),
         ]);
+        // Carimba último contato nosso e, se for o caso, a data da proposta — é o que
+        // alimenta o watchdog de negócio órfão e a meta de "proposta em 24h".
+        $conv->registrarSaida($text, $data['type'] ?? 'text');
+
         // Depois do update: o evento carrega a linha da conversa lida do banco —
         // broadcastar antes mandaria preview/hora velhos pro painel.
         Realtime::messageCreated($msg);

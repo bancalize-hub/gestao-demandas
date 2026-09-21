@@ -38,7 +38,7 @@ export interface Stage { id?: number, key: string, name: string, color: string, 
 // qualified: '1' qualificado, '0' desqualificado, 'sem' ainda não triado. Vazio = todos.
 export type TabQual = '1' | '0' | 'sem'
 // show_hidden: a tab é a LIXEIRA — mostra só as conversas excluídas, em vez das ativas.
-export interface ChatTab { id: number, name: string, stages: string[], qualified?: TabQual[], show_hidden?: boolean, position?: number }
+export interface ChatTab { id: number, name: string, stages: string[], qualified?: TabQual[], show_hidden?: boolean, position?: number, chat?: number | null }
 
 export interface Conversation {
   id: string // slug
@@ -50,6 +50,8 @@ export interface Conversation {
   online: boolean
   statusText: string
   role: string
+  /** Dono do negócio (users.id). O campo `responsible` é texto livre e legado. */
+  ownerUserId: number | null
   dealValue: string
   dealUnit: string
   stage: string
@@ -294,7 +296,7 @@ function mapConv(c: any): Conversation {
   }
   return {
     id: c.slug, name: display, nameSaved, initials: nameSaved ? initialsOf(display) : (c.initials || '#'), color: colorForId(c.slug || c.name || String(c.id)), avatar: avatarUrl(c), online: !!c.online,
-    statusText: c.status_text ?? '', role: c.role ?? '', dealValue: c.deal_value ?? '', dealUnit: c.deal_unit ?? '',
+    statusText: c.status_text ?? '', role: c.role ?? '', ownerUserId: c.owner_user_id ?? null, dealValue: c.deal_value ?? '', dealUnit: c.deal_unit ?? '',
     stage: c.stage ?? '', stageColor: c.stage_color ?? '#8696a0', prob: c.prob ?? 0, hot: !!c.hot,
     preview: c.preview ?? '', time: c.time ?? '', lastMessageAt: c.last_message_at ?? null, startedAt: c.started_ts ?? null, unread: c.unread ?? 0, archived: !!c.archived, autoReply: !!c.auto_reply, lastOut: c.last_message ? !!c.last_message.is_out : lastIsOut(c.messages), inMemory: !!c.in_memory, tags: c.tags ?? [],
     // `?? null` e não `!!`: "sem triagem" é um estado de verdade, diferente de desqualificado.
@@ -1177,6 +1179,7 @@ export const useCrmStore = defineStore('crm', {
       const map: Record<string, string> = {
         email: 'email', company: 'company', origin: 'origin', responsible: 'responsible',
         role: 'role', segmento: 'segmento', notes: 'notes', prob: 'prob', dealValue: 'deal_value', name: 'name',
+        ownerUserId: 'owner_user_id',
       }
       const body: Record<string, any> = {}
       for (const [k, v] of Object.entries(patch)) {
@@ -1230,8 +1233,8 @@ export const useCrmStore = defineStore('crm', {
     },
     // Leva o rascunho da IA para o composer do chat (o vendedor revisa e envia).
     useFollowupDraft(id: string, draft: string) {
-      this.aiSuggestion = draft
-      this.activeId = id
+      this.selectConv(id) // carrega a thread; sem isso o chat abre vazio
+      this.aiSuggestion = draft // depois do selectConv, que zera a sugestão
       this.go('chat')
     },
     // Inicia/abre uma conversa por número (contatos sem histórico no Evolution).
@@ -1325,7 +1328,7 @@ export const useCrmStore = defineStore('crm', {
     },
 
     // ----- Tabs da lista de conversas (filtram por etiqueta/etapa) -----
-    async createChatTab(payload: { name: string, stages: string[], qualified?: TabQual[], show_hidden?: boolean }) {
+    async createChatTab(payload: { name: string, stages: string[], qualified?: TabQual[], show_hidden?: boolean, chat?: number }) {
       const t = await api()<ChatTab>('/api/chat-tabs', { method: 'POST', body: payload })
       this.chatTabs.push({ ...t, stages: t.stages || [], qualified: t.qualified || [] })
       return t

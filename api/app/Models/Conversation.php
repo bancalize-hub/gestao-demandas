@@ -33,6 +33,9 @@ class Conversation extends Model
         'deal_value', 'deal_unit', 'stage', 'stage_color', 'prob', 'hot', 'preview', 'time',
         'last_message_at', 'unread', 'archived', 'hidden_at', 'auto_reply', 'in_memory', 'tags', 'phone',
         'email', 'company', 'origin', 'responsible', 'segmento', 'notes', 'interactions', 'company_id',
+        // Dono do negócio: a ficha mostra e o funil filtra por ele. Fora daqui a coluna
+        // existe no banco mas nunca chega ao front — foi o que faltava para a tela.
+        'owner_user_id',
         // A triagem aparece no chip da lista e no cabeçalho, então tem de vir na lista.
         // São dois tinyint e uma frase curta — o motivo vem junto porque decidir sem ver
         // o porquê da marca da IA é o mesmo que não ter marca nenhuma.
@@ -110,6 +113,10 @@ class Conversation extends Model
     }
 
     protected $casts = [
+        'proposal_sent_at' => 'datetime',
+        'closed_at' => 'datetime',
+        'ai_paused_until' => 'datetime',
+        'last_touch_at' => 'datetime',
         'online' => 'boolean',
         'hot' => 'boolean',
         'prob' => 'integer',
@@ -217,6 +224,35 @@ class Conversation extends Model
             } catch (\Throwable $e) {
             }
         });
+    }
+
+
+    /**
+     * Carimba o que ACABOU DE SAIR para o lead.
+     *
+     * `last_touch_at` responde "há quanto tempo ninguém fala com esse negócio" sem varrer
+     * a tabela de mensagens (é o que o watchdog de negócio órfão consulta a cada rodada).
+     *
+     * `proposal_sent_at` só é carimbado uma vez, e de propósito com régua ESTREITA:
+     * documento anexado, ou texto com contrato/proposta/orçamento/valor em reais/boleto/pix.
+     * Palavra solta como "setup" aparece em conversa normal o tempo todo — usá-la encheria
+     * a métrica de falso positivo justamente na única meta que o time precisa enxergar.
+     */
+    public function registrarSaida(?string $texto, ?string $tipo = 'text'): void
+    {
+        $campos = ['last_touch_at' => now()];
+
+        $ehDocumento = in_array((string) $tipo, ['document', 'file', 'image'], true);
+        $falaDeProposta = (bool) preg_match(
+            '/\bcontratos?\b|\bpropostas?\b|\bor[çc]amentos?\b|R\$\s?\d|link de pagamento|\bboletos?\b|chave pix/iu',
+            (string) $texto,
+        );
+
+        if (! $this->proposal_sent_at && ($ehDocumento || $falaDeProposta)) {
+            $campos['proposal_sent_at'] = now();
+        }
+
+        $this->forceFill($campos)->save();
     }
 
     public function account(): BelongsTo

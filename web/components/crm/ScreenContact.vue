@@ -31,13 +31,27 @@ function setStage(key: string) {
 // --- Ficha editável (draft local) ---
 // Bufferiza os campos localmente; o refetch do Reverb faz Object.assign no store e
 // apagaria um input controlado direto. Só re-sincronizamos quando troca o lead (id).
-const form = reactive({ email: '', company: '', origin: '', segmento: '', responsible: '', role: '', dealValue: '', prob: 0, notes: '' })
+const form = reactive({ email: '', company: '', origin: '', segmento: '', responsible: '', role: '', dealValue: '', prob: 0, notes: '', ownerUserId: null as number | null })
+
+// Dono do negócio: usuário de verdade, diferente do campo "Responsável" (texto livre,
+// legado, e hoje poluído com nome de lead). É por ele que o watchdog cobra quando o
+// negócio passa da reunião e ninguém encosta.
+const api = useApi()
+const usuarios = ref<{ id: number, name: string }[]>([])
+onMounted(async () => {
+  try {
+    const r = await api<{ users: { id: number, name: string }[] }>('/api/users')
+    usuarios.value = r.users ?? []
+  }
+  catch { /* sem lista, o select fica vazio e a ficha continua funcionando */ }
+})
 watch(() => c.value?.id, () => {
   const v = c.value
   if (!v) return
   Object.assign(form, {
     email: v.email, company: v.company, origin: v.origin, segmento: v.segmento,
     responsible: v.responsible, role: v.role, dealValue: v.dealValue, prob: v.prob, notes: v.notes,
+    ownerUserId: v.ownerUserId ?? null,
   })
 }, { immediate: true })
 
@@ -67,6 +81,17 @@ function actMeta(a: { occurred_at: string, user?: { name: string } | null }) {
 
 // Carrega atividades + follow-ups sempre que troca o lead aberto.
 watch(() => c.value?.id, (id) => { if (id) { crm.loadActivities(id); crm.loadFollowups(id) } }, { immediate: true })
+
+// --- Gravações de reuniões (vídeo do Meet servido pelo CRM) ---
+const apiOrigin = useRuntimeConfig().public.apiOrigin as string
+const apiFetch = useApi()
+const recordings = ref<{ meeting_id: number, title: string | null, starts_at: string, url: string }[]>([])
+watch(() => c.value?.id, async (id) => {
+  recordings.value = []
+  if (!id) return
+  try { recordings.value = await apiFetch<typeof recordings.value>(`/api/conversations/${id}/recordings`) }
+  catch { /* sem gravações ou erro — o bloco só some */ }
+}, { immediate: true })
 
 // --- Follow-ups (acompanhamento) ---
 const fuNote = ref('')
@@ -185,6 +210,8 @@ async function addNote() {
             <div style="height:1px;background:var(--c-surface-1);" />
             <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;"><span style="font-size:13px;color:var(--c-text-muted);flex-shrink:0;">Origem</span><input v-model="form.origin" placeholder="—" :style="inputStyle" @blur="save('origin')" @keydown.enter="(e) => (e.target as HTMLInputElement).blur()"></div>
             <div style="height:1px;background:var(--c-surface-1);" />
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;"><span style="font-size:13px;color:var(--c-text-muted);flex-shrink:0;">Dono do negócio</span><select v-model="form.ownerUserId" :style="inputStyle" @change="save('ownerUserId')"><option :value="null">— sem dono —</option><option v-for="u in usuarios" :key="u.id" :value="u.id">{{ u.name }}</option></select></div>
+            <div style="height:1px;background:var(--c-surface-1);" />
             <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;"><span style="font-size:13px;color:var(--c-text-muted);flex-shrink:0;">Responsável</span><input v-model="form.responsible" placeholder="—" :style="inputStyle" @blur="save('responsible')" @keydown.enter="(e) => (e.target as HTMLInputElement).blur()"></div>
             <div style="height:1px;background:var(--c-surface-1);" />
             <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;"><span style="font-size:13px;color:var(--c-text-muted);flex-shrink:0;">Probabilidade</span><div style="display:flex;align-items:center;gap:4px;"><input v-model="form.prob" type="number" min="0" max="100" placeholder="0" style="background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:9px;padding:8px 11px;color:var(--accent);font-family:inherit;font-size:13.5px;font-weight:700;outline:none;width:64px;text-align:right;" @blur="save('prob')" @keydown.enter="(e) => (e.target as HTMLInputElement).blur()"><span style="font-size:13.5px;font-weight:700;color:var(--accent);">%</span></div></div>
@@ -192,6 +219,17 @@ async function addNote() {
 
           <div style="font-size:13px;color:var(--c-text-muted);margin:18px 0 8px;">Observações</div>
           <textarea v-model="form.notes" rows="4" placeholder="Anotações sobre o lead, necessidades, contexto…" style="width:100%;background:var(--c-surface-2);border:1px solid var(--c-surface-3);border-radius:10px;padding:10px 12px;color:var(--c-text);font-family:inherit;font-size:13px;outline:none;resize:vertical;line-height:1.5;box-sizing:border-box;" @blur="save('notes')" />
+
+          <template v-if="recordings.length">
+            <div style="font-size:13px;color:var(--c-text-muted);margin:18px 0 8px;">🎥 Gravações de reuniões</div>
+            <div style="display:flex;flex-direction:column;gap:12px;">
+              <div v-for="r in recordings" :key="r.meeting_id">
+                <div style="font-size:12.5px;color:var(--c-text-secondary);margin-bottom:5px;">{{ r.title || 'Reunião' }} · {{ fmtWhen(r.starts_at) }}</div>
+                <!-- preload=none: o vídeo só sai do Drive quando alguém dá play -->
+                <video :src="`${apiOrigin}${r.url}`" controls preload="none" style="width:100%;border-radius:10px;background:#000;max-height:320px;" />
+              </div>
+            </div>
+          </template>
         </div>
 
         <div style="background:var(--c-bg);border:1px solid var(--c-surface-1);border-radius:18px;padding:22px 24px;">

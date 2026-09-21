@@ -58,7 +58,14 @@ class MeetingAttendanceTick extends Command
             ->where('ends_at', '>', now()->subDays(14))
             ->where(function ($q) {
                 $q->whereNull('attendance_checked_at')
-                    ->orWhereNull('summarized_at');
+                    ->orWhereNull('summarized_at')
+                    // O VÍDEO fica pronto DEPOIS da transcrição — volta por até 2 dias
+                    // só para buscar a gravação de quem já tem resumo do Meet.
+                    ->orWhere(function ($q) {
+                        $q->whereNull('recording_file_id')
+                            ->where('summary_source', 'meet')
+                            ->where('ends_at', '>', now()->subDays(2));
+                    });
             })
             ->with('conversation')
             ->get();
@@ -156,6 +163,33 @@ class MeetingAttendanceTick extends Command
                 if ($attended) {
                     StageMover::move($meeting->conversation, $doneStage, $user->id, "Reunião realizada em {$when}");
                     $this->logUmaVez($meeting->conversation->id, "✅ Cliente compareceu à reunião ({$when})", $lista);
+
+                    // DONO DO NEGÓCIO. Sem isto o lead sai da reunião e não pertence a
+                    // ninguém: em 18/08/2026, 12 dos 14 negócios em "disse que vai fechar"
+                    // estavam sem responsável, e 4 nunca mais receberam uma mensagem.
+                    // O anfitrião da reunião é o dono natural — foi ele quem falou com o lead.
+                    if (! $meeting->conversation->owner_user_id && $meeting->user_id) {
+                        $meeting->conversation->forceFill(['owner_user_id' => $meeting->user_id])->save();
+                    }
+
+                    // TAREFA DA PROPOSTA, com prazo. O único negócio fechado no período foi
+                    // o que teve proposta na mão do lead no dia seguinte à call; a diferença
+                    // entre ele e os outros doze não foi discurso, foi alguém ter feito isto.
+                    $tituloProposta = "Enviar proposta — {$meeting->conversation->name} ({$when})";
+                    if (! Task::where('conversation_id', $meeting->conversation->id)->where('title', $tituloProposta)->exists()) {
+                        Task::create([
+                            'conversation_id' => $meeting->conversation->id,
+                            'title' => $tituloProposta,
+                            'description' => 'Reunião realizada. Enviar proposta/orçamento e combinar o próximo passo com data.',
+                            'client' => $meeting->conversation->name,
+                            'type' => 'followup',
+                            'priority' => 'alta',
+                            'column' => 'todo',
+                            'position' => (Task::where('column', 'todo')->min('position') ?? 0) - 1,
+                            'starts_at' => now()->addMinutes(30),
+                            'due' => now()->addDay(),
+                        ]);
+                    }
                     // Presença CONFIRMADA no Meet — o evento mais valioso do funil para a
                     // Meta otimizar, porque separa quem apareceu de quem só marcou.
                     MetaConversions::enviarUmaVez($meeting->conversation, MetaConversions::REUNIAO_REALIZADA);
@@ -180,15 +214,50 @@ class MeetingAttendanceTick extends Command
             }
         }
 
-        // ---------- RESUMO (read.ai) ----------
-        // Independe da presença confirmada (ver comentário do query acima): se o read.ai
-        // mandou o relatório por e-mail, a reunião aconteceu e o resumo vai pra ficha.
+        // ---------- RESUMO ----------
+        // 1ª fonte: transcrição NATIVA do Meet (conta Workspace) resumida pela IA — traz
+        // também o link da gravação. 2ª fonte (fallback): e-mail de relatório do read.ai.
+        // Independe da presença confirmada (ver comentário do query acima): a existência
+        // de transcrição/relatório já prova que a reunião aconteceu.
         if ($meeting->summarized_at === null) {
-            $report = $gmail->findReadAiReport($user, Carbon::parse($meeting->starts_at), Carbon::parse($meeting->ends_at));
+            $report = null;
+            if ($code) {
+                $art = $google->conferenceArtifacts($user, $code, Carbon::parse($meeting->starts_at), $meeting->ends_at ? Carbon::parse($meeting->ends_at) : null);
+                // Gravação pode existir mesmo sem transcrição — guarda assim que aparecer
+                // (é o que liga o player de vídeo na ficha).
+                if ($art['recording_file_id'] && ! $meeting->recording_file_id) {
+                    $meeting->recording_file_id = $art['recording_file_id'];
+                    $meeting->recording_link = $art['recording_link'];
+                    $meeting->save();
+                }
+                if ($art['transcript']) {
+                    // Guarda a transcrição BRUTA junto com o resumo. Até 18/08/2026 só o
+                    // resumo era salvo, e auditar condução de call exigia rebuscar tudo na
+                    // Meet API reunião por reunião — que só funciona enquanto o Google
+                    // mantém o registro. O resumo serve para a ficha; a fala literal é o
+                    // que responde "o que travou esta venda".
+                    if (! $meeting->transcript) {
+                        $meeting->forceFill([
+                            'transcript' => $art['transcript'],
+                            'transcript_source' => 'meet',
+                        ])->save();
+                    }
+
+                    $resumo = $this->resumirTranscricao($meeting, $art['transcript']);
+                    if ($resumo === null) {
+                        return; // transcrição existe mas a IA falhou — tenta no próximo tick (desiste em 24h)
+                    }
+                    if ($art['recording_link']) {
+                        $resumo .= "\n\n🎥 Gravação: {$art['recording_link']}";
+                    }
+                    $report = ['summary' => $resumo, 'source' => 'meet'];
+                }
+            }
+            $report ??= $gmail->findReadAiReport($user, Carbon::parse($meeting->starts_at), Carbon::parse($meeting->ends_at));
 
             if ($report) {
                 $meeting->summary = $report['summary'];
-                $meeting->summary_source = 'read.ai';
+                $meeting->summary_source = $report['source'] ?? 'read.ai';
                 $meeting->summarized_at = now();
                 // O relatório prova que a reunião OCORREU, não que o cliente entrou. Serve de
                 // presença só quando não houve medição nenhuma (conta Google pessoal, em que a
@@ -202,12 +271,22 @@ class MeetingAttendanceTick extends Command
                 if ($meeting->conversation) {
                     $when = Carbon::parse($meeting->starts_at)->setTimezone(config('app.timezone'))->format('d/m/Y H:i');
                     LeadActivity::log($meeting->conversation->id, 'reuniao', "📋 Resumo da reunião ({$when})", $report['summary']);
-                    $this->appendToNotes($meeting->conversation, $when, $report['summary']);
+                    $this->appendToNotes($meeting->conversation, $when, $report['summary'], $meeting->summary_source);
                 }
             } elseif ($endedHoursAgo >= 24) {
                 // O relatório não chegou em 24h — para de tentar (resumo fica vazio).
                 $meeting->summarized_at = now();
                 $meeting->save();
+            }
+        } elseif ($meeting->recording_file_id === null && $meeting->summary_source === 'meet' && $code) {
+            // Resumo já saiu mas o VÍDEO ainda não tinha sido publicado no Drive (a gravação
+            // fica pronta depois da transcrição): volta só pra buscar a gravação.
+            $art = $google->conferenceArtifacts($user, $code, Carbon::parse($meeting->starts_at), $meeting->ends_at ? Carbon::parse($meeting->ends_at) : null, incluirTranscricao: false);
+            if ($art['recording_file_id']) {
+                $meeting->update([
+                    'recording_file_id' => $art['recording_file_id'],
+                    'recording_link' => $art['recording_link'],
+                ]);
             }
         }
     }
@@ -242,11 +321,51 @@ class MeetingAttendanceTick extends Command
     }
 
     /** Prepende o resumo no campo Observações da ficha, sem apagar o que já existe. */
-    private function appendToNotes(Conversation $conv, string $when, string $summary): void
+    private function appendToNotes(Conversation $conv, string $when, string $summary, ?string $source = null): void
     {
-        $block = "🗓 Reunião {$when} — resumo (read.ai)\n{$summary}";
+        $label = $source === 'meet' ? 'Meet' : 'read.ai';
+        $block = "🗓 Reunião {$when} — resumo ({$label})\n{$summary}";
         $current = trim((string) $conv->notes);
         $conv->notes = $current !== '' ? $block."\n\n".$current : $block;
         $conv->save();
+    }
+
+    /**
+     * Resume a transcrição da reunião com a IA do painel. Devolve null quando a IA está
+     * indisponível/falhou — o chamador NÃO carimba summarized_at, para tentar de novo.
+     */
+    private function resumirTranscricao(Meeting $meeting, string $transcript): ?string
+    {
+        if (\App\Support\Claude::indisponivel()) {
+            return null;
+        }
+
+        // Reunião de 1h rende ~10-15k palavras; corta o miolo se passar do limite do prompt.
+        $max = 60000;
+        if (mb_strlen($transcript) > $max) {
+            $transcript = mb_substr($transcript, 0, (int) ($max * 0.6))
+                ."\n[... trecho intermediário omitido ...]\n"
+                .mb_substr($transcript, -(int) ($max * 0.4));
+        }
+
+        $lead = $meeting->conversation?->name ?: 'o cliente';
+        $prompt = <<<PROMPT
+Você resume reuniões comerciais para a ficha de um CRM. Abaixo está a transcrição de uma reunião entre a equipe Bancalize e o lead "{$lead}" ({$meeting->title}).
+
+Escreva em português, SEM markdown, exatamente neste formato:
+- 1º parágrafo: visão geral em 2 a 4 frases (quem é o lead, o que ele quer, como a conversa terminou).
+- Depois uma linha "Pontos discutidos:" seguida de bullets "•" (no máximo 10) com o que foi tratado.
+- Depois uma linha "Próximos passos:" com bullets "•" dos compromissos combinados (quem faz o quê e prazo, se dito).
+
+Não invente nada que não esteja na transcrição. Responda SÓ com o resumo.
+
+Transcrição:
+{$transcript}
+PROMPT;
+
+        $out = \App\Support\Claude::run($prompt, 180);
+        $out = trim((string) $out);
+
+        return $out !== '' ? $out : null;
     }
 }

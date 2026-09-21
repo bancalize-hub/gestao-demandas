@@ -282,4 +282,58 @@ class EventController extends Controller
             ]
         );
     }
+
+    /** Gravações das reuniões de um lead — alimenta o bloco de vídeos da ficha. */
+    public function recordings(\App\Models\Conversation $conversation)
+    {
+        return \App\Models\Meeting::where('conversation_id', $conversation->id)
+            ->whereNotNull('recording_file_id')
+            ->orderByDesc('starts_at')
+            ->get()
+            ->map(fn ($m) => [
+                'meeting_id' => $m->id,
+                'title' => $m->title,
+                'starts_at' => $m->starts_at?->toIso8601String(),
+                'url' => "/api/meetings/{$m->id}/recording",
+            ]);
+    }
+
+    /**
+     * Serve o VÍDEO da gravação (streaming do Drive com o token do anfitrião, repassando
+     * Range). O arquivo nunca fica público nem ocupa disco: o CRM é só o cano — e a
+     * autorização é a do próprio CRM (login + empresa), não a do Drive.
+     */
+    public function recording(\App\Models\Meeting $meeting)
+    {
+        abort_unless($meeting->recording_file_id, 404);
+        set_time_limit(0); // gravação de 1h passa fácil do max_execution_time padrão
+
+        $user = $meeting->user_id ? User::find($meeting->user_id) : null;
+        if (! $user || ! $user->hasGoogle()) {
+            $user = User::whereNotNull('google_access_token')->first(); // mesma empresa (tenant scope)
+        }
+        abort_unless($user && $user->hasGoogle(), 404);
+
+        $up = $this->google->driveDownload($user, $meeting->recording_file_id, request()->header('Range'));
+        abort_if($up->getStatusCode() >= 400, 502, 'Drive recusou a gravação');
+
+        $headers = array_filter([
+            'Content-Type' => $up->getHeaderLine('Content-Type') ?: 'video/mp4',
+            'Content-Length' => $up->getHeaderLine('Content-Length') ?: null,
+            'Content-Range' => $up->getHeaderLine('Content-Range') ?: null,
+            'Accept-Ranges' => 'bytes',
+            'Cache-Control' => 'private, max-age=3600',
+        ]);
+
+        return response()->stream(function () use ($up) {
+            $body = $up->getBody();
+            while (! $body->eof()) {
+                echo $body->read(262144);
+                if (connection_aborted()) {
+                    break; // usuário fechou o player — para de puxar do Drive
+                }
+                flush();
+            }
+        }, $up->getStatusCode(), $headers);
+    }
 }

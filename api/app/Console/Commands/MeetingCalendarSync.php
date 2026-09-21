@@ -134,7 +134,27 @@ class MeetingCalendarSync extends Command
                 ->update(['cancelled_at' => now(), 'cancel_reason' => 'apagada no Google Calendar']);
         }
 
-        $this->info("empresa {$user->company_id} calendar-sync: {$imported} reuniões importadas, {$matched} casadas com um lead, {$sumidas} canceladas (sumiram da agenda).");
+        // Gravação automática nas reuniões FUTURAS desta conta que ainda não têm — cobre
+        // as marcadas direto no Google Agenda, as recém-importadas e as agendadas antes do
+        // recurso existir (ou antes de a conta reconectar o Google com o escopo novo).
+        // Sucesso carimba `auto_record_enabled_at` e não repete; falha (sem escopo/Workspace,
+        // convite de terceiro) tenta de novo a cada rodada até a reunião começar.
+        $autoRec = 0;
+        $pendentes = Meeting::query()
+            ->where('user_id', $user->id)
+            ->whereNull('auto_record_enabled_at')
+            ->whereNull('cancelled_at')
+            ->whereNotNull('meet_link')
+            ->where('starts_at', '>', now())
+            ->get();
+        foreach ($pendentes as $p) {
+            if ($google->enableAutoRecording($user, $p->meet_link)) {
+                $p->update(['auto_record_enabled_at' => now()]);
+                $autoRec++;
+            }
+        }
+
+        $this->info("empresa {$user->company_id} calendar-sync: {$imported} reuniões importadas, {$matched} casadas com um lead, {$sumidas} canceladas (sumiram da agenda), {$autoRec} com gravação automática ligada.");
     }
 
     /**

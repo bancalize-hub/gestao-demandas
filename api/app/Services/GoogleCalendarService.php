@@ -34,8 +34,14 @@ class GoogleCalendarService
             'https://www.googleapis.com/auth/contacts',
             // Meet REST API: ler participantes/transcrição/resumo das reuniões.
             \Google\Service\Meet::MEETINGS_SPACE_READONLY,
+            // Meet REST API (configuração da sala): ligar gravação/transcrição AUTOMÁTICAS.
+            // Escopo novo ⇒ o usuário precisa Desconectar→Conectar o Google de novo.
+            \Google\Service\Meet::MEETINGS_SPACE_SETTINGS,
             // Gmail (somente leitura): ler os relatórios de reunião do read.ai por e-mail.
             \Google\Service\Gmail::GMAIL_READONLY,
+            // Drive (somente leitura): baixar a GRAVAÇÃO da reunião p/ o player da ficha.
+            // Escopo novo ⇒ o usuário precisa Desconectar→Conectar o Google de novo.
+            \Google\Service\Drive::DRIVE_READONLY,
             'openid',
             'email',
         ]);
@@ -165,6 +171,56 @@ class GoogleCalendarService
         return new \Google\Service\Meet($this->clientFor($user));
     }
 
+    /**
+     * Liga a GRAVAÇÃO (e a transcrição) automáticas na sala do Meet — a call começa a
+     * gravar sozinha quando o anfitrião entra, ninguém precisa lembrar de apertar "Gravar".
+     *
+     * A configuração fica NA SALA: remarcar o evento mantém o mesmo Meet e o ajuste
+     * continua valendo. Best-effort de propósito — só funciona quando o dono da sala é
+     * conta Workspace com permissão de gravar e com o escopo meetings.space.settings
+     * concedido; convite criado por terceiros ou conta ainda sem reconectar falha em
+     * silêncio (melhor reunião sem gravação do que agendamento quebrado).
+     */
+    public function enableAutoRecording(User $user, ?string $meetLink): bool
+    {
+        if (! preg_match('#meet\.google\.com/([a-z]{3,4}-[a-z]{3,4}-[a-z]{3,4})#i', (string) $meetLink, $m)) {
+            return false;
+        }
+
+        try {
+            $meet = $this->meet($user);
+            // get() aceita o código do link; o patch exige o nome canônico (spaces/xxx).
+            $space = $meet->spaces->get('spaces/'.strtolower($m[1]));
+
+            $rec = new \Google\Service\Meet\RecordingConfig;
+            $rec->setAutoRecordingGeneration('ON');
+            $tr = new \Google\Service\Meet\TranscriptionConfig;
+            $tr->setAutoTranscriptionGeneration('ON');
+            $art = new \Google\Service\Meet\ArtifactConfig;
+            $art->setRecordingConfig($rec);
+            $art->setTranscriptionConfig($tr);
+            $config = new \Google\Service\Meet\SpaceConfig;
+            $config->setArtifactConfig($art);
+            $body = new \Google\Service\Meet\Space;
+            $body->setConfig($config);
+
+            $meet->spaces->patch($space->getName(), $body, [
+                'updateMask' => 'config.artifactConfig.recordingConfig.autoRecordingGeneration,'
+                    .'config.artifactConfig.transcriptionConfig.autoTranscriptionGeneration',
+            ]);
+
+            return true;
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::info('meet.auto_gravacao_falhou', [
+                'user_id' => $user->id,
+                'meet' => $meetLink,
+                'erro' => $e->getMessage(),
+            ]);
+
+            return false;
+        }
+    }
+
     /** Serviço do Gmail (leitura) autenticado para o usuário. */
     public function gmail(User $user): \Google\Service\Gmail
     {
@@ -266,6 +322,113 @@ class GoogleCalendarService
     }
 
     /**
+     * Transcrição e gravação nativas do Meet (só existem em conta Workspace).
+     * Junta as falas de TODOS os registros da janela da reunião (mesma regra da presença:
+     * sala que esvazia e reabre gera outro conference record) em "Fulano: fala" por linha.
+     *
+     * @return array{transcript: ?string, recording_link: ?string}
+     */
+    public function conferenceArtifacts(User $user, string $meetingCode, Carbon $start, ?Carbon $end = null, bool $incluirTranscricao = true): array
+    {
+        $meet = $this->meet($user);
+        $records = $meet->conferenceRecords->listConferenceRecords([
+            'filter' => 'space.meeting_code="'.$meetingCode.'"',
+            'pageSize' => 20,
+        ])->getConferenceRecords() ?? [];
+
+        $janelaIni = $start->copy()->subMinutes(20);
+        $janelaFim = ($end ? $end->copy() : $start->copy()->addHour())->addMinutes(90);
+
+        $lines = [];
+        $recordingFileId = null;
+        $recordingLink = null;
+        foreach ($records as $rec) {
+            $rs = $rec->getStartTime() ? Carbon::parse($rec->getStartTime()) : null;
+            $re = $rec->getEndTime() ? Carbon::parse($rec->getEndTime()) : Carbon::now();
+            if (! $rs || ! ($rs->lt($janelaFim) && $re->gt($janelaIni))) {
+                continue;
+            }
+
+            // Backfill só de gravação (o vídeo fica pronto DEPOIS da transcrição): pula o
+            // trabalho pesado de baixar as falas de novo.
+            if (! $incluirTranscricao) {
+                foreach ($meet->conferenceRecords_recordings->listConferenceRecordsRecordings($rec->getName())->getRecordings() ?? [] as $r) {
+                    $file = $r->getDriveDestination()?->getFile();
+                    $uri = $r->getDriveDestination()?->getExportUri();
+                    $recordingFileId ??= $file;
+                    $recordingLink ??= $uri ?: ($file ? "https://drive.google.com/file/d/{$file}/view" : null);
+                }
+
+                continue;
+            }
+
+            // As falas apontam para o resource name do participante — resolve para nome de exibição.
+            $nomes = [];
+            $pageToken = null;
+            do {
+                $pl = $meet->conferenceRecords_participants->listConferenceRecordsParticipants(
+                    $rec->getName(),
+                    array_filter(['pageSize' => 100, 'pageToken' => $pageToken]),
+                );
+                foreach ($pl->getParticipants() ?? [] as $p) {
+                    $nomes[$p->getName()] = $p->getSignedinUser()?->getDisplayName()
+                        ?: $p->getAnonymousUser()?->getDisplayName()
+                        ?: ($p->getPhoneUser() ? 'Telefone' : 'Participante');
+                }
+                $pageToken = $pl->getNextPageToken();
+            } while ($pageToken);
+
+            foreach ($meet->conferenceRecords_transcripts->listConferenceRecordsTranscripts($rec->getName())->getTranscripts() ?? [] as $t) {
+                $pageToken = null;
+                do {
+                    $el = $meet->conferenceRecords_transcripts_entries->listConferenceRecordsTranscriptsEntries(
+                        $t->getName(),
+                        array_filter(['pageSize' => 1000, 'pageToken' => $pageToken]),
+                    );
+                    foreach ($el->getTranscriptEntries() ?? [] as $e) {
+                        $texto = trim((string) $e->getText());
+                        if ($texto !== '') {
+                            $lines[] = ($nomes[$e->getParticipant()] ?? 'Participante').': '.$texto;
+                        }
+                        if (count($lines) >= 4000) { // trava: reunião muito longa não estoura memória/prompt
+                            break 3;
+                        }
+                    }
+                    $pageToken = $el->getNextPageToken();
+                } while ($pageToken);
+            }
+
+            foreach ($meet->conferenceRecords_recordings->listConferenceRecordsRecordings($rec->getName())->getRecordings() ?? [] as $r) {
+                $file = $r->getDriveDestination()?->getFile();
+                $uri = $r->getDriveDestination()?->getExportUri();
+                $recordingFileId ??= $file;
+                $recordingLink ??= $uri ?: ($file ? "https://drive.google.com/file/d/{$file}/view" : null);
+            }
+        }
+
+        return [
+            'transcript' => $lines ? implode("\n", $lines) : null,
+            'recording_file_id' => $recordingFileId,
+            'recording_link' => $recordingLink,
+        ];
+    }
+
+    /**
+     * Baixa um arquivo do Drive autenticado como o usuário (streaming, com suporte a Range —
+     * é o que deixa o <video> da ficha pular para qualquer ponto da gravação).
+     */
+    public function driveDownload(User $user, string $fileId, ?string $range = null): \Psr\Http\Message\ResponseInterface
+    {
+        $http = $this->clientFor($user)->authorize();
+
+        return $http->request('GET', "https://www.googleapis.com/drive/v3/files/{$fileId}?alt=media&supportsAllDrives=true", [
+            'headers' => array_filter(['Range' => $range]),
+            'stream' => true,
+            'http_errors' => false,
+        ]);
+    }
+
+    /**
      * Eventos do usuário num intervalo, normalizados para o front.
      *
      * @return array<int, array<string, mixed>>
@@ -354,9 +517,9 @@ class GoogleCalendarService
      *
      * @return array<int, array{iso:string, label:string}>
      */
-    public function freeSlots(User $user, int $durationMin = 45, int $daysAhead = 10, int $workStart = 9, int $workEnd = 18, int $max = 14): array
+    public function freeSlots(User $user, int $durationMin = 45, int $daysAhead = 10, int $workStart = 9, int $workEnd = 18, int $max = 14, ?array $workDays = null): array
     {
-        return $this->freeSlotsForHosts([$user], $durationMin, $daysAhead, $workStart, $workEnd, $max);
+        return $this->freeSlotsForHosts([$user], $durationMin, $daysAhead, $workStart, $workEnd, $max, $workDays);
     }
 
     /**
@@ -372,8 +535,11 @@ class GoogleCalendarService
      * @param  iterable<User>  $hosts
      * @return array<int, array{iso:string, label:string}>
      */
-    public function freeSlotsForHosts(iterable $hosts, int $durationMin = 45, int $daysAhead = 10, int $workStart = 9, int $workEnd = 18, int $max = 14): array
+    public function freeSlotsForHosts(iterable $hosts, int $durationMin = 45, int $daysAhead = 10, int $workStart = 9, int $workEnd = 18, int $max = 14, ?array $workDays = null): array
     {
+        // Dias em que a empresa atende (ISO 1=seg…7=dom). Sem configuração, seg–sex —
+        // o mesmo comportamento do antigo "pula fim de semana".
+        $workDays = $workDays ?: [1, 2, 3, 4, 5];
         $tz = config('app.timezone', 'America/Sao_Paulo');
         $now = Carbon::now($tz);
         $from = $now->copy();
@@ -424,13 +590,21 @@ class GoogleCalendarService
         };
 
         $weekdays = ['', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado', 'domingo'];
+        // Antecedência mínima: nunca ofertar para HOJE (padrão `antecedencia_dias` = 1).
+        // Reunião marcada para daqui a duas horas pega o anfitrião de surpresa — sem tempo
+        // de preparar a call nem de reorganizar o dia. A folga de 2h continua valendo como
+        // piso quando a antecedência é zerada por configuração.
+        $antecedencia = (int) config('services.agenda.antecedencia_dias', 1);
         $earliest = $now->copy()->addHours(2); // folga mínima a partir de agora
+        if ($antecedencia > 0) {
+            $earliest = $earliest->max($now->copy()->addDays($antecedencia)->startOfDay());
+        }
         $perDay = 3; // poucos horários por dia para a lista COBRIR VÁRIOS DIAS, não esgotar tudo no 1º
         $slots = [];
 
         for ($d = 0; $d <= $daysAhead && count($slots) < $max; $d++) {
             $day = $now->copy()->addDays($d)->startOfDay();
-            if ($day->isWeekend()) {
+            if (! in_array($day->isoWeekday(), $workDays, true)) {
                 continue;
             }
 
@@ -446,6 +620,19 @@ class GoogleCalendarService
             }
             if (! $dayFree) {
                 continue;
+            }
+
+            // Horas despriorizadas (9h e meio-dia, por padrão): saem da SUGESTÃO enquanto o dia
+            // tiver qualquer outra opção livre. Não é bloqueio — num dia em que só sobrou 9h ou
+            // 12h eles voltam para a lista, e o lead que PEDIR esse horário continua sendo
+            // marcado normalmente (quem valida a disponibilidade real na marcação é o isFree()).
+            $despriorizadas = (array) config('services.agenda.horas_despriorizadas', []);
+            if ($despriorizadas) {
+                $preferidos = array_values(array_filter(
+                    $dayFree,
+                    fn (Carbon $s) => ! in_array((int) $s->format('G'), $despriorizadas, true),
+                ));
+                $dayFree = $preferidos ?: $dayFree;
             }
 
             // ...e pega só $perDay deles, espalhados (manhã/meio/tarde) em vez de seguidos.
@@ -653,6 +840,11 @@ class GoogleCalendarService
         $event = $this->fillEvent(new GoogleEvent, $data);
         $created = $this->calendar($user)->events->insert($this->calendarId($user), $event, $this->writeParams());
 
+        // Meet novo nasce já com gravação automática ligada (best-effort).
+        if (! empty($data['add_meet'])) {
+            $this->enableAutoRecording($user, $created->getHangoutLink());
+        }
+
         return $this->normalize($created);
     }
 
@@ -675,6 +867,11 @@ class GoogleCalendarService
         $event = $cal->events->get($this->calendarId($user), $eventId);
         $event = $this->fillEvent($event, $data);
         $updated = $cal->events->update($this->calendarId($user), $eventId, $event, $this->writeParams());
+
+        // Se a edição criou o Meet agora, liga a gravação automática nele também.
+        if (! empty($data['add_meet'])) {
+            $this->enableAutoRecording($user, $updated->getHangoutLink());
+        }
 
         return $this->normalize($updated);
     }

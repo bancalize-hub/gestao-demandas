@@ -4,7 +4,6 @@ namespace App\Console\Commands;
 
 use App\Models\Company;
 use App\Models\Conversation;
-use App\Models\Task;
 use App\Support\Evolution;
 use App\Support\FacebookAds;
 use App\Support\Tenancy;
@@ -135,20 +134,10 @@ class FbadsRotacaoTick extends Command
                 return;
             }
 
-            $titulo = '💳 Saldo da conta de anúncios acabando';
-            if (! Task::where('title', $titulo)->where('column', '!=', 'done')->exists()) {
-                Task::create([
-                    'title' => $titulo,
-                    'description' => 'Saldo em R$ '.number_format($saldo, 2, ',', '.')
-                        .'. A conta é pré-paga: sem saldo as campanhas continuam ativas e simplesmente param de entregar, sem aviso da Meta.',
-                    'type' => 'followup',
-                    'priority' => 'alta',
-                    'column' => 'todo',
-                    'position' => (Task::where('column', 'todo')->min('position') ?? 0) - 1,
-                    'starts_at' => now(),
-                    'due' => now(),
-                ]);
-            }
+            // O aviso sai pelo log (o quadro de tarefas é só para o que entra à mão, pelo
+            // painel ou pelo formulário do cliente — nada de robô). Sem conversa ligada,
+            // uma tarefa aqui não apareceria em lugar nenhum e ainda calaria o próximo aviso.
+            $this->warn(sprintf('  SALDO BAIXO: R$ %s (mínimo R$ %s)', number_format($saldo, 2, ',', '.'), number_format($minimo, 2, ',', '.')));
             Evolution::log('fbads.saldo_baixo', ['empresa' => $empresa, 'saldo' => $saldo], 'warning');
         } catch (\Throwable $e) {
             // Falha de leitura de saldo não pode derrubar a rotação de criativo.

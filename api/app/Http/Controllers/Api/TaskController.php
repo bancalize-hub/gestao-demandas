@@ -16,9 +16,18 @@ class TaskController extends Controller
 {
     public function __construct(private GoogleCalendarService $google) {}
 
+    /**
+     * Quadro de tarefas (/tarefas). Só entra o que alguém pôs à mão: tarefa criada no
+     * painel ou solicitação que o cliente mandou pelo formulário. As cobranças que os
+     * robôs geram sozinhos (negócio parado, proposta pós-reunião, remarcar no-show,
+     * definir responsável) são type='followup' e continuam existindo — mas na ficha do
+     * lead, dentro do chat, que é onde se resolve cada uma. No quadro elas viravam
+     * ruído: centenas de cartões que ninguém arrastou nem fechou.
+     */
     public function index()
     {
-        return Task::orderBy('position')->orderBy('id')->get();
+        return Task::where(fn ($q) => $q->whereNull('type')->orWhere('type', '!=', 'followup'))
+            ->orderBy('position')->orderBy('id')->get();
     }
 
     public function store(Request $request)

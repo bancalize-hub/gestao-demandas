@@ -24,6 +24,11 @@ class WaAccount extends Model
         'sent_today' => 'integer',
         'sent_date' => 'date',
         'last_sent_at' => 'datetime',
+        // Monitor de saúde (wa:health-tick). Sem cast, a segunda passada do tick lê
+        // o valor gravado pela primeira como string e quebra em `->diffForHumans()`.
+        'state_changed_at' => 'datetime',
+        'health_checked_at' => 'datetime',
+        'alerted_at' => 'datetime',
         'coexistence' => 'boolean',
         'avatars_only' => 'boolean',
         // Token e segredo do app da Meta são credenciais de longa duração: ficam

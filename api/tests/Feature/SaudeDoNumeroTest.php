@@ -74,6 +74,33 @@ class SaudeDoNumeroTest extends TestCase
         $this->assertNotNull($conta->fresh()->health_checked_at);
     }
 
+    /**
+     * Regressão: a data de saúde tem que voltar do banco como data, não como texto.
+     *
+     * O tick grava `state_changed_at` numa passada e LÊ na seguinte (`->diffForHumans()`).
+     * Sem o cast no modelo, a primeira passada funciona (o valor ainda é Carbon em memória)
+     * e a segunda quebra com "Call to a member function diffForHumans() on string" — foi
+     * exatamente o que aconteceu em produção em 21/09/2026, minutos após o deploy.
+     */
+    public function test_datas_de_saude_voltam_do_banco_como_data(): void
+    {
+        $conta = $this->contaComMovimento(porDia: 10, horasDeSilencio: 48);
+
+        $conta->forceFill([
+            'state' => 'close',
+            'state_changed_at' => now()->subHours(3),
+            'health_checked_at' => now(),
+            'alerted_at' => now(),
+        ])->save();
+
+        $recarregada = WaAccount::withoutGlobalScopes()->find($conta->id);
+
+        $this->assertInstanceOf(Carbon::class, $recarregada->state_changed_at);
+        $this->assertInstanceOf(Carbon::class, $recarregada->health_checked_at);
+        $this->assertInstanceOf(Carbon::class, $recarregada->alerted_at);
+        $this->assertIsString($recarregada->state_changed_at->diffForHumans());
+    }
+
     public function test_nao_abre_uma_tarefa_por_rodada(): void
     {
         Carbon::setTestNow(Carbon::parse('2026-09-22 14:00:00'));

@@ -87,6 +87,12 @@ onMounted(async () => {
   else if (g === 'erro') {
     banner.value = { type: 'erro', text: 'Não foi possível conectar o Google. Tente de novo.' }
   }
+  // Recusa da trava de dono: só entra a agenda do próprio e-mail. Vale dizer o motivo
+  // por extenso — quem cai aqui escolheu a conta errada na tela do Google, e um
+  // "tente de novo" genérico faria a pessoa repetir exatamente o mesmo erro.
+  else if (g === 'email-diferente') {
+    banner.value = { type: 'erro', text: 'Essa conta do Google é de outro e-mail. Conecte a agenda da MESMA conta com que você entra no CRM — na tela do Google, escolha (ou troque para) esse e-mail.' }
+  }
   if (g) router.replace({ query: {} })
   if (crm.hasCalendars) await loadWeek()
 })
@@ -813,7 +819,7 @@ async function excluirDoDetalhe(ev: CalEvent) {
             @change="crm.toggleCalendar(c.user_id)"
           >
           <span :style="`width:10px;height:10px;border-radius:3px;background:${c.color};flex-shrink:0;`" />
-          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;">{{ c.name }}<span v-if="c.is_me" style="color:var(--c-text-muted);"> (você)</span></span>
+          <span :title="c.name" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;">{{ c.email || c.name }}<span v-if="c.is_me" style="color:var(--c-text-muted);"> (você)</span></span>
           <span
             v-if="countsByOwner.get(c.user_id)"
             :title="`${countsByOwner.get(c.user_id)} reunião(ões) de ${c.name} no período mostrado`"
@@ -881,7 +887,7 @@ async function excluirDoDetalhe(ev: CalEvent) {
             {{ ownerName(form.owner_id) || '—' }}
           </div>
           <select v-else v-model.number="form.owner_id" class="inp">
-            <option v-for="c in crm.calendars" :key="c.user_id" :value="c.user_id">{{ c.name }}{{ c.is_me ? ' (você)' : '' }}</option>
+            <option v-for="c in crm.calendars" :key="c.user_id" :value="c.user_id">{{ c.email || c.name }}{{ c.is_me ? ' (você)' : '' }}</option>
           </select>
         </template>
         <label class="lbl">Título</label>

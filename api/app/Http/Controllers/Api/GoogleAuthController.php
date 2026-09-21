@@ -74,6 +74,30 @@ class GoogleAuthController extends Controller
 
             $tokens = $this->google->exchangeCode($request->query('code', ''));
 
+            // TRAVA DE DONO: a agenda ligada tem de ser a do PRÓPRIO e-mail de quem
+            // está conectando. Sem isso dá para autorizar a conta de outra pessoa sem
+            // perceber — aconteceu em 21/09/2026, um login `pauloguilherme…@gmail.com`
+            // ficou com a agenda `bancalize@gmail.com` pendurada. O estrago é silencioso
+            // e grande: a IA passa a oferecer horário, criar evento, gravar e transcrever
+            // reunião DENTRO da agenda de um terceiro, e a apuração de presença lê de lá.
+            $conectado = self::normalizaEmail($tokens['email'] ?? '');
+            $proprio = self::normalizaEmail($user->email);
+
+            if ($conectado === '' || $conectado !== $proprio) {
+                // Devolve o consentimento: o token é de outra conta e não pode ficar
+                // guardado aqui nem pendurado lá. E nada é salvo no usuário — uma
+                // conexão anterior, legítima, continua valendo.
+                $this->google->revokeToken($tokens['access_token']);
+
+                Log::warning('Google OAuth recusado: conta diferente da do usuário', [
+                    'user_id' => $user->id,
+                    'esperado' => $proprio,
+                    'recebido' => $conectado !== '' ? $conectado : '(sem e-mail no id_token)',
+                ]);
+
+                return redirect()->away($front.'/agenda?google=email-diferente');
+            }
+
             $user->google_access_token = $tokens['access_token'];
             // Só sobrescreve o refresh token se o Google mandou um novo.
             if (! empty($tokens['refresh_token'])) {
@@ -89,6 +113,33 @@ class GoogleAuthController extends Controller
         }
 
         return redirect()->away($front.'/agenda?google=conectado');
+    }
+
+    /**
+     * E-mail comparável.
+     *
+     * No Gmail o ponto é ignorado e o `+etiqueta` é apelido — `p.silva+crm@gmail.com`
+     * e `psilva@gmail.com` são a MESMA conta. Sem normalizar, a trava recusaria o
+     * próprio dono só porque ele cadastrou o e-mail com pontuação diferente. Fora do
+     * Gmail a regra não vale (lá o ponto distingue caixas de verdade), então só
+     * minúscula e espaço.
+     */
+    private static function normalizaEmail(?string $email): string
+    {
+        $email = strtolower(trim((string) $email));
+
+        if (! str_contains($email, '@')) {
+            return $email;
+        }
+
+        [$conta, $dominio] = explode('@', $email, 2);
+
+        if (in_array($dominio, ['gmail.com', 'googlemail.com'], true)) {
+            $conta = str_replace('.', '', explode('+', $conta, 2)[0]);
+            $dominio = 'gmail.com';
+        }
+
+        return $conta.'@'.$dominio;
     }
 
     /** Desvincula a conta Google do usuário. */

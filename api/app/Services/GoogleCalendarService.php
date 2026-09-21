@@ -13,6 +13,7 @@ use Google\Service\Calendar\CreateConferenceRequest;
 use Google\Service\Calendar\Event as GoogleEvent;
 use Google\Service\Calendar\EventAttendee;
 use Google\Service\Calendar\EventDateTime;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use RuntimeException;
 
@@ -92,6 +93,25 @@ class GoogleCalendarService
             'expires_at' => Carbon::now()->addSeconds((int) ($token['expires_in'] ?? 3600)),
             'email' => $email,
         ];
+    }
+
+    /**
+     * Devolve o consentimento ao Google (invalida o token na conta do dono).
+     *
+     * Usado quando o callback RECUSA a conexão: sem isso o CRM descarta o token mas
+     * a autorização continua pendurada na conta de quem consentiu, e a pessoa só
+     * descobre indo procurar em "apps com acesso à sua conta".
+     *
+     * Falha de rede aqui não pode derrubar o fluxo: o token já foi descartado do
+     * nosso lado de qualquer jeito, então basta registrar.
+     */
+    public function revokeToken(string $token): void
+    {
+        try {
+            $this->baseClient()->revokeToken($token);
+        } catch (\Throwable $e) {
+            Log::warning('Google: revogação do token recusado falhou', ['e' => $e->getMessage()]);
+        }
     }
 
     /**

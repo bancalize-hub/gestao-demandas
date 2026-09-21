@@ -44,7 +44,9 @@ class BrandingController extends Controller
 
         $data = $request->validate([
             'variant' => 'required|in:light,dark',
-            'logo' => 'required|image|mimes:png,jpg,jpeg,webp,svg,gif|max:2048',
+            // SVG fora de propósito: é XML, carrega <script> e seria servido do NOSSO domínio —
+            // logo com sessão do CRM junto. As outras cinco cobrem qualquer logo real.
+            'logo' => 'required|image|mimes:png,jpg,jpeg,webp,gif|max:2048',
         ]);
 
         $company = $request->user()->company;
@@ -55,7 +57,19 @@ class BrandingController extends Controller
             Storage::disk('public')->delete($company->$column);
         }
 
-        $ext = $request->file('logo')->getClientOriginalExtension() ?: 'png';
+        /*
+         * A extensão NUNCA pode vir do nome que o cliente enviou.
+         *
+         * `getClientOriginalExtension()` devolve o que veio no formulário, e a validação
+         * `mimes:` olha o CONTEÚDO — então um PNG de verdade chamado `x.php` passava nas duas
+         * e era gravado como `.php` dentro de `api/public/storage`, que o nginx executa.
+         * Como PNG aceita texto arbitrário dentro de um chunk, isso era execução de código
+         * remota com um upload de logo. Aqui a extensão sai do conteúdo e passa por allowlist.
+         */
+        $ext = Str::lower((string) $request->file('logo')->guessExtension());
+        if (! in_array($ext, ['png', 'jpg', 'jpeg', 'webp', 'gif'], true)) {
+            $ext = 'png';
+        }
         $path = $request->file('logo')->storeAs(
             'branding',
             'co'.$company->id.'-'.$data['variant'].'-'.Str::lower(Str::random(6)).'.'.$ext,

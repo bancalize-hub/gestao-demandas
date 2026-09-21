@@ -31,8 +31,9 @@ class TaskController extends Controller
     public function store(Request $request)
     {
         $data = $request->validate([
-            'title' => 'required|string',
-            'description' => 'nullable|string',
+            // O portal do cliente é PÚBLICO: sem teto, um POST grava megabytes no banco.
+            'title' => 'required|string|max:200',
+            'description' => 'nullable|string|max:4000',
             'client' => 'nullable|string',
             'priority' => 'nullable|in:baixa,media,alta',
             'due' => 'nullable|string|max:32',

@@ -14,6 +14,10 @@ use Illuminate\Http\Request;
  */
 class AgentController extends Controller
 {
+
+    /** Únicos diretórios em que uma sessão do agente pode abrir. */
+    private const CWD_PERMITIDOS = ['/var/www/gestao', '/var/www/gestao/api', '/var/www/gestao/web'];
+
     /** `kind` separa as duas caixas: 'ops' (opera a VPS) e 'marketing' (Facebook Ads). */
     public function index(Request $request)
     {
@@ -26,14 +30,18 @@ class AgentController extends Controller
     {
         $data = $request->validate([
             'title' => 'nullable|string|max:120',
-            'cwd' => 'nullable|string|max:300',
+            // Diretório de trabalho por ENUM, não texto livre. Com string livre dava para
+            // abrir a sessão em /etc ou em /var/www de outro projeto e usar o agente como
+            // navegador de arquivos da VPS inteira. O agente roda como www-data, então só
+            // faz sentido dentro da aplicação que ele opera.
+            'cwd' => 'nullable|string|in:'.implode(',', self::CWD_PERMITIDOS),
             'kind' => 'nullable|in:ops,marketing',
         ]);
 
         return AgentSession::create([
             'title' => $data['title'] ?? 'Nova sessão',
             'kind' => $data['kind'] ?? 'ops',
-            'cwd' => $data['cwd'] ?? '/var/www/gestao',
+            'cwd' => $data['cwd'] ?? self::CWD_PERMITIDOS[0],
         ]);
     }
 

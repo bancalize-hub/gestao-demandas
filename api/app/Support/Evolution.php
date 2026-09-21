@@ -117,7 +117,21 @@ class Evolution
             return '';
         }
 
-        return (string) config('services.evolution.instance');
+        /*
+         * Empresa SEM nenhum número: também não sai por ninguém.
+         *
+         * Aqui havia `config('services.evolution.instance')` — a instância do .env, que é a
+         * da empresa 1. Uma empresa recém-cadastrada, antes de conectar o WhatsApp dela,
+         * mandava mensagem PELO NÚMERO DA EMPRESA 1: o cliente dela recebia do número errado
+         * e a resposta caía na caixa de entrada de outro tenant. Falhar e registrar é o
+         * comportamento certo. O EVOLUTION_INSTANCE continua no .env só como semente de
+         * migração (criação da primeira conta), nunca como destino de envio.
+         */
+        self::log('instancia.indisponivel', [
+            'motivo' => 'empresa sem nenhum número conectado',
+        ], 'warning');
+
+        return '';
     }
 
     /** Lista as etiquetas do WhatsApp Business conectado. */

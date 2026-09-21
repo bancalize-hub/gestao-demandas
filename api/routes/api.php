@@ -32,13 +32,13 @@ use App\Http\Controllers\Api\WhatsAppController;
 use Illuminate\Support\Facades\Route;
 
 // --- Autenticação (Sanctum SPA cookie) ---
-Route::post('/login', [AuthController::class, 'login']);
+Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:login');
 
 // --- Público: cadastro self-service (cria a empresa + usuário dono e já autentica) ---
-Route::post('/register', [AuthController::class, 'register']);
+Route::post('/register', [AuthController::class, 'register'])->middleware('throttle:register');
 
 // --- Público: canal do cliente (portal de solicitações, sem login) ---
-Route::post('/solicitacoes', [TaskController::class, 'store']);
+Route::post('/solicitacoes', [TaskController::class, 'store'])->middleware('throttle:solicitacoes');
 
 // --- Público: branding da empresa por slug (cor + logos) p/ o portal do cliente ---
 Route::get('/public/branding/{slug}', [BrandingController::class, 'publicBranding']);
@@ -46,12 +46,12 @@ Route::get('/public/branding/{slug}', [BrandingController::class, 'publicBrandin
 Route::get('/public/branding', [BrandingController::class, 'primaryBranding']);
 
 // --- Público: webhook do Evolution (protegido por token na query) ---
-Route::post('/wpp/webhook', [WhatsAppController::class, 'webhook']);
+Route::post('/wpp/webhook', [WhatsAppController::class, 'webhook'])->middleware('throttle:webhook');
 
 // --- Público: webhook da API OFICIAL (Meta). GET = handshake do painel da Meta;
 //     POST = eventos, autenticados pela assinatura HMAC do corpo (app secret). ---
 Route::get('/wpp/cloud/webhook', [WhatsAppCloudController::class, 'verify']);
-Route::post('/wpp/cloud/webhook', [WhatsAppCloudController::class, 'webhook']);
+Route::post('/wpp/cloud/webhook', [WhatsAppCloudController::class, 'webhook'])->middleware('throttle:webhook');
 
 // --- Público: callback do OAuth do Google (usuário identificado pelo state assinado) ---
 Route::get('/google/callback', [GoogleAuthController::class, 'callback']);

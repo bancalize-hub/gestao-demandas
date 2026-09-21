@@ -452,6 +452,11 @@ class WhatsAppController extends Controller
      */
     public function importTxt(Request $request)
     {
+        // Único handler /wpp/* sem porteiro. Ele CRIA conversa sem wa_account vinculada —
+        // exatamente a pré-condição do fallback de instância que mandava mensagem pelo
+        // número de outra empresa. Importar histórico é ato de administrador.
+        $this->ensureAdmin($request);
+
         $data = $request->validate([
             'text' => 'required|string',
             'number' => 'required|string',

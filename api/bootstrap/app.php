@@ -17,6 +17,10 @@ return Application::configure(basePath: dirname(__DIR__))
         // Habilita o guard de sessão (cookie) do Sanctum para requests do SPA.
         $middleware->statefulApi();
 
+        // Teto geral do grupo `api` (limitador 'api' definido no AppServiceProvider).
+        // As rotas públicas sensíveis têm tetos próprios, bem menores, em routes/api.php.
+        $middleware->throttleApi();
+
         // Vincula a empresa (tenant) do usuário autenticado. Usado no grupo auth:sanctum.
         $middleware->alias([
             'set.tenant' => \App\Http\Middleware\SetTenant::class,

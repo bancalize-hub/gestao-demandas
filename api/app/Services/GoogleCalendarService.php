@@ -140,6 +140,18 @@ class GoogleCalendarService
                 // Tentar de novo nunca vai funcionar: apaga a credencial para o sistema
                 // inteiro voltar a mostrar "Conectar Google" em vez de estourar toda vez.
                 if ($new['error'] === 'invalid_grant') {
+                    // Registrar ANTES de apagar. Sem esta linha a credencial sumia sem deixar
+                    // rastro: foi assim que contato@ (26/08) e maysa@ (08/09) caíram sem
+                    // ninguém notar, e com elas foram 18 dias de reunião sem gravação nem
+                    // transcrição — a conta pessoal assumiu pelo fallback e não grava nada.
+                    Log::warning('Google: credencial morreu (invalid_grant) e foi apagada', [
+                        'user_id' => $user->id,
+                        'email' => $user->email,
+                        'google_email' => $user->google_email,
+                        'company_id' => $user->company_id,
+                        'motivo' => (string) ($new['error_description'] ?? ''),
+                    ]);
+
                     $user->forceFill([
                         'google_access_token' => null,
                         'google_refresh_token' => null,

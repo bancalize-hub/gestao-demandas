@@ -310,7 +310,12 @@ class EventController extends Controller
 
         $user = $meeting->user_id ? User::find($meeting->user_id) : null;
         if (! $user || ! $user->hasGoogle()) {
-            $user = User::whereNotNull('google_access_token')->first(); // mesma empresa (tenant scope)
+            // O comentário antigo dizia "mesma empresa (tenant scope)" e estava ERRADO:
+            // `User` não tem escopo de tenant. Sem o filtro explícito, a gravação de uma
+            // empresa seria buscada no Drive de outra.
+            $user = User::where('company_id', $meeting->company_id)
+                ->whereNotNull('google_access_token')
+                ->first();
         }
         abort_unless($user && $user->hasGoogle(), 404);
 

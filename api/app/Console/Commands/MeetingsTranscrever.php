@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Services\GoogleCalendarService;
 use App\Support\Tenancy;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Guarda a transcrição BRUTA das reuniões (falas "Fulano: texto") em `meetings.transcript`.
@@ -57,13 +58,34 @@ class MeetingsTranscrever extends Command
                 break;
             }
 
-            $host = User::find($m->user_id);
+            // Fallback de credencial, igual ao do MeetingAttendanceTick: qualquer conta
+            // Google conectada DA MESMA empresa serve para ler o artefato (nunca de outra).
+            //
+            // Sem isso o comando desistia sempre que o anfitrião perdia o token — foi o que
+            // aconteceu de 03/09 a 21/09/2026: as contas Workspace caíram, o agendador passou
+            // a marcar nas contas @gmail (que não transcrevem) e este comando ainda saía calado
+            // às 21:30. Ninguém viu 18 dias de reunião sem transcrição.
+            $host = $m->user_id ? User::find($m->user_id) : null;
             if (! $host?->google_refresh_token) {
-                $this->line(sprintf('  <fg=gray>#%-4d %-34s anfitrião sem Google conectado</>', $m->id, $this->corta($m->title)));
+                $host = User::where('company_id', $m->company_id)
+                    ->whereNotNull('google_refresh_token')
+                    ->first();
+            }
+            if (! $host?->google_refresh_token) {
+                // Empresa inteira sem Google é falha de OPERAÇÃO, não caso comum: sobe de
+                // nível para aparecer no log do agendador em vez de virar uma linha cinza.
+                $this->warn(sprintf('  #%-4d %-34s empresa %d sem NENHUMA conta Google conectada', $m->id, $this->corta($m->title), $m->company_id));
+                Log::warning('meetings:transcrever — empresa sem conta Google conectada', [
+                    'meeting_id' => $m->id,
+                    'company_id' => $m->company_id,
+                ]);
 
                 continue;
             }
-            if (! preg_match('~([a-z]{3}-[a-z]{4}-[a-z]{3})~', (string) $m->meet_link, $mm)) {
+            // Mesma régua do MeetingAttendanceTick::meetingCode. Estavam diferentes: este exigia
+            // 3-4-3 exatos e o outro aceitava 3-4 em cada bloco, então havia reunião que um
+            // processava e o outro ignorava.
+            if (! preg_match('~([a-z]{3,4}-[a-z]{3,4}-[a-z]{3,4})~', (string) $m->meet_link, $mm)) {
                 $this->line(sprintf('  <fg=gray>#%-4d %-34s link do Meet sem código</>', $m->id, $this->corta($m->title)));
 
                 continue;

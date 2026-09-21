@@ -20,7 +20,13 @@ class ContactController extends Controller
             return $u;
         }
 
-        return User::whereNotNull('google_refresh_token')->first();
+        // O filtro de empresa é OBRIGATÓRIO aqui: `User` não tem escopo de tenant, então
+        // um `first()` solto devolve o menor id com Google do BANCO INTEIRO — a agenda de
+        // contatos de outra empresa. Hoje calha de cair na certa; basta essa conta perder
+        // o Google (ou ser apagada) para a próxima empresa da fila virar a fonte.
+        return User::where('company_id', $u?->company_id)
+            ->whereNotNull('google_refresh_token')
+            ->first();
     }
 
     /** `?list=<id>` filtra por lista; sem ele, a agenda inteira. */

@@ -15,6 +15,25 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        /*
+         * Convidado em rota protegida: PARA ONDE o middleware acha que deve mandá-lo.
+         *
+         * O `Authenticate` monta esse destino ANTES de lançar a exceção — e o padrão do
+         * framework é `route('login')`, rota que não existe num backend só-API. Resultado:
+         * a requisição morria com `Route [login] not defined` (500) dentro do middleware,
+         * sem nunca chegar ao handler que devolve 401. Era o que enchia o log: 98.690
+         * linhas. O tratamento do handler (mais abaixo) só pegava quem mandava
+         * `Accept: application/json`, porque aí o próprio middleware pula esta parte.
+         *
+         * Em /api/*: null — a exceção chega limpa ao handler, que responde 401 JSON.
+         * Fora dela: o login do SPA, que é o único lugar onde alguém de fato loga.
+         */
+        $middleware->redirectGuestsTo(
+            fn (Request $request) => $request->is('api/*')
+                ? null
+                : rtrim((string) config('app.frontend_url'), '/').'/login'
+        );
+
         // Habilita o guard de sessão (cookie) do Sanctum para requests do SPA.
         $middleware->statefulApi();
 

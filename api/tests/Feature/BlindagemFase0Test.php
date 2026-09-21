@@ -148,6 +148,20 @@ class BlindagemFase0Test extends TestCase
         $this->getJson('/api/conversations')->assertStatus(401);
     }
 
+    /**
+     * E sem `Accept: application/json` também — o caso que a primeira correção não pegava.
+     *
+     * Com o cabeçalho, o `Authenticate` nem calcula o destino do convidado; sem ele,
+     * chamava `route('login')` DENTRO do middleware e estourava 500 antes de o handler
+     * ver qualquer coisa. Medido em produção em 21/09/2026, já com a correção anterior
+     * publicada: `Accept: application/json` dava 401 e um navegador comum dava 500.
+     */
+    public function test_rota_autenticada_sem_accept_json_tambem_devolve_401(): void
+    {
+        $this->call('GET', '/api/conversations', [], [], [], ['HTTP_ACCEPT' => 'text/html'])
+            ->assertStatus(401);
+    }
+
     /** O portal público não aceita texto sem tamanho: era gravar megabyte no banco de graça. */
     public function test_solicitacao_publica_tem_teto_de_tamanho(): void
     {

@@ -4,8 +4,10 @@ export default defineNuxtConfig({
   // então o auth/fetch roda no browser (cross-subdomínio já configurado).
   ssr: false,
   modules: ['@nuxtjs/tailwindcss', '@pinia/nuxt'],
-  // theme.css (variáveis de tema) antes do main.css, que já as consome.
-  css: ['~/assets/css/theme.css', '~/assets/css/main.css'],
+  // Ordem importa: theme.css (variáveis de tema) antes do main.css, que já as consome;
+  // e responsive.css por último, depois do `@tailwind utilities` do main.css — os
+  // utilitários `r-*` precisam vencer o Tailwind quando a especificidade empata.
+  css: ['~/assets/css/theme.css', '~/assets/css/main.css', '~/assets/css/responsive.css'],
   devtools: { enabled: false },
   runtimeConfig: {
     public: {

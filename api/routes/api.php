@@ -4,8 +4,8 @@ use App\Http\Controllers\Api\AgentController;
 use App\Http\Controllers\Api\AiCredentialController;
 use App\Http\Controllers\Api\AttendanceController;
 use App\Http\Controllers\Api\AuthController;
-use App\Http\Controllers\Api\BrandingController;
 use App\Http\Controllers\Api\BoardController;
+use App\Http\Controllers\Api\BrandingController;
 use App\Http\Controllers\Api\CampaignController;
 use App\Http\Controllers\Api\ChatTabController;
 use App\Http\Controllers\Api\ContactController;
@@ -17,6 +17,7 @@ use App\Http\Controllers\Api\FollowUpController;
 use App\Http\Controllers\Api\GoogleAuthController;
 use App\Http\Controllers\Api\LabelController;
 use App\Http\Controllers\Api\LeadActivityController;
+use App\Http\Controllers\Api\MarketingAutopilotController;
 use App\Http\Controllers\Api\MarketingController;
 use App\Http\Controllers\Api\MaterialController;
 use App\Http\Controllers\Api\MemoryController;
@@ -149,6 +150,10 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
         Route::get('/marketing/metricas', [MarketingController::class, 'metricasFb']);
         Route::get('/marketing/ad-stats', [MarketingController::class, 'adStats']);
         Route::get('/marketing/otimizacao', [MarketingController::class, 'otimizacao']);
+        Route::get('/marketing/autopiloto', [MarketingAutopilotController::class, 'show']);
+        Route::put('/marketing/autopiloto', [MarketingAutopilotController::class, 'update']);
+        Route::post('/marketing/autopiloto/testar-imagem', [MarketingAutopilotController::class, 'testarImagem']);
+        Route::post('/marketing/autopiloto/rodar', [MarketingAutopilotController::class, 'rodar']);
         Route::patch('/marketing/campanhas/{id}', [MarketingController::class, 'atualizarCampanha']);
         Route::post('/marketing/campanhas/{id}/duplicar', [MarketingController::class, 'duplicarCampanha']);
         // Memória de marketing: aprendizado sobre os anúncios, separado da memória da IA de vendas.

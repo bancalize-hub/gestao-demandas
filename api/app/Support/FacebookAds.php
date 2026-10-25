@@ -12,9 +12,11 @@ use RuntimeException;
  * Cliente da Graph API (Marketing API) do Facebook Ads.
  *
  * REGRA DE OURO desta classe: nada que ela cria entra no ar. Campanha, conjunto e
- * anúncio são SEMPRE criados com status PAUSED, e o status nunca vem de fora — quem
- * publica é o usuário, pela tela do Facebook. Um erro de interpretação do agente não
- * pode virar dinheiro gasto.
+ * anúncio são SEMPRE criados com status PAUSED, e o status nunca vem de fora — um erro
+ * de interpretação do agente não pode virar dinheiro gasto.
+ *
+ * Ligar é um passo separado e explícito ({@see definirStatus()}): quem chama é gente pelo
+ * painel ou o piloto automático, e este só depois de conferir o teto diário da conta.
  */
 class FacebookAds
 {
@@ -107,6 +109,89 @@ class FacebookAds
         return $this->call('GET', '/'.$this->conta(), [
             'fields' => 'name,account_status,currency,timezone_name,amount_spent,balance,funding_source_details',
         ]);
+    }
+
+    /**
+     * Saldo disponível da conta pré-paga, em reais — ou null se a conta não informar.
+     *
+     * Vem de `funding_source_details.display_string` ("Saldo disponível (R$0,00 BRL)"):
+     * `balance` é o acumulado a cobrar e `spend_cap` não vale nada em conta pré-paga.
+     */
+    public function saldoDisponivel(): ?float
+    {
+        $texto = (string) ($this->resumoConta()['funding_source_details']['display_string'] ?? '');
+        if (! preg_match('/R\$\s?([\d.,]+)/u', $texto, $m)) {
+            return null;
+        }
+
+        return (float) str_replace(',', '.', str_replace('.', '', $m[1]));
+    }
+
+    /**
+     * Quanto a conta está comprometida a gastar por dia AGORA: soma dos orçamentos diários
+     * de todo conjunto (ABO) ou campanha (CBO) que tem pelo menos um anúncio ativo.
+     *
+     * Conta com saldo zerado continua com tudo ACTIVE — por isso isto é o compromisso, não o
+     * gasto: quando o saldo voltar, é exatamente este valor que a conta passa a gastar.
+     *
+     * @return array{total: float, itens: list<array{id: string, nome: string, diario: float}>}
+     */
+    public function orcamentoComprometido(): array
+    {
+        $r = $this->call('GET', '/'.$this->conta().'/ads', [
+            'fields' => 'adset{id,name,daily_budget},campaign{id,name,daily_budget}',
+            'filtering' => json_encode([['field' => 'effective_status', 'operator' => 'IN', 'value' => ['ACTIVE']]]),
+            'limit' => 500,
+        ]);
+
+        $itens = [];
+        foreach ($r['data'] ?? [] as $ad) {
+            $camp = $ad['campaign'] ?? [];
+            $conj = $ad['adset'] ?? [];
+            // O orçamento mora em um nível só: campanha (CBO) ou conjunto (ABO).
+            if (! empty($camp['daily_budget'])) {
+                $itens['c'.$camp['id']] = ['id' => (string) $camp['id'], 'nome' => (string) ($camp['name'] ?? ''), 'diario' => (int) $camp['daily_budget'] / 100];
+            } elseif (! empty($conj['daily_budget'])) {
+                $itens['a'.$conj['id']] = ['id' => (string) $conj['id'], 'nome' => (string) ($conj['name'] ?? ''), 'diario' => (int) $conj['daily_budget'] / 100];
+            }
+        }
+
+        $itens = array_values($itens);
+        usort($itens, fn ($a, $b) => $b['diario'] <=> $a['diario']);
+
+        return ['total' => round(array_sum(array_column($itens, 'diario')), 2), 'itens' => $itens];
+    }
+
+    /**
+     * `effective_status` de vários objetos numa chamada só (anúncio pausado à mão no
+     * Gerenciador precisa aparecer pausado aqui também).
+     *
+     * @param  list<string>  $ids
+     * @return array<string, string> id => effective_status
+     */
+    public function statusDe(array $ids): array
+    {
+        $out = [];
+        foreach (array_chunk(array_values(array_filter($ids)), 50) as $lote) {
+            $r = $this->call('GET', '/', ['ids' => implode(',', $lote), 'fields' => 'effective_status']);
+            foreach ($r as $id => $obj) {
+                if (is_array($obj) && isset($obj['effective_status'])) {
+                    $out[(string) $id] = (string) $obj['effective_status'];
+                }
+            }
+        }
+
+        return $out;
+    }
+
+    /** Liga ou pausa campanha, conjunto ou anúncio. Só ACTIVE e PAUSED passam. */
+    public function definirStatus(string $objetoId, string $status): array
+    {
+        if (! in_array($status, ['ACTIVE', 'PAUSED'], true)) {
+            throw new RuntimeException("Status inválido: {$status}");
+        }
+
+        return $this->call('POST', '/'.$objetoId, ['status' => $status]);
     }
 
     public function listarCampanhas(int $limite = 25): array
@@ -536,7 +621,7 @@ class FacebookAds
     {
         $permitidas = array_intersect_key($params, array_flip(['status', 'name']));
         if (! $permitidas) {
-            throw new \RuntimeException('Nada para atualizar no anúncio.');
+            throw new RuntimeException('Nada para atualizar no anúncio.');
         }
 
         return $this->call('POST', '/'.$anuncioId, $permitidas);

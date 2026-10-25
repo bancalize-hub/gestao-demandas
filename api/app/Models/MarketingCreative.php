@@ -22,7 +22,7 @@ class MarketingCreative extends Model
 
     protected $guarded = [];
 
-    protected $casts = ['size' => 'integer', 'number' => 'integer', 'status_at' => 'datetime'];
+    protected $casts = ['size' => 'integer', 'number' => 'integer', 'status_at' => 'datetime', 'brief' => 'array'];
 
     public function reprovado(): bool
     {

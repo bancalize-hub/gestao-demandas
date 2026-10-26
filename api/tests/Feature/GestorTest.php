@@ -262,4 +262,21 @@ class GestorTest extends TestCase
 
         $this->assertSame([], $this->comStatus('PAUSED'));
     }
+
+    public function test_corte_do_teto_usa_30_dias_quando_a_semana_esta_vazia(): void
+    {
+        // Conta parada a semana toda (pré-paga zerada): só o mês diz quem presta.
+        $this->anuncio('bom', 150);
+        $this->anuncio('ruim', 100);
+        $this->gasto['last_30d'] = ['bom' => 100, 'ruim' => 150];
+        DB::table('conversations')->insert(collect(range(1, 5))->map(fn ($i) => [
+            'company_id' => $this->co->id, 'name' => "L{$i}", 'slug' => 'wa-55'.Str::random(9), 'initials' => 'L', 'color' => '#888',
+            'stage' => 'novo', 'qualified' => true, 'custom_fields' => json_encode(['anuncio' => ['id' => 'bom']]),
+            'created_at' => now()->subDays(20), 'updated_at' => now(),
+        ])->all());
+
+        $this->revisar($this->cfg());
+
+        $this->assertSame(['ruim'], $this->comStatus('PAUSED'));
+    }
 }

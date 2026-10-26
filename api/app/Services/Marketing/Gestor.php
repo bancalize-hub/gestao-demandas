@@ -174,6 +174,9 @@ class Gestor
 
         return [
             'saldo' => $this->fb->saldoDisponivel(),
+            // 1 = ativa. Sem isto a IA via gasto zero na semana e concluía "conta bloqueada",
+            // quando era só a pré-paga zerada.
+            'status_conta' => $this->statusConta(),
             'comprometido' => round(array_sum(array_map(fn ($o) => $o['entregando'] ? $o['diario'] : 0, $orcamentos)), 2),
             'teto' => ['normal' => $this->cfg->daily_cap, 'em_vigor' => $this->cfg->tetoVigente(), 'maximo' => $this->cfg->max_cap, 'meta_cpq' => $this->cfg->target_cpq],
             'conta' => [
@@ -258,6 +261,19 @@ class Gestor
         });
     }
 
+    private function statusConta(): string
+    {
+        try {
+            $s = (int) ($this->fb->resumoConta()['account_status'] ?? 0);
+        } catch (\Throwable) {
+            return 'desconhecido';
+        }
+
+        return match ($s) {
+            1 => 'ativa', 2 => 'DESATIVADA', 3 => 'PAGAMENTO PENDENTE', 7 => 'EM REVISÃO', 9 => 'EM CARÊNCIA', 101 => 'FECHADA', default => "código {$s}"
+        };
+    }
+
     /** @param array<string, mixed> $t */
     private function resumoPublico(array $t): string
     {
@@ -301,12 +317,14 @@ class Gestor
 
         $porAnuncio = collect($foto['anuncios'])->keyBy('id');
         $candidatos = collect($foto['orcamentos'])->where('entregando', true)->map(function ($o) use ($porAnuncio) {
-            $gasto = $porAnuncio->only($o['anuncios'])->sum(fn ($a) => $a['gasto']['7d']);
-            $qual = $porAnuncio->only($o['anuncios'])->sum(fn ($a) => $a['crm_7d']['qualificados']);
+            // 30 dias, não 7: depois de uma semana de conta zerada o 7d é zero em tudo, e o
+            // corte saía em ordem aleatória — derrubando justamente os criativos que qualificam.
+            $gasto = $porAnuncio->only($o['anuncios'])->sum(fn ($a) => $a['gasto']['30d']);
+            $qual = $porAnuncio->only($o['anuncios'])->sum(fn ($a) => $a['crm_30d']['qualificados']);
 
             // Sem qualificado nenhum = pior de todos, e entre esses, quem gastou mais.
-            return $o + ['cpq' => $qual > 0 ? $gasto / $qual : INF, 'gasto7' => $gasto];
-        })->sort(fn ($a, $b) => [$b['cpq'], $b['gasto7']] <=> [$a['cpq'], $a['gasto7']])->values();
+            return $o + ['cpq' => $qual > 0 ? $gasto / $qual : INF, 'gasto30' => $gasto];
+        })->sort(fn ($a, $b) => [$b['cpq'], $b['gasto30']] <=> [$a['cpq'], $a['gasto30']])->values();
 
         $cortados = [];
         $idsCortados = [];

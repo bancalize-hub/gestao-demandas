@@ -39,6 +39,7 @@ class MarketingAutopilot extends Model
         'last_run_at' => 'datetime',
         'last_report_at' => 'datetime',
         'last_review_at' => 'datetime',
+        'next_review_at' => 'datetime',
     ];
 
     /** A chave da API de imagem nunca volta para a tela — só se está preenchida. */

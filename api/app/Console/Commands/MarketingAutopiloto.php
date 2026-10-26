@@ -3,37 +3,37 @@
 namespace App\Console\Commands;
 
 use App\Models\MarketingAutopilot;
+use App\Models\MarketingCreativeRequest;
 use App\Services\Marketing\Autopilot;
 use App\Services\Marketing\AutopilotBrain;
 use App\Services\Marketing\Avisos;
+use App\Services\Marketing\DesignerAgente;
 use App\Services\Marketing\Gestor;
-use App\Services\Marketing\GestorBrain;
+use App\Services\Marketing\GestorAgente;
 use App\Support\Evolution;
 use App\Support\FacebookAds;
 use App\Support\Tenancy;
 use Illuminate\Console\Command;
 
 /**
- * Roda o gestor de tráfego (e o piloto automático) das empresas que o ligaram.
+ * O expediente do gestor de tráfego e do designer, chamado pelo agendador a cada 10 min.
  *
- * O agendador chama a cada 10 min; cada empresa é revisada de hora em hora, ou na hora
- * em que alguém aperta "Rodar agora"/"Simular agora" no painel, e recebe o relatório do dia
- * no WhatsApp a partir de `report_hour`. Revisar de hora em hora não é mexer de hora em hora:
- * a trava de 24h por objeto (no {@see Gestor}) é o que protege o aprendizado da Meta — o que a
- * revisão frequente ganha é reagir rápido a saldo, reprovação e teto estourado.
+ * A cada chamada, por empresa ligada:
+ *   1. vigia sem IA (saldo, reprovação, teto máximo) — pode acordar o gestor antes da hora;
+ *   2. turno do GESTOR quando chegou a hora que ele mesmo marcou (ou alguém pediu no painel);
+ *   3. o DESIGNER atende um pedido pendente do gestor;
+ *   4. relatório do dia no WhatsApp a partir de `report_hour`.
  */
 class MarketingAutopiloto extends Command
 {
     protected $signature = 'marketing:autopiloto
-        {--empresa= : roda só esta empresa, ignorando horário (manual)}
-        {--simular : não escreve nada na Meta nem gera imagem}
+        {--empresa= : roda o turno do gestor agora só nesta empresa (manual)}
+        {--simular : o gestor decide, mas nenhuma ação é executada}
         {--amostras= : só gera N criativos na biblioteca, sem publicar}
-        {--relatorio : só monta e envia o relatório do dia}';
+        {--relatorio : só monta e envia o relatório do dia}
+        {--designer : só atende o próximo pedido ao designer}';
 
-    protected $description = 'Gestor de tráfego: revisa a conta de hora em hora, publica dentro do teto, otimiza pela qualificação e avisa no WhatsApp';
-
-    /** Revisão de hora em hora com folga para o agendador de 10 em 10 min não pular uma. */
-    private const INTERVALO_MIN = 55;
+    protected $description = 'Gestor de tráfego (agente) e designer: vigia a conta, roda os turnos e envia o relatório';
 
     public function handle(Tenancy $tenancy): int
     {
@@ -42,59 +42,9 @@ class MarketingAutopiloto extends Command
             ->get();
 
         foreach ($alvos as $cfg) {
-            $manual = (bool) $this->option('empresa');
-            $pedido = $cfg->run_requested_at !== null;
-            $modo = $pedido ? $cfg->run_requested_mode : null;
-            $simular = $manual ? (bool) $this->option('simular') : $modo === 'simular';
-            $amostras = (int) $this->option('amostras') ?: ($modo === 'amostra' ? 1 : 0);
-            $soRelatorio = $manual && $this->option('relatorio');
-            $relatorio = $soRelatorio || (! $manual && ! $pedido && $this->horaDoRelatorio($cfg));
-            $revisar = $manual ? ! $soRelatorio : ($pedido || $this->horaDaRevisao($cfg));
-
-            if (! $revisar && ! $relatorio) {
-                continue;
-            }
-            // Simulação roda com o piloto desligado (é como se confere antes de ligar);
-            // rodada de verdade, nunca.
-            if (! $simular && ! $amostras && ! $soRelatorio && ! $cfg->enabled) {
-                if ($pedido) {
-                    $cfg->update(['run_requested_at' => null, 'run_requested_mode' => null, 'last_result' => 'Piloto desligado — ligue antes de rodar de verdade.']);
-                }
-
-                continue;
-            }
-
-            // Só a revisão de verdade conta para o relógio — uma simulação não pode fazer o
-            // gestor pular a próxima revisão real.
-            $real = $revisar && ! $simular && ! $amostras;
-            $cfg->update(['run_requested_at' => null, 'run_requested_mode' => null]
-                + ($real ? ['last_run_at' => now(), 'last_review_at' => now()] : [])
-                + ($relatorio && ! $simular ? ['last_report_at' => now()] : []));
-
-            $tenancy->run((int) $cfg->company_id, function () use ($cfg, $simular, $amostras, $revisar, $relatorio) {
-                $fb = FacebookAds::make();
-                $piloto = new Autopilot($cfg, $fb, new AutopilotBrain, $simular);
-                $gestor = new Gestor($cfg, $fb, $piloto, new GestorBrain, new Avisos($cfg, $simular), $simular);
+            $tenancy->run((int) $cfg->company_id, function () use ($cfg) {
                 try {
-                    if ($amostras) {
-                        $criados = $piloto->gerarAmostras($amostras);
-                        $resumo = count($criados).' criativo(s) gerado(s) na biblioteca: '.collect($criados)->pluck('name')->implode(', ');
-                        $this->info($resumo);
-                        $cfg->update(['last_result' => $resumo]);
-
-                        return;
-                    }
-
-                    if ($revisar) {
-                        $relato = $gestor->revisar();
-                        foreach ($relato as $r) {
-                            $this->line("  [{$r['tipo']}] {$r['msg']}");
-                        }
-                        $cfg->update(['last_result' => ($simular ? 'Simulação: ' : '').collect($relato)->pluck('msg')->implode("\n")]);
-                    }
-                    if ($relatorio) {
-                        $this->line($gestor->enviarRelatorio() ? '  relatório enviado' : '  relatório não enviado (já enviado hoje ou sem WhatsApp de aviso)');
-                    }
+                    $this->expediente($cfg);
                 } catch (\Throwable $e) {
                     $this->error($e->getMessage());
                     $cfg->update(['last_result' => 'Falhou: '.$e->getMessage()]);
@@ -106,20 +56,95 @@ class MarketingAutopiloto extends Command
         return self::SUCCESS;
     }
 
-    private function horaDaRevisao(MarketingAutopilot $cfg): bool
+    private function expediente(MarketingAutopilot $cfg): void
     {
-        return $cfg->enabled && (! $cfg->last_review_at || $cfg->last_review_at->lte(now()->subMinutes(self::INTERVALO_MIN)));
+        $manual = (bool) $this->option('empresa');
+        $modo = $cfg->run_requested_at ? $cfg->run_requested_mode : null;
+        $simular = $manual ? (bool) $this->option('simular') : $modo === 'simular';
+        $fb = FacebookAds::make();
+        $gestor = new Gestor($cfg, $fb, new Autopilot($cfg, $fb, new AutopilotBrain, $simular), new Avisos($cfg, $simular), $simular);
+
+        if ($modo) {
+            $cfg->update(['run_requested_at' => null, 'run_requested_mode' => null]);
+        }
+
+        // Amostra (botão do painel): gera direto, sem agente — é para conferir o gerador.
+        $amostras = (int) $this->option('amostras') ?: ($modo === 'amostra' ? 1 : 0);
+        if ($amostras) {
+            $criados = (new Autopilot($cfg, $fb, new AutopilotBrain))->gerarAmostras($amostras);
+            $cfg->update(['last_result' => count($criados).' criativo(s) gerado(s): '.collect($criados)->pluck('name')->implode(', ')]);
+
+            return;
+        }
+        if ($manual && $this->option('relatorio')) {
+            $this->line($gestor->enviarRelatorio() ? 'relatório enviado' : 'relatório não enviado');
+
+            return;
+        }
+        if ($manual && $this->option('designer')) {
+            $this->designer($cfg);
+
+            return;
+        }
+
+        if (! $cfg->enabled && ! $simular) {
+            if ($modo === 'real') {
+                $cfg->update(['last_result' => 'Gestor desligado — ligue antes de rodar de verdade.']);
+            }
+
+            return;
+        }
+
+        $urgente = null;
+        if ($cfg->enabled && $fb->configurado()) {
+            $urgente = $gestor->vigiar();
+        }
+
+        $hora = ! $cfg->next_review_at
+            ? (! $cfg->last_review_at || $cfg->last_review_at->lte(now()->subMinutes(GestorAgente::PADRAO_INTERVALO)))
+            : $cfg->next_review_at->lte(now());
+        // Acordar cedo tem limite: um alerta que se repete não pode virar turno de 10 em 10 min.
+        $podeAcordar = $urgente && (! $cfg->last_review_at || $cfg->last_review_at->lte(now()->subMinutes(30)));
+
+        if ($manual || $modo === 'simular' || $modo === 'real' || ($cfg->enabled && ($hora || $podeAcordar))) {
+            if (! $simular) {
+                // Marca antes de começar: o turno leva minutos e o agendador não pode abrir outro.
+                $cfg->update(['last_review_at' => now(), 'next_review_at' => now()->addMinutes(GestorAgente::PADRAO_INTERVALO)]);
+            }
+            $this->info('Turno do gestor'.($simular ? ' (simulação)' : '').($urgente ? " — urgente: {$urgente}" : ''));
+            $s = (new GestorAgente($cfg->fresh(), $simular))->rodar($podeAcordar || $manual ? $urgente : null);
+            $this->line("  sessão #{$s->id} {$s->status}, {$s->ferramentas_usadas} ferramenta(s)");
+            $this->line((string) ($s->resumo ?? $s->erro));
+            $cfg->update(['last_result' => ($simular ? 'Simulação: ' : '').($s->resumo ?? 'Falhou: '.$s->erro)]);
+        }
+
+        if ($cfg->enabled && ! $manual) {
+            $this->designer($cfg);
+            $this->relatorio($cfg, $gestor);
+        }
     }
 
-    /** Já passou do horário do relatório e ainda não foi o de hoje? */
-    private function horaDoRelatorio(MarketingAutopilot $cfg): bool
+    private function designer(MarketingAutopilot $cfg): void
     {
-        if (! $cfg->enabled || blank($cfg->report_hour)) {
-            return false;
+        $pedido = MarketingCreativeRequest::where('status', MarketingCreativeRequest::PENDENTE)->orderBy('id')->first();
+        if (! $pedido) {
+            return;
+        }
+        $this->info("Designer atendendo o pedido #{$pedido->id}");
+        $s = (new DesignerAgente($cfg))->atender($pedido);
+        $this->line("  sessão #{$s->id} {$s->status}: ".($s->resumo ?? $s->erro));
+    }
+
+    private function relatorio(MarketingAutopilot $cfg, Gestor $gestor): void
+    {
+        if (blank($cfg->report_hour)) {
+            return;
         }
         [$h, $m] = array_map('intval', explode(':', (string) $cfg->report_hour) + [1 => 0]);
-
-        return now()->gte(now()->setTime($h, $m))
-            && (! $cfg->last_report_at || $cfg->last_report_at->lt(now()->startOfDay()));
+        if (now()->lt(now()->setTime($h, $m)) || ($cfg->last_report_at && $cfg->last_report_at->gte(now()->startOfDay()))) {
+            return;
+        }
+        $cfg->update(['last_report_at' => now()]);
+        $gestor->enviarRelatorio();
     }
 }

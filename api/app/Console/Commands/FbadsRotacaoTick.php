@@ -3,7 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\Company;
-use App\Models\Conversation;
+use App\Models\MarketingAutopilot;
 use App\Support\Evolution;
 use App\Support\FacebookAds;
 use App\Support\Tenancy;
@@ -49,6 +49,14 @@ class FbadsRotacaoTick extends Command
         }
 
         $this->saldo($fb, $empresa);
+
+        // Com o gestor de tráfego ligado, quem pausa criativo é ele (lendo conversa, imagem e
+        // série) — dois robôs pausando a mesma conta por regras diferentes brigariam entre si.
+        if (MarketingAutopilot::where('enabled', true)->exists()) {
+            $this->info('Gestor de tráfego ligado: a rotação automática fica com ele.');
+
+            return self::SUCCESS;
+        }
 
         $aplicar = (bool) $this->option('aplicar');
         $minTriados = max(3, (int) $this->option('min-triados'));

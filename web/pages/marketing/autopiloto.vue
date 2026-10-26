@@ -16,6 +16,16 @@ interface Config {
   max_cap: number; current_cap: number | null; target_cpq: number; manage_whole_account: boolean
   alert_phone: string | null; alert_wa_account_id: number | null; report_hour: string | null
   last_review_at: string | null; last_report_at: string | null; last_analysis: string | null
+  next_review_at: string | null
+}
+interface Sessao {
+  id: number; agente: string; simulated: boolean; started_at: string | null; ended_at: string | null
+  status: string; ferramentas_usadas: number; resumo: string | null; erro: string | null
+  passos?: { t: string, v: string }[]
+}
+interface Pedido {
+  id: number; status: string; brief: string; motivo: string | null; quantidade: number
+  creative_ids: number[] | null; resultado: string | null; created_at: string
 }
 interface AutoAd {
   id: number; status: string; daily_budget: number; ad_id: string; campaign_id: string
@@ -32,6 +42,8 @@ interface Resposta {
   anuncios: AutoAd[]
   eventos: Evento[]
   teto_vigente: number
+  sessoes: Sessao[]
+  pedidos: Pedido[]
   numeros_aviso: { id: number, name: string, phone: string, avatars_only: boolean }[]
 }
 
@@ -123,6 +135,13 @@ async function testarImagem() {
   aviso.value = (r.ok ? '✓ ' : '✗ ') + r.mensagem
 }
 
+const aberta = ref<Sessao | null>(null)
+async function abrirSessao(s: Sessao) {
+  if (aberta.value?.id === s.id) { aberta.value = null; return }
+  aberta.value = await api<Sessao>(`/api/marketing/autopiloto/sessoes/${s.id}`)
+}
+const rotuloPasso: Record<string, string> = { pensou: '💭', usou: '🔧', viu: '👁' }
+
 async function testarAviso() {
   await salvar()
   const r = await api<{ ok: boolean, mensagem: string }>('/api/marketing/autopiloto/testar-aviso', { method: 'POST' })
@@ -189,8 +208,8 @@ const td = 'font-size:12px;padding:7px 10px;border-top:1px solid var(--c-surface
             :style="{ background: form.enabled ? 'var(--c-teal)' : 'var(--c-surface-2)', color: form.enabled ? '#fff' : 'var(--c-text-secondary)', border: 'none', fontFamily: 'inherit', fontSize: '13px', fontWeight: 800, padding: '10px 16px', borderRadius: '10px', cursor: 'pointer' }"
           >{{ form.enabled ? '● LIGADO' : '○ DESLIGADO' }}</button>
           <div style="font-size:12px;color:var(--c-text-secondary);line-height:1.6;flex:1;min-width:220px;">
-            <template v-if="form.enabled">Revisa a conta de hora em hora. Última revisão: {{ quando(form.last_review_at ?? null) }}.</template>
-            <template v-else>Nada acontece com o gestor desligado. Use <strong>Simular agora</strong> para ver o que ele faria (a IA decide de verdade, mas nada é executado).</template>
+            <template v-if="form.enabled">O agente decide quando volta (1h–6h) e a vigia o acorda antes se algo não puder esperar. Último turno: {{ quando(form.last_review_at ?? null) }} · próximo: {{ quando(form.next_review_at ?? null) }}.</template>
+            <template v-else>Nada acontece com o gestor desligado. Use <strong>Simular agora</strong> para ver um turno completo (ele investiga e decide de verdade, mas nada é executado).</template>
             <div v-if="form.run_requested_at" style="color:var(--c-warn-hi);">Rodada pedida ({{ form.run_requested_mode }}) — começa em até 10 min.</div>
           </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;">
@@ -240,7 +259,7 @@ const td = 'font-size:12px;padding:7px 10px;border-top:1px solid var(--c-surface
 
         <!-- Leitura da última revisão -->
         <div v-if="form.last_analysis" :style="cartao + 'margin-bottom:14px;'">
-          <div :style="rotulo">Leitura do gestor</div>
+          <div :style="rotulo">Relatório do último turno</div>
           <div style="font-size:12.5px;line-height:1.6;white-space:pre-line;color:var(--c-text-secondary);">{{ form.last_analysis }}</div>
         </div>
 
@@ -256,9 +275,10 @@ const td = 'font-size:12px;padding:7px 10px;border-top:1px solid var(--c-surface
             <input v-model="form.manage_whole_account" type="checkbox"> Gerenciar a conta inteira (inclusive campanhas feitas à mão)
           </label>
           <div style="font-size:11px;color:var(--c-text-faint);margin-top:10px;line-height:1.55;">
-            Ele pausa, religa, ajusta verba (no máximo ±50% por vez, cada coisa no máximo 1× a cada 24h), testa público (1 por dia)
-            e escolhe o teto em vigor. Acima do normal, só com custo por qualificado ≤ meta e ao menos 3 qualificados em 3 dias; o máximo ele nunca passa.
-            Recarregar saldo ele não pode — avisa antes de acabar.
+            É um agente: a cada turno ele lê a conta, os anúncios dia a dia, as conversas dos leads, as imagens dos criativos e os recortes de público,
+            e decide sozinho — pausa, religa, ajusta verba, publica criativo, testa público, pede peças ao designer, escolhe o teto.
+            Os únicos limites são os de dinheiro: nunca passa do teto máximo, só sobe acima do normal com custo por qualificado ≤ meta,
+            e verba muda no máximo ±50% por vez. Recarregar saldo ele não pode — avisa antes de acabar.
           </div>
         </div>
 
@@ -285,23 +305,14 @@ const td = 'font-size:12px;padding:7px 10px;border-top:1px solid var(--c-surface
           </div>
         </div>
 
-        <!-- Regras de dinheiro -->
+        <!-- Padrões do que ele publica -->
         <div :style="cartao + 'margin-bottom:14px;'">
-          <div style="font-weight:800;font-size:13.5px;margin-bottom:12px;">Regras fixas dos anúncios que ele cria</div>
+          <div style="font-weight:800;font-size:13.5px;margin-bottom:12px;">Padrões dos anúncios novos</div>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(170px,100%),1fr));gap:12px;">
-            <label><span :style="rotulo">Verba por criativo (R$/dia)</span><input v-model="form.budget_per_ad" type="number" min="6" :style="campo"></label>
-            <label><span :style="rotulo">Criativos novos por dia</span><input v-model="form.max_new_per_day" type="number" min="0" :style="campo"></label>
-            <label><span :style="rotulo">Vida útil (dias)</span><input v-model="form.lifetime_days" type="number" min="2" :style="campo"></label>
-            <label><span :style="rotulo">Pausa abaixo de (% qualif.)</span><input v-model="form.kill_rate" type="number" min="0" max="100" :style="campo"></label>
-            <label><span :style="rotulo">…com no mínimo (triados)</span><input v-model="form.min_triados" type="number" min="3" :style="campo"></label>
-            <label><span :style="rotulo">Pausa se gastar sem qualificado (R$)</span><input v-model="form.max_spend_no_qualified" type="number" min="5" :style="campo"></label>
+            <label><span :style="rotulo">Verba padrão por criativo (R$/dia)</span><input v-model="form.budget_per_ad" type="number" min="6" :style="campo"></label>
           </div>
-          <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-top:12px;">
-            <input v-model="form.use_stock" type="checkbox"> Usar primeiro os criativos da biblioteca que nunca rodaram (sem custo de gerar imagem)
-          </label>
           <div style="font-size:11px;color:var(--c-text-faint);margin-top:10px;line-height:1.55;">
-            Os padrões vêm do que já foi medido nesta conta: um criativo traz ~2–3 qualificados/dia e não melhora com mais verba,
-            e todo criativo cai em 5–7 dias. Por isso o piloto cresce com <em>mais criativos pequenos</em>, nunca subindo o orçamento de um.
+            Usada quando ele publica sem dizer outra verba. Medido nesta conta: acima de ~R$ 25/dia por criativo o real extra trouxe lead pior.
           </div>
         </div>
 
@@ -360,9 +371,46 @@ const td = 'font-size:12px;padding:7px 10px;border-top:1px solid var(--c-surface
           <button class="r-tap" :disabled="salvando" :style="botao + 'background:var(--accent);color:#fff;'" @click="salvar()">{{ salvando ? 'Salvando…' : 'Salvar configuração' }}</button>
         </div>
 
+        <!-- Turnos dos agentes -->
+        <div :style="cartao + 'padding:0;overflow:hidden;margin-bottom:22px;'">
+          <div style="padding:13px 16px;border-bottom:1px solid var(--c-surface-1);font-weight:800;font-size:13.5px;">Turnos do gestor e do designer</div>
+          <div v-if="!dados.sessoes.length" style="padding:14px 16px;font-size:12px;color:var(--c-text-faint);">Nenhum turno ainda.</div>
+          <div v-for="t in dados.sessoes" :key="t.id" style="border-top:1px solid var(--c-surface-1);">
+            <div class="r-tap" style="padding:10px 16px;cursor:pointer;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;font-size:12px;" @click="abrirSessao(t)">
+              <strong>{{ t.agente === 'designer' ? '🎨 Designer' : '📊 Gestor' }}</strong>
+              <span style="color:var(--c-text-faint);">{{ quando(t.started_at) }}{{ t.simulated ? ' · simulação' : '' }}</span>
+              <span :style="{ fontWeight: 800, color: t.status === 'ok' ? 'var(--c-teal)' : t.status === 'rodando' ? 'var(--c-warn-hi)' : 'var(--c-danger-soft)' }">{{ t.status }}</span>
+              <span style="color:var(--c-text-faint);">{{ t.ferramentas_usadas }} consulta(s)/ação(ões)</span>
+              <span style="flex:1;" />
+              <span style="color:var(--c-text-faint);">{{ aberta?.id === t.id ? 'fechar' : 'ver o que ele fez' }}</span>
+            </div>
+            <div v-if="t.resumo || t.erro" style="padding:0 16px 10px;font-size:12px;line-height:1.6;white-space:pre-line;color:var(--c-text-secondary);">{{ t.resumo || t.erro }}</div>
+            <div v-if="aberta?.id === t.id" style="padding:0 16px 12px;">
+              <div v-for="(p, i) in aberta.passos || []" :key="i" style="display:flex;gap:8px;font-size:11.5px;line-height:1.5;padding:4px 0;border-top:1px dashed var(--c-surface-1);">
+                <span>{{ rotuloPasso[p.t] || '·' }}</span>
+                <span :style="{ flex: 1, minWidth: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: p.t === 'pensou' ? 'var(--c-text)' : 'var(--c-text-muted)', fontFamily: p.t === 'pensou' ? 'inherit' : 'ui-monospace,monospace' }">{{ p.v }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Pedidos ao designer -->
+        <div v-if="dados.pedidos.length" :style="cartao + 'padding:0;overflow:hidden;margin-bottom:22px;'">
+          <div style="padding:13px 16px;border-bottom:1px solid var(--c-surface-1);font-weight:800;font-size:13.5px;">Pedidos ao designer</div>
+          <div v-for="p in dados.pedidos" :key="p.id" style="padding:10px 16px;border-top:1px solid var(--c-surface-1);font-size:12px;line-height:1.55;">
+            <div style="display:flex;gap:10px;flex-wrap:wrap;">
+              <strong>#{{ p.id }}</strong>
+              <span :style="{ fontWeight: 800, color: p.status === 'pronto' ? 'var(--c-teal)' : p.status === 'falhou' ? 'var(--c-danger-soft)' : 'var(--c-warn-hi)' }">{{ p.status }}</span>
+              <span style="color:var(--c-text-faint);">{{ quando(p.created_at) }} · {{ p.quantidade }} peça(s)</span>
+            </div>
+            <div style="color:var(--c-text-secondary);white-space:pre-line;">{{ p.brief }}</div>
+            <div v-if="p.resultado" style="color:var(--c-text-faint);margin-top:4px;white-space:pre-line;">→ {{ p.resultado }}</div>
+          </div>
+        </div>
+
         <!-- O que o piloto pôs no ar -->
         <div :style="cartao + 'padding:0;overflow:hidden;margin-bottom:22px;'">
-          <div style="padding:13px 16px;border-bottom:1px solid var(--c-surface-1);font-weight:800;font-size:13.5px;">Anúncios do piloto</div>
+          <div style="padding:13px 16px;border-bottom:1px solid var(--c-surface-1);font-weight:800;font-size:13.5px;">Anúncios que o gestor publicou</div>
           <div v-if="!dados.anuncios.length" style="padding:14px 16px;font-size:12px;color:var(--c-text-faint);">Nenhum ainda.</div>
           <div v-else class="r-table-wrap">
             <table class="r-table" style="width:100%;border-collapse:collapse;">

@@ -138,6 +138,77 @@ class Claude
     }
 
     /** Roda o CLI claude (assinatura) como subprocesso e retorna o texto, ou null. */
+    /**
+     * Roda o Claude como AGENTE: ele usa ferramentas (só as liberadas em `$ferramentas`),
+     * investiga quanto quiser e termina sozinho. Diferente de {@see run()}, que é uma
+     * pergunta e uma resposta.
+     *
+     * Saída em stream-json: cada linha é um evento (pensamento em texto, chamada de
+     * ferramenta, resultado). `$aoEvento` recebe cada um já decodificado — é como o
+     * diário do agente mostra o que ele olhou, e não só o que concluiu.
+     *
+     * @param  list<string>  $ferramentas  regras do --allowedTools (ex.: "Bash(php artisan gestor *)")
+     * @param  array<string, string>  $env
+     * @param  callable(array<string, mixed>): void|null  $aoEvento
+     * @return array{ok: bool, resultado: ?string, erro: ?string}
+     */
+    public static function agente(string $prompt, string $sistema, array $ferramentas, string $cwd, array $env = [], int $timeout = 1200, ?callable $aoEvento = null, ?string $modelo = null): array
+    {
+        $token = self::token();
+        if (! $token) {
+            return ['ok' => false, 'resultado' => null, 'erro' => 'Nenhum token da IA configurado (Admin → Memória).'];
+        }
+        if ($motivo = self::indisponivel()) {
+            return ['ok' => false, 'resultado' => null, 'erro' => 'IA fora do ar: '.$motivo];
+        }
+
+        // --tools limita o que EXISTE na sessão (só as ferramentas das regras); o --allowedTools
+        // diz o que dentro delas roda sem pedir licença — no modo -p, o resto é negado.
+        $nomes = array_values(array_unique(array_map(fn ($r) => strtok($r, '('), $ferramentas)));
+        $args = [config('services.claude.bin'), '-p', '--output-format', 'stream-json', '--verbose',
+            '--append-system-prompt', $sistema, '--tools', implode(',', $nomes), '--allowedTools', ...$ferramentas];
+        if ($modelo) {
+            array_push($args, '--model', $modelo);
+        }
+
+        $resultado = null;
+        $buffer = '';
+        $res = Process::timeout($timeout)
+            ->path($cwd)
+            ->env(self::ambiente($token) + $env)
+            ->input($prompt)
+            ->run($args, function (string $tipo, string $saida) use (&$buffer, &$resultado, $aoEvento) {
+                if ($tipo !== 'out') {
+                    return;
+                }
+                $buffer .= $saida;
+                while (($i = strpos($buffer, "\n")) !== false) {
+                    $linha = trim(substr($buffer, 0, $i));
+                    $buffer = substr($buffer, $i + 1);
+                    $ev = $linha !== '' ? json_decode($linha, true) : null;
+                    if (! is_array($ev)) {
+                        continue;
+                    }
+                    if (($ev['type'] ?? '') === 'result') {
+                        $resultado = (string) ($ev['result'] ?? '');
+                    }
+                    if ($aoEvento) {
+                        $aoEvento($ev);
+                    }
+                }
+            });
+
+        $saida = trim($res->errorOutput());
+        if (self::falhaDeCredencial($saida.$resultado)) {
+            self::marcarFora(mb_substr($saida, 0, 200));
+
+            return ['ok' => false, 'resultado' => $resultado, 'erro' => 'Credencial da IA recusada.'];
+        }
+
+        return ['ok' => $res->successful() && $resultado !== null, 'resultado' => $resultado,
+            'erro' => $res->successful() ? null : mb_substr($saida ?: 'saiu com código '.$res->exitCode(), 0, 400)];
+    }
+
     public static function run(string $prompt, int $timeout = 120): ?string
     {
         $token = self::token();

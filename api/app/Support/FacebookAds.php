@@ -242,6 +242,14 @@ class FacebookAds
         return $out;
     }
 
+    /** O anúncio com o criativo montado: texto, título, imagem e link de destino. */
+    public function detalheAnuncio(string $adId): array
+    {
+        return $this->call('GET', '/'.$adId, [
+            'fields' => 'id,name,effective_status,created_time,creative{body,title,image_hash,image_url,thumbnail_url,object_story_spec}',
+        ]);
+    }
+
     /** Grava o orçamento diário direto no objeto onde ele mora (campanha CBO ou conjunto ABO). */
     public function definirOrcamento(string $objetoId, float $reais): array
     {

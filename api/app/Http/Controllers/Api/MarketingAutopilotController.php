@@ -7,6 +7,8 @@ use App\Models\Company;
 use App\Models\MarketingAutoAd;
 use App\Models\MarketingAutopilot;
 use App\Models\MarketingAutopilotEvent;
+use App\Models\MarketingCreativeRequest;
+use App\Models\MarketingGestorSession;
 use App\Models\WaAccount;
 use App\Services\Marketing\Avisos;
 use App\Support\FacebookAds;
@@ -47,6 +49,10 @@ class MarketingAutopilotController extends Controller
             'anuncios' => MarketingAutoAd::with('creative:id,name,number,original_name,notes,status,source')
                 ->orderByRaw("status = 'ativo' DESC")->orderByDesc('id')->limit(60)->get(),
             'eventos' => MarketingAutopilotEvent::orderByDesc('id')->limit(80)->get(),
+            // Os turnos dos agentes sem os passos (que podem ser grandes): a tela pede um por vez.
+            'sessoes' => MarketingGestorSession::orderByDesc('id')->limit(20)
+                ->get(['id', 'agente', 'simulated', 'started_at', 'ended_at', 'status', 'ferramentas_usadas', 'resumo', 'erro']),
+            'pedidos' => MarketingCreativeRequest::orderByDesc('id')->limit(20)->get(),
         ]);
     }
 
@@ -103,6 +109,12 @@ class MarketingAutopilotController extends Controller
         } catch (\Throwable $e) {
             return response()->json(['ok' => false, 'mensagem' => $e->getMessage()]);
         }
+    }
+
+    /** Um turno inteiro do agente: o que ele pensou, que ferramenta usou e o que viu. */
+    public function sessao(int $id)
+    {
+        return response()->json(MarketingGestorSession::findOrFail($id));
     }
 
     /** Manda uma mensagem de teste para o WhatsApp de aviso — é como se sabe que o alerta chega. */

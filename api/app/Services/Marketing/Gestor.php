@@ -6,6 +6,7 @@ use App\Models\MarketingAutoAd;
 use App\Models\MarketingAutopilot;
 use App\Models\MarketingAutopilotEvent;
 use App\Models\MarketingCreative;
+use App\Models\MarketingCreativeRequest;
 use App\Models\MarketingMemory;
 use App\Support\FacebookAds;
 use Carbon\Carbon;
@@ -13,25 +14,25 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 
 /**
- * Gestor de tráfego: revisa a conta INTEIRA de hora em hora e decide sozinho.
+ * A caixa de ferramentas do gestor de tráfego — o que o AGENTE ({@see GestorAgente}) usa
+ * para olhar a conta e agir nela, pelo comando `php artisan gestor`.
  *
- * Uma revisão, em ordem:
- *   1. fotografa a conta (anúncios, orçamentos, gasto, qualificação do CRM, saldo);
- *   2. vigia — o que não depende de opinião: saldo acabando, anúncio reprovado pela Meta
- *      e teto máximo estourado (esse ele corta na hora, do pior para o melhor);
- *   3. pergunta à IA o que fazer e executa só o que passa nas travas;
- *   4. entrega para o {@see Autopilot}, que aplica as regras fixas nos anúncios dele e
- *      preenche a folga do teto em vigor com criativo novo.
+ * Quem decide é o agente: ele investiga o que quiser, na ordem que quiser. O que mora aqui
+ * são só os limites de dinheiro que o dono definiu, porque esses não podem depender de
+ * nenhuma resposta da IA estar certa:
+ *   - nada passa do teto em vigor, e o teto nunca passa do máximo;
+ *   - teto acima do normal só com custo por lead qualificado dentro da meta;
+ *   - verba muda no máximo ±50% por vez (mais que isso é quase sempre erro de digitação,
+ *     e reinicia o aprendizado da Meta).
+ * Mexer de novo em algo mexido há menos de 24h é permitido, mas exige `forcar` — a
+ * ferramenta avisa, o agente decide.
  *
- * A IA propõe; as travas daqui é que garantem que nenhuma resposta dela — por pior que
- * seja — passe do teto máximo, mexa duas vezes no mesmo conjunto em 24h ou triplique uma
- * verba de uma vez.
+ * A {@see vigiar()} roda sem IA a cada 10 min: avisa saldo e reprovação e, se a conta
+ * passar do teto máximo, acorda o agente na hora em vez de esperar o próximo turno.
  */
 class Gestor
 {
-    private const MAX_ACOES = 10;
-
-    /** Verba nova entre 1/1,5 e 1,5× a atual: mudança maior reinicia o aprendizado da Meta. */
+    /** Verba nova entre 1/1,5 e 1,5× a atual. */
     private const PASSO_VERBA = 1.5;
 
     private const VERBA_MINIMA = 6.0;
@@ -41,48 +42,27 @@ class Gestor
     /** Para subir o teto acima do normal, a conta precisa ter provado que qualifica. */
     private const MIN_QUALIFICADOS_PARA_ESCALAR = 3;
 
-    /** @var list<array{tipo: string, msg: string}> */
-    private array $relato = [];
+    /** Turno do agente que está agindo (para o diário ligar a ação à sessão). */
+    private ?int $sessao = null;
 
     public function __construct(
         private MarketingAutopilot $cfg,
         private FacebookAds $fb,
         private Autopilot $piloto,
-        private GestorBrain $cerebro,
         private Avisos $avisos,
         private bool $simular = false,
     ) {}
 
-    /** @return list<array{tipo: string, msg: string}> */
-    public function revisar(): array
+    public function naSessao(?int $sessao): self
     {
-        if (! $this->fb->configurado()) {
-            return $this->piloto->rodar(); // ele mesmo registra "não configurada"
-        }
+        $this->sessao = $sessao;
 
-        try {
-            $foto = $this->fotografia();
-        } catch (\Throwable $e) {
-            $this->registrar('erro', 'Não consegui ler a conta na Meta: '.$e->getMessage());
-            $this->falhou('leitura', 'Não consigo ler a conta de anúncios na Meta: '.$e->getMessage());
+        return $this;
+    }
 
-            return $this->relato;
-        }
-
-        $this->vigiar($foto);
-
-        // Sem saldo nada entrega e os números não mudam: analisar de hora em hora só gasta IA.
-        // Ainda assim analisa a cada 6h — é a hora de limpar a conta para a volta do saldo.
-        $semSaldo = $foto['saldo'] !== null && $foto['saldo'] <= 0;
-        $analisouHa = MarketingAutopilotEvent::where('kind', 'analise')->where('simulated', false)
-            ->where('created_at', '>=', now()->subHours(6))->exists();
-        if ($semSaldo && $analisouHa && ! $this->simular) {
-            $this->registrar('pulou', 'Conta sem saldo e já analisada há menos de 6h: espero a recarga ou a próxima janela.');
-        } else {
-            $this->decidir($foto);
-        }
-
-        return array_merge($this->relato, $this->piloto->rodar());
+    public function simulando(): bool
+    {
+        return $this->simular;
     }
 
     // ── 1. fotografia ─────────────────────────────────────────────────────────────
@@ -219,7 +199,7 @@ class Gestor
      *
      * @return array<string, mixed>|null
      */
-    private function recortes(): ?array
+    public function recortes(): ?array
     {
         return Cache::remember("gestor:recortes:{$this->cfg->company_id}", now()->addHours(6), function () {
             try {
@@ -245,7 +225,7 @@ class Gestor
      *
      * @return list<array<string, mixed>>
      */
-    private function criativos(): array
+    public function criativos(): array
     {
         return Cache::remember("gestor:criativos:{$this->cfg->company_id}", now()->addHours(3), function () {
             try {
@@ -261,7 +241,7 @@ class Gestor
         });
     }
 
-    private function statusConta(): string
+    public function statusConta(): string
     {
         try {
             $s = (int) ($this->fb->resumoConta()['account_status'] ?? 0);
@@ -275,7 +255,7 @@ class Gestor
     }
 
     /** @param array<string, mixed> $t */
-    private function resumoPublico(array $t): string
+    public function resumoPublico(array $t): string
     {
         if (! $t) {
             return '?';
@@ -288,13 +268,19 @@ class Gestor
         return sprintf('%s %d-%d %s', $sexo, $t['age_min'] ?? 18, $t['age_max'] ?? 65, $onde);
     }
 
-    // ── 2. vigiar ─────────────────────────────────────────────────────────────────
+    // ── vigia (sem IA, a cada 10 min) ─────────────────────────────────────────────
 
-    /** @param array<string, mixed> $foto */
-    private function vigiar(array &$foto): void
+    /**
+     * O que não pode esperar o próximo turno do agente. Devolve o motivo para acordá-lo
+     * agora, ou null.
+     */
+    public function vigiar(): ?string
     {
-        $saldo = $foto['saldo'];
-        $comp = (float) $foto['comprometido'];
+        $e = $this->estrutura();
+        $saldo = $this->fb->saldoDisponivel();
+        $comp = $e['comprometido'];
+        $acordar = null;
+
         if ($saldo !== null && $saldo <= 0) {
             $this->avisos->enviar('saldo-zero', 'A conta de anúncios está SEM SALDO (R$ 0,00): nada está entregando. '
                 .'Recarregue no Gerenciador para os anúncios voltarem.', 12);
@@ -303,203 +289,286 @@ class Gestor
                 $this->rs($saldo), number_format($saldo / $comp, 1, ',', '.'), $this->rs($comp)), 12);
         }
 
-        foreach ($foto['anuncios'] as $a) {
+        // Saldo que volta depois de zerado: tudo que estava ACTIVE começa a gastar de uma
+        // vez — é exatamente a hora de alguém olhar.
+        $saldoAntes = Cache::get("gestor:saldo:{$this->cfg->company_id}");
+        Cache::put("gestor:saldo:{$this->cfg->company_id}", $saldo, now()->addDay());
+        if ($saldo > 0 && $saldoAntes !== null && $saldoAntes <= 0) {
+            $acordar = 'a conta acabou de ser recarregada (R$ '.$this->rs($saldo).') e tudo que estava ativo voltou a gastar';
+        }
+
+        foreach ($e['anuncios'] as $a) {
             if (in_array($a['status'], ['DISAPPROVED', 'WITH_ISSUES'], true)) {
-                $this->avisos->enviar('reprovado-'.$a['id'], "A Meta marcou o anúncio \"{$a['nome']}\" como {$a['status']}. "
+                $novo = $this->avisos->enviar('reprovado-'.$a['id'], "A Meta marcou o anúncio \"{$a['nome']}\" como {$a['status']}. "
                     .'Veja o motivo no Gerenciador (Qualidade da conta) — reprovação repetida derruba a conta.', 72);
+                $acordar ??= $novo ? "a Meta marcou \"{$a['nome']}\" como {$a['status']}" : null;
             }
         }
 
-        // O teto máximo é o único limite que nunca depende da IA: estourou, corta já.
-        if (! $this->cfg->manage_whole_account || $comp <= $this->cfg->max_cap) {
-            return;
+        if ($this->cfg->manage_whole_account && $comp > $this->cfg->max_cap) {
+            $acordar = sprintf('a conta está com R$ %s/dia comprometidos, acima do teto máximo de R$ %s/dia — reduza já',
+                $this->rs($comp), $this->rs($this->cfg->max_cap));
         }
 
-        $porAnuncio = collect($foto['anuncios'])->keyBy('id');
-        $candidatos = collect($foto['orcamentos'])->where('entregando', true)->map(function ($o) use ($porAnuncio) {
-            // 30 dias, não 7: depois de uma semana de conta zerada o 7d é zero em tudo, e o
-            // corte saía em ordem aleatória — derrubando justamente os criativos que qualificam.
-            $gasto = $porAnuncio->only($o['anuncios'])->sum(fn ($a) => $a['gasto']['30d']);
-            $qual = $porAnuncio->only($o['anuncios'])->sum(fn ($a) => $a['crm_30d']['qualificados']);
-
-            // Sem qualificado nenhum = pior de todos, e entre esses, quem gastou mais.
-            return $o + ['cpq' => $qual > 0 ? $gasto / $qual : INF, 'gasto30' => $gasto];
-        })->sort(fn ($a, $b) => [$b['cpq'], $b['gasto30']] <=> [$a['cpq'], $a['gasto30']])->values();
-
-        $cortados = [];
-        $idsCortados = [];
-        foreach ($candidatos as $o) {
-            if ($comp <= $this->cfg->max_cap) {
-                break;
-            }
-            foreach ($o['anuncios'] as $adId) {
-                if (($porAnuncio[$adId]['status'] ?? '') === 'ACTIVE') {
-                    $this->pausarAnuncio($adId, "teto máximo de R$ {$this->rs($this->cfg->max_cap)}/dia estourado — corte do pior custo por qualificado");
-                }
-            }
-            $comp -= $o['diario'];
-            $idsCortados[] = $o['id'];
-            $cortados[] = "{$o['nome']} (R$ {$this->rs($o['diario'])}/dia)";
-        }
-        // A IA decide em cima da conta JÁ cortada — senão ela "religa" o que acabou de sair.
-        $foto['comprometido'] = round($comp, 2);
-        $foto['orcamentos'] = array_map(fn ($o) => in_array($o['id'], $idsCortados, true) ? ['entregando' => false] + $o : $o, $foto['orcamentos']);
-        $foto['anuncios'] = array_map(fn ($a) => in_array($a['orcamento'], $idsCortados, true) && $a['status'] === 'ACTIVE' ? ['status' => 'PAUSED'] + $a : $a, $foto['anuncios']);
-
-        if ($cortados) {
-            $this->avisos->enviar('teto-max-'.now()->format('YmdH'), 'A conta passou do teto máximo e eu cortei: '.implode(', ', $cortados).'.', 1);
-        }
+        return $acordar;
     }
 
-    // ── 3. decidir ────────────────────────────────────────────────────────────────
-
-    /** @param array<string, mixed> $foto */
-    private function decidir(array $foto): void
+    /**
+     * Só a estrutura da conta (anúncios, orçamentos, compromisso) — sem insights nem CRM.
+     * É o que as ações precisam, e custa uma chamada em vez de dez.
+     *
+     * @return array{anuncios: array<string, array<string, mixed>>, orcamentos: array<string, array<string, mixed>>, comprometido: float}
+     */
+    public function estrutura(): array
     {
-        if (! $this->cfg->manage_whole_account) {
-            $foto['anuncios'] = array_values(array_filter($foto['anuncios'], fn ($a) => $a['do_piloto'] || $a['status'] === 'ACTIVE'));
-        }
-
-        try {
-            $plano = $this->cerebro->decidir($foto, $this->cfg, $this->historico());
-        } catch (\Throwable $e) {
-            $this->registrar('erro', 'Revisão da IA falhou: '.$e->getMessage());
-            $this->falhou('ia', 'A revisão da conta pela IA está falhando: '.$e->getMessage());
-
-            return;
-        }
-
-        $diag = collect($plano['diagnosticos'])->map(fn ($d) => '• '.Str::limit((string) ($d['nome'] ?? $d['anuncio'] ?? '?'), 60)
-            .' → '.strtoupper((string) ($d['veredito'] ?? '?')).': '.($d['porque'] ?? ''))->implode("\n");
-        $leitura = trim($plano['analise'].($diag !== '' ? "\n\nPor anúncio:\n{$diag}" : ''));
-        if ($leitura !== '') {
-            $this->registrar('analise', $leitura, ['diagnosticos' => $plano['diagnosticos']]);
-            if (! $this->simular) {
-                $this->cfg->update(['last_analysis' => $leitura]);
+        $doPiloto = MarketingAutoAd::pluck('ad_id')->flip();
+        $anuncios = [];
+        $orcamentos = [];
+        foreach ($this->fb->anunciosDaConta() as $a) {
+            $id = (string) $a['id'];
+            $camp = $a['campaign'] ?? [];
+            $conj = $a['adset'] ?? [];
+            $cbo = ! empty($camp['daily_budget']);
+            $orcId = (string) ($cbo ? $camp['id'] : ($conj['id'] ?? ''));
+            $ativo = ($a['effective_status'] ?? '') === 'ACTIVE';
+            if ($orcId !== '' && ($cbo || ! empty($conj['daily_budget']))) {
+                $orcamentos[$orcId] ??= ['id' => $orcId, 'nivel' => $cbo ? 'campanha' : 'conjunto',
+                    'nome' => (string) ($cbo ? ($camp['name'] ?? '') : ($conj['name'] ?? '')),
+                    'diario' => (int) ($cbo ? $camp['daily_budget'] : $conj['daily_budget']) / 100,
+                    'entregando' => false, 'anuncios' => []];
+                $orcamentos[$orcId]['entregando'] = $orcamentos[$orcId]['entregando'] || $ativo;
+                $orcamentos[$orcId]['anuncios'][] = $id;
             }
+            $anuncios[$id] = ['id' => $id, 'nome' => (string) ($a['name'] ?? ''), 'status' => (string) ($a['effective_status'] ?? ''),
+                'campanha' => ['id' => (string) ($camp['id'] ?? ''), 'nome' => (string) ($camp['name'] ?? '')],
+                'orcamento' => $orcId ?: null, 'do_piloto' => isset($doPiloto[$id])];
         }
 
-        $this->ajustarTeto($plano['teto'], $foto);
-
-        $anuncios = collect($foto['anuncios'])->keyBy('id');
-        $orcamentos = collect($foto['orcamentos'])->keyBy('id');
-        foreach (array_slice($plano['acoes'], 0, self::MAX_ACOES) as $acao) {
-            $motivo = trim((string) ($acao['motivo'] ?? '')) ?: 'sem motivo informado';
-            try {
-                match ($acao['acao'] ?? null) {
-                    'pausar' => $this->acaoPausar((string) ($acao['anuncio'] ?? ''), $motivo, $anuncios),
-                    'religar' => $this->acaoReligar((string) ($acao['anuncio'] ?? ''), $motivo, $anuncios, $orcamentos, $foto),
-                    'verba' => $this->acaoVerba((string) ($acao['orcamento'] ?? ''), (float) ($acao['valor'] ?? 0), $motivo, $orcamentos, $foto),
-                    'testar_publico' => $this->acaoTestarPublico($acao, $motivo),
-                    default => $this->recusar('ação desconhecida: '.json_encode($acao, JSON_UNESCAPED_UNICODE)),
-                };
-            } catch (\Throwable $e) {
-                $this->registrar('erro', 'Falhou ao executar '.($acao['acao'] ?? '?').': '.$e->getMessage());
-            }
-        }
-        if (count($plano['acoes']) > self::MAX_ACOES) {
-            $this->recusar('A IA pediu '.count($plano['acoes']).' ações; executei só as '.self::MAX_ACOES.' primeiras.');
-        }
-
-        foreach (array_slice($plano['memorias'], 0, 2) as $m) {
-            $this->memorizar($m);
-        }
-        if ($plano['alerta']) {
-            $this->avisos->enviar('ia-'.md5($plano['alerta']), $plano['alerta'], 12);
-        }
+        return ['anuncios' => $anuncios, 'orcamentos' => $orcamentos,
+            'comprometido' => round(array_sum(array_map(fn ($o) => $o['entregando'] ? $o['diario'] : 0, $orcamentos)), 2)];
     }
 
-    /** @param array<string, mixed> $foto */
-    private function ajustarTeto(?float $pedido, array $foto): void
+    // ── ações ─────────────────────────────────────────────────────────────────────
+
+    public function teto(float $pedido, string $motivo): string
     {
-        if ($pedido === null) {
-            return;
-        }
         $atual = $this->cfg->tetoVigente();
         $novo = round(max(0, min($pedido, $this->cfg->max_cap)), 2);
-        if (abs($novo - $atual) < 0.01) {
-            return;
-        }
+        $limitado = $pedido > $this->cfg->max_cap ? " (pediu R$ {$this->rs($pedido)}; o máximo definido pelo dono é R$ {$this->rs($this->cfg->max_cap)})" : '';
 
         if ($novo > $this->cfg->daily_cap && $novo > $atual) {
-            $cpq = $foto['conta']['cpq_3d'];
-            $q = $foto['conta']['qualificados_3d'];
-            if ($cpq === null || $cpq > $this->cfg->target_cpq || $q < self::MIN_QUALIFICADOS_PARA_ESCALAR) {
-                $this->recusar(sprintf('Não subi o teto para R$ %s: acima do normal só com custo por qualificado ≤ R$ %s e ≥ %d qualificados em 3 dias (está %s, %d qualificados).',
-                    $this->rs($novo), $this->rs($this->cfg->target_cpq), self::MIN_QUALIFICADOS_PARA_ESCALAR,
-                    $cpq === null ? 'sem qualificado' : 'R$ '.$this->rs($cpq), $q));
-
-                return;
-            }
-            if ($this->mexidoHa('teto')) {
-                $this->recusar("Não subi o teto para R$ {$this->rs($novo)}: já subi nas últimas 24h.");
-
-                return;
+            $c = $this->contaRecente();
+            if ($c['cpq_3d'] === null || $c['cpq_3d'] > $this->cfg->target_cpq || $c['qualificados_3d'] < self::MIN_QUALIFICADOS_PARA_ESCALAR) {
+                return $this->recusar(sprintf('RECUSADO: teto acima do normal (R$ %s) só com custo por qualificado ≤ R$ %s e ≥ %d qualificados em 3 dias. Agora: %s, %d qualificados.',
+                    $this->rs($this->cfg->daily_cap), $this->rs($this->cfg->target_cpq), self::MIN_QUALIFICADOS_PARA_ESCALAR,
+                    $this->cpq($c['cpq_3d']), $c['qualificados_3d']));
             }
         }
 
         if (! $this->simular) {
             $this->cfg->update(['current_cap' => $novo]);
         }
-        $this->acao('teto', 'teto', sprintf('Teto em vigor: R$ %s → R$ %s/dia.', $this->rs($atual), $this->rs($novo)), ['de' => $atual, 'para' => $novo]);
+
+        return $this->acao('teto', 'teto', sprintf('Teto em vigor: R$ %s → R$ %s/dia%s. %s', $this->rs($atual), $this->rs($novo), $limitado, $motivo), ['de' => $atual, 'para' => $novo]);
     }
 
-    private function acaoPausar(string $adId, string $motivo, $anuncios): void
+    public function pausar(string $adId, string $motivo): string
     {
-        $a = $anuncios[$adId] ?? null;
+        $e = $this->estrutura();
+        $a = $e['anuncios'][$adId] ?? null;
         if (! $a) {
-            $this->recusar("Pausar {$adId}: anúncio não está na conta.");
-
-            return;
+            return $this->recusar("Pausar {$adId}: esse anúncio não existe na conta.");
         }
-        if (! $this->podeMexer($a)) {
-            return;
+        if ($erro = $this->foraDoAlcance($a)) {
+            return $erro;
         }
         if ($a['status'] !== 'ACTIVE') {
-            return; // já parado: não é decisão, é ruído
+            return "\"{$a['nome']}\" já não está entregando ({$a['status']}). Nada a fazer.";
         }
         $this->pausarAnuncio($adId, $motivo, $a['nome']);
+        $o = $e['orcamentos'][$a['orcamento']] ?? null;
+        $sobra = $o ? collect($o['anuncios'])->filter(fn ($id) => $id !== $adId && ($e['anuncios'][$id]['status'] ?? '') === 'ACTIVE')->count() : 0;
+
+        return ($this->simular ? '[SIMULAÇÃO — nada foi executado] ' : '')."Pausado \"{$a['nome']}\"."
+            .($o && $sobra === 0 ? " O orçamento \"{$o['nome']}\" (R$ {$this->rs($o['diario'])}/dia) ficou sem anúncio entregando — saiu do comprometido." : '')
+            .($o && $sobra > 0 ? " O orçamento \"{$o['nome']}\" segue com {$sobra} anúncio(s) entregando e os mesmos R$ {$this->rs($o['diario'])}/dia." : '');
     }
 
-    private function acaoReligar(string $adId, string $motivo, $anuncios, $orcamentos, array &$foto): void
+    public function religar(string $adId, string $motivo, bool $forcar = false): string
     {
-        $a = $anuncios[$adId] ?? null;
+        $e = $this->estrutura();
+        $a = $e['anuncios'][$adId] ?? null;
         if (! $a) {
-            $this->recusar("Religar {$adId}: anúncio não está na conta.");
-
-            return;
+            return $this->recusar("Religar {$adId}: esse anúncio não existe na conta.");
         }
-        if (! $this->podeMexer($a)) {
-            return;
+        if ($erro = $this->foraDoAlcance($a)) {
+            return $erro;
         }
         if (! in_array($a['status'], ['PAUSED', 'CAMPAIGN_PAUSED', 'ADSET_PAUSED'], true)) {
-            $this->recusar("Religar \"{$a['nome']}\": está {$a['status']}, não pausado.");
-
-            return;
+            return "\"{$a['nome']}\" está {$a['status']}, não pausado. Nada a fazer.";
         }
-        if ($this->mexidoHa($adId) || $this->mexidoHa((string) $a['orcamento'])) {
-            $this->recusar("Religar \"{$a['nome']}\": mexido nas últimas 24h.");
-
-            return;
+        if (! $forcar && ($this->mexidoHa($adId) || $this->mexidoHa((string) $a['orcamento']))) {
+            return "ATENÇÃO: \"{$a['nome']}\" foi mexido nas últimas 24h. Religar de novo reinicia o aprendizado da Meta. Se ainda assim for o certo, repita com --forcar.";
         }
-        $orc = $orcamentos[$a['orcamento']] ?? null;
-        $extra = $orc && ! $orc['entregando'] ? $orc['diario'] : 0;
-        if ($this->cfg->tetoVigente() < $foto['comprometido'] + $extra) {
-            $this->recusar(sprintf('Religar "%s" (R$ %s/dia) passaria do teto em vigor (R$ %s comprometidos de R$ %s).',
-                $a['nome'], $this->rs($extra), $this->rs($foto['comprometido']), $this->rs($this->cfg->tetoVigente())));
-
-            return;
+        $o = $e['orcamentos'][$a['orcamento']] ?? null;
+        $extra = $o && ! $o['entregando'] ? $o['diario'] : 0;
+        if ($this->cfg->tetoVigente() < $e['comprometido'] + $extra) {
+            return $this->recusar(sprintf('RECUSADO: religar "%s" soma R$ %s/dia e a conta passaria do teto em vigor (R$ %s comprometidos de R$ %s). Libere verba antes ou ajuste o teto.',
+                $a['nome'], $this->rs($extra), $this->rs($e['comprometido']), $this->rs($this->cfg->tetoVigente())));
         }
 
+        $irmaos = [];
         if (! $this->simular) {
-            $this->religarSozinho($a);
+            $irmaos = $this->religarSozinho($a);
             if ($auto = MarketingAutoAd::where('ad_id', $adId)->first()) {
-                // Volta com idade zerada: a vida útil conta do dia em que voltou a entregar.
                 $auto->update(['status' => MarketingAutoAd::ATIVO, 'launched_at' => now(), 'paused_at' => null, 'pause_reason' => null]);
             }
         }
-        $foto['comprometido'] += $extra;
-        $this->acao('religar', $adId, "Religuei \"{$a['nome']}\": {$motivo}", ['orcamento' => $a['orcamento']]);
+
+        return $this->acao('religar', $adId, "Religuei \"{$a['nome']}\": {$motivo}", ['orcamento' => $a['orcamento']])
+            .($irmaos ? ' Para não voltarem junto, pausei os outros anúncios da campanha: '.implode(', ', $irmaos).'.' : '');
+    }
+
+    public function verba(string $orcId, float $valor, string $motivo, bool $forcar = false): string
+    {
+        $e = $this->estrutura();
+        $o = $e['orcamentos'][$orcId] ?? null;
+        if (! $o) {
+            return $this->recusar("Verba de {$orcId}: não é um orçamento diário desta conta (use o id de \"orcamento\" que aparece no anúncio).");
+        }
+        if (! $this->cfg->manage_whole_account && ! MarketingAutoAd::whereIn('ad_id', $o['anuncios'])->exists()) {
+            return $this->recusar("Verba de \"{$o['nome']}\": o dono limitou o gestor aos anúncios criados por ele.");
+        }
+        if (! $forcar && $this->mexidoHa($orcId)) {
+            return "ATENÇÃO: a verba de \"{$o['nome']}\" foi mexida nas últimas 24h. Se ainda assim for o certo, repita com --forcar.";
+        }
+
+        $atual = (float) $o['diario'];
+        $novo = round(min(max($valor, $atual / self::PASSO_VERBA, self::VERBA_MINIMA), $atual * self::PASSO_VERBA), 2);
+        if (abs($novo - $atual) < 0.5) {
+            return "Verba de \"{$o['nome']}\" já está em R$ {$this->rs($atual)}. Nada a fazer.";
+        }
+        $delta = $o['entregando'] ? $novo - $atual : 0;
+        if ($delta > 0 && $this->cfg->tetoVigente() < $e['comprometido'] + $delta) {
+            return $this->recusar(sprintf('RECUSADO: verba de "%s" para R$ %s passaria do teto em vigor (R$ %s comprometidos de R$ %s).',
+                $o['nome'], $this->rs($novo), $this->rs($e['comprometido']), $this->rs($this->cfg->tetoVigente())));
+        }
+
+        if (! $this->simular) {
+            $this->fb->definirOrcamento($orcId, $novo);
+            MarketingAutoAd::whereIn('ad_id', $o['anuncios'])->update(['daily_budget' => $novo]);
+        }
+        $ajuste = abs($valor - $novo) >= 0.5 ? " (pediu R$ {$this->rs($valor)}; limitei a ±50% por vez — repita amanhã para ir além)" : '';
+
+        return $this->acao('verba', $orcId, sprintf('Verba de "%s": R$ %s → R$ %s/dia%s. %s', $o['nome'], $this->rs($atual), $this->rs($novo), $ajuste, $motivo),
+            ['de' => $atual, 'para' => $novo]);
+    }
+
+    /**
+     * Sobe um criativo da biblioteca em campanha própria (1 criativo = 1 campanha, ABO),
+     * com o público pedido ou o padrão.
+     *
+     * @param  array<string, mixed>|null  $publico
+     */
+    public function publicar(int $numero, string $mensagem, ?string $titulo, ?array $publico, ?float $verba, string $motivo): string
+    {
+        $c = MarketingCreative::where('number', $numero)->first();
+        if (! $c) {
+            return $this->recusar("Publicar: não existe Criativo {$numero} na biblioteca.");
+        }
+        if (trim($mensagem) === '') {
+            return $this->recusar('Publicar: falta o texto do anúncio (--mensagem).');
+        }
+        $verba = $verba ? max(self::VERBA_MINIMA, $verba) : $this->cfg->budget_per_ad;
+        $e = $this->estrutura();
+        if ($this->cfg->tetoVigente() < $e['comprometido'] + $verba) {
+            return $this->recusar(sprintf('RECUSADO: R$ %s comprometidos + R$ %s do novo passaria do teto em vigor de R$ %s. Pause algo ou ajuste o teto.',
+                $this->rs($e['comprometido']), $this->rs($verba), $this->rs($this->cfg->tetoVigente())));
+        }
+        $saldo = $this->fb->saldoDisponivel();
+        if ($saldo !== null && $saldo < $verba) {
+            return $this->recusar('RECUSADO: saldo da conta (R$ '.$this->rs($saldo).') não cobre nem um dia do anúncio.');
+        }
+
+        $alvo = $publico ? $this->publicoSeguro($publico) : $this->cfg->publico();
+        $resumo = $this->resumoPublico($alvo);
+        if ($this->simular) {
+            return $this->acao('publicar', 'criativo-'.$numero, "Publicaria o {$c->name} em {$resumo} com R$ {$this->rs($verba)}/dia. {$motivo}");
+        }
+
+        $ad = $this->piloto->publicar($c, ['mensagem' => $mensagem, 'titulo' => $titulo], $publico ? "teste {$resumo}" : 'gestor', $publico ? $alvo : null, $verba);
+        if (! $ad) {
+            $erro = MarketingAutopilotEvent::where('kind', 'erro')->latest('id')->value('message');
+
+            return 'FALHOU ao publicar: '.($erro ?? 'veja o diário');
+        }
+
+        return $this->acao('publicar', (string) $ad->ad_id, "Publiquei o {$c->name} em {$resumo} com R$ {$this->rs($verba)}/dia (anúncio {$ad->ad_id}). {$motivo}");
+    }
+
+    /** @param list<int> $referencias  @param list<int> $evitar */
+    public function pedirCriativo(string $brief, array $referencias, array $evitar, int $quantidade, string $motivo): string
+    {
+        if (mb_strlen(trim($brief)) < 40) {
+            return $this->recusar('Pedido ao designer: o briefing precisa dizer o que a peça comunica, para quem, o registro visual e o porquê (mín. ~40 caracteres).');
+        }
+        $quantidade = max(1, min(4, $quantidade));
+        if ($this->simular) {
+            return $this->acao('pedir_criativo', 'designer', "Pediria {$quantidade} criativo(s) ao designer: ".Str::limit($brief, 200));
+        }
+        $r = MarketingCreativeRequest::create(['brief' => $brief, 'referencias' => $referencias, 'evitar' => $evitar,
+            'quantidade' => $quantidade, 'motivo' => $motivo, 'status' => MarketingCreativeRequest::PENDENTE]);
+
+        return $this->acao('pedir_criativo', 'pedido-'.$r->id, "Pedi {$quantidade} criativo(s) ao designer (pedido #{$r->id}): ".Str::limit($brief, 200))
+            .' Quando ficarem prontos, aparecem em `gestor criativos --novos` e em `gestor pedidos`.';
+    }
+
+    public function anotar(string $categoria, string $titulo, string $conteudo, string $confianca): string
+    {
+        $titulo = Str::limit(trim($titulo), 180, '');
+        if ($titulo === '' || trim($conteudo) === '') {
+            return $this->recusar('Anotar: falta título ou conteúdo.');
+        }
+        if ($this->simular) {
+            return "Anotaria na memória: {$titulo}.";
+        }
+        $m = MarketingMemory::updateOrCreate(['titulo' => $titulo], [
+            'categoria' => in_array($categoria, MarketingMemory::CATEGORIAS, true) ? $categoria : 'aprendizado',
+            'conteudo' => trim($conteudo).' (gestor automático)',
+            'periodo' => now()->format('d/m/Y'),
+            'confianca' => $confianca === 'medido' ? 'medido' : 'hipotese',
+        ]);
+        $this->registrar('memoria', "Anotei na memória de marketing: {$titulo}.");
+
+        return "Anotado (memória #{$m->id}).";
+    }
+
+    public function avisar(string $texto): string
+    {
+        $ok = $this->avisos->enviar('agente-'.md5($texto), $texto, 6);
+
+        return $ok ? 'Aviso enviado ao dono.' : 'Não enviei (mesmo aviso nas últimas 6h, ou WhatsApp de aviso não configurado — ficou no painel).';
+    }
+
+    public function voltarEm(int $minutos, string $motivo): string
+    {
+        $minutos = max(GestorAgente::MIN_INTERVALO, min(GestorAgente::MAX_INTERVALO, $minutos));
+        if (! $this->simular) {
+            $this->cfg->update(['next_review_at' => now()->addMinutes($minutos)]);
+        }
+        $this->registrar('agenda', "Próxima revisão em {$minutos} min: {$motivo}");
+
+        return 'Combinado: volto às '.now()->addMinutes($minutos)->format('H:i').'.';
+    }
+
+    /** Custo por qualificado da conta nos últimos 3 dias (com hoje). @return array{cpq_3d: ?float, qualificados_3d: int} */
+    private function contaRecente(): array
+    {
+        $g = array_sum(array_column($this->fb->gastoPorAnuncio('last_3d'), 'gasto')) + array_sum(array_column($this->fb->gastoPorAnuncio('today'), 'gasto'));
+        $ids = array_keys($this->estrutura()['anuncios']);
+        $q = array_sum(array_column(QualificacaoCrm::porAnuncio((int) $this->cfg->company_id, $ids, now()->subDays(3)->startOfDay()), 'qualificados'));
+
+        return ['cpq_3d' => $q > 0 ? round($g / $q, 2) : null, 'qualificados_3d' => $q];
     }
 
     /**
@@ -509,17 +578,20 @@ class Gestor
      * para cima.
      *
      * @param  array<string, mixed>  $alvo
+     * @return list<string> nomes dos irmãos pausados
      */
-    private function religarSozinho(array $alvo): void
+    private function religarSozinho(array $alvo): array
     {
         $campId = $alvo['campanha']['id'];
         $meu = [];
+        $pausados = [];
         foreach ($this->fb->anunciosDaConta() as $ad) {
             if ((string) $ad['id'] === $alvo['id']) {
                 $meu = $ad;
             } elseif ((string) ($ad['campaign']['id'] ?? '') === $campId
                 && ($ad['status'] ?? '') === 'ACTIVE' && ($ad['effective_status'] ?? '') !== 'ACTIVE') {
                 $this->fb->definirStatus((string) $ad['id'], 'PAUSED');
+                $pausados[] = (string) ($ad['name'] ?? $ad['id']);
             }
         }
 
@@ -530,86 +602,14 @@ class Gestor
         if (($meu['campaign']['status'] ?? 'PAUSED') !== 'ACTIVE' && $campId !== '') {
             $this->fb->definirStatus($campId, 'ACTIVE');
         }
-    }
 
-    private function acaoVerba(string $orcId, float $valor, string $motivo, $orcamentos, array &$foto): void
-    {
-        $o = $orcamentos[$orcId] ?? null;
-        if (! $o) {
-            $this->recusar("Verba de {$orcId}: não é um orçamento diário desta conta.");
-
-            return;
-        }
-        if (! $this->cfg->manage_whole_account && ! $this->orcamentoDoPiloto($o)) {
-            $this->recusar("Verba de \"{$o['nome']}\": não foi criado pelo piloto (o gestor está limitado aos anúncios dele).");
-
-            return;
-        }
-        if ($this->mexidoHa($orcId)) {
-            $this->recusar("Verba de \"{$o['nome']}\": já mexida nas últimas 24h.");
-
-            return;
-        }
-
-        $atual = (float) $o['diario'];
-        $novo = round(max(self::VERBA_MINIMA, min($valor, $atual * self::PASSO_VERBA)), 2);
-        $novo = max($novo, round($atual / self::PASSO_VERBA, 2));
-        if (abs($novo - $atual) < 0.5) {
-            return;
-        }
-        $delta = $o['entregando'] ? $novo - $atual : 0;
-        if ($delta > 0 && $this->cfg->tetoVigente() < $foto['comprometido'] + $delta) {
-            $this->recusar(sprintf('Verba de "%s" para R$ %s passaria do teto em vigor (R$ %s).', $o['nome'], $this->rs($novo), $this->rs($this->cfg->tetoVigente())));
-
-            return;
-        }
-
-        if (! $this->simular) {
-            $this->fb->definirOrcamento($orcId, $novo);
-            MarketingAutoAd::whereIn('ad_id', $o['anuncios'])->update(['daily_budget' => $novo]);
-        }
-        $foto['comprometido'] += $delta;
-        $ajuste = abs($valor - $novo) >= 0.5 ? " (pediu R$ {$this->rs($valor)}; limitei ao passo máximo)" : '';
-        $this->acao('verba', $orcId, sprintf('Verba de "%s": R$ %s → R$ %s/dia%s. %s', $o['nome'], $this->rs($atual), $this->rs($novo), $ajuste, $motivo),
-            ['de' => $atual, 'para' => $novo]);
-    }
-
-    /** @param array<string, mixed> $acao */
-    private function acaoTestarPublico(array $acao, string $motivo): void
-    {
-        $jaHoje = MarketingAutopilotEvent::where('kind', 'acao')->where('simulated', $this->simular)
-            ->where('data->acao', 'testar_publico')->where('created_at', '>=', now()->startOfDay())->exists();
-        if ($jaHoje) {
-            $this->recusar('Teste de público: já abri um hoje.');
-
-            return;
-        }
-        $c = MarketingCreative::where('number', (int) ($acao['criativo'] ?? 0))->first();
-        $mensagem = trim((string) ($acao['mensagem'] ?? ''));
-        if (! $c || $mensagem === '') {
-            $this->recusar('Teste de público: falta criativo válido ou o texto do anúncio.');
-
-            return;
-        }
-
-        $publico = $this->publicoSeguro((array) ($acao['publico'] ?? []));
-        $resumo = $this->resumoPublico($publico);
-        if ($this->simular) {
-            $this->acao('testar_publico', 'criativo-'.$c->number, "Testaria o {$c->name} em {$resumo}: {$motivo}", ['publico' => $publico]);
-
-            return;
-        }
-
-        $ad = $this->piloto->publicar($c, ['mensagem' => $mensagem, 'titulo' => $acao['titulo'] ?? null], "teste {$resumo}", $publico);
-        if ($ad) {
-            $this->acao('testar_publico', (string) $ad->ad_id, "Abri teste de público: {$c->name} em {$resumo}. {$motivo}", ['publico' => $publico]);
-        }
+        return $pausados;
     }
 
     /**
-     * Só os campos de público que a IA entende sem precisar de id da Meta, em cima do padrão
-     * (país, tipo de localização, sem Advantage+). Interesse exige id que ela não tem: pedido
-     * de interesse viraria público inválido ou, pior, aberto demais.
+     * Só os campos de público que o agente informa sem precisar de id da Meta, em cima do
+     * padrão (país, tipo de localização, sem Advantage+). Interesse exige id: pedido de
+     * interesse viraria público inválido ou, pior, aberto demais.
      *
      * @param  array<string, mixed>  $pedido
      * @return array<string, mixed>
@@ -637,25 +637,6 @@ class Gestor
         }
 
         return $p;
-    }
-
-    /** @param array<string, mixed> $m */
-    private function memorizar(array $m): void
-    {
-        $titulo = Str::limit(trim((string) ($m['titulo'] ?? '')), 180, '');
-        $conteudo = trim((string) ($m['conteudo'] ?? ''));
-        if ($titulo === '' || $conteudo === '' || $this->simular || MarketingMemory::where('titulo', $titulo)->exists()) {
-            return;
-        }
-        MarketingMemory::create([
-            'categoria' => in_array($m['categoria'] ?? '', MarketingMemory::CATEGORIAS, true) ? $m['categoria'] : 'aprendizado',
-            'titulo' => $titulo,
-            'conteudo' => $conteudo.' (anotado pelo gestor automático)',
-            'periodo' => now()->format('d/m/Y'),
-            // O que ela chama de "medido" ainda é leitura dela: só gente promove a fato.
-            'confianca' => 'hipotese',
-        ]);
-        $this->registrar('memoria', "Anotei na memória de marketing: {$titulo}.");
     }
 
     // ── relatório ─────────────────────────────────────────────────────────────────
@@ -725,20 +706,13 @@ class Gestor
     }
 
     /** @param array<string, mixed> $a */
-    private function podeMexer(array $a): bool
+    private function foraDoAlcance(array $a): ?string
     {
         if ($this->cfg->manage_whole_account || $a['do_piloto']) {
-            return true;
+            return null;
         }
-        $this->recusar("\"{$a['nome']}\" não foi criado pelo piloto (o gestor está limitado aos anúncios dele).");
 
-        return false;
-    }
-
-    /** @param array<string, mixed> $o */
-    private function orcamentoDoPiloto(array $o): bool
-    {
-        return MarketingAutoAd::whereIn('ad_id', $o['anuncios'])->exists();
+        return $this->recusar("RECUSADO: \"{$a['nome']}\" foi criado à mão e o dono limitou o gestor aos anúncios criados por ele.");
     }
 
     /** Objetos em que o gestor mexeu de verdade nas últimas 24h. @return list<string> */
@@ -762,7 +736,7 @@ class Gestor
     }
 
     /** As últimas 72h em uma linha cada, para a IA não desfazer amanhã o que fez hoje. @return list<string> */
-    private function historico(): array
+    public function historico(): array
     {
         return MarketingAutopilotEvent::where('simulated', false)
             ->whereIn('kind', ['acao', 'recusou', 'pausou', 'publicou', 'alerta'])
@@ -772,25 +746,19 @@ class Gestor
             ->values()->all();
     }
 
-    /** Falha repetida vira aviso: uma isolada é ruído (a Meta oscila), duas seguidas não. */
-    private function falhou(string $tipo, string $texto): void
-    {
-        $anteriores = MarketingAutopilotEvent::where('kind', 'erro')->where('simulated', $this->simular)
-            ->where('created_at', '>=', now()->subHours(3))->count();
-        if ($anteriores >= 2) {
-            $this->avisos->enviar('falha-'.$tipo, $texto, 6);
-        }
-    }
-
     /** @param array<string, mixed> $dados */
-    private function acao(string $acao, string $objeto, string $msg, array $dados = []): void
+    private function acao(string $acao, string $objeto, string $msg, array $dados = []): string
     {
         $this->registrar('acao', $msg, ['acao' => $acao, 'objeto' => $objeto] + $dados);
+
+        return ($this->simular ? '[SIMULAÇÃO — nada foi executado] ' : '').$msg;
     }
 
-    private function recusar(string $msg): void
+    private function recusar(string $msg): string
     {
         $this->registrar('recusou', $msg);
+
+        return $msg;
     }
 
     private function cpq(?float $v): string
@@ -806,12 +774,12 @@ class Gestor
     /** @param array<string, mixed> $dados */
     private function registrar(string $tipo, string $msg, array $dados = []): void
     {
-        $this->relato[] = ['tipo' => $tipo, 'msg' => $msg];
         MarketingAutopilotEvent::create([
             'kind' => $tipo,
             'message' => $msg,
             'data' => $dados ?: null,
             'simulated' => $this->simular,
+            'session_id' => $this->sessao,
         ]);
     }
 }

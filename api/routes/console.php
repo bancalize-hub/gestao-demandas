@@ -130,13 +130,13 @@ Schedule::command('fbads:rotacao-tick --aplicar --max-pausas=2')
     ->withoutOverlapping()
     ->runInBackground();
 
-// Piloto automático de anúncios (gera criativo com IA, publica dentro do teto, otimiza pela
-// qualificação). A cada 10 min só para atender o "Rodar agora" do painel; a rodada de verdade
-// é uma por dia, depois da rotação das 09:10. Em background: uma rodada chama a IA e o gerador
-// de imagem e leva minutos — rodando em série, seguraria o atendimento automático do WhatsApp.
+// Gestor de tráfego (agente) + designer. A cada 10 min roda a vigia sem IA (saldo, reprovação,
+// teto máximo); o turno do agente é quando ELE marcou (1h–6h, padrão 3h) ou quando a vigia o
+// acorda. Em background e com trava longa: um turno lê a conta, conversas e imagens e leva
+// minutos — em série, seguraria o atendimento automático do WhatsApp.
 Schedule::command('marketing:autopiloto')
     ->everyTenMinutes()
-    ->withoutOverlapping(60)
+    ->withoutOverlapping(120)
     ->runInBackground();
 
 // Transcrição que chegou atrasada (o Google publica minutos ou horas depois) e a auditoria

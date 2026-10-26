@@ -4,28 +4,27 @@ namespace Tests\Feature;
 
 use App\Models\Company;
 use App\Models\MarketingAutopilot;
-use App\Models\MarketingAutopilotEvent;
+use App\Models\MarketingCreative;
 use App\Models\MarketingCredential;
 use App\Models\WaAccount;
 use App\Services\Marketing\Autopilot;
 use App\Services\Marketing\AutopilotBrain;
 use App\Services\Marketing\Avisos;
 use App\Services\Marketing\Gestor;
-use App\Services\Marketing\GestorBrain;
 use App\Support\FacebookAds;
 use App\Support\Tenancy;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Str;
 use Tests\TestCase;
 
 /**
- * Gestor de tráfego: a IA decide, mas cada teste fixa uma trava que nenhuma resposta dela
- * pode atravessar — teto máximo, passo de verba, trava de 24h, escalar só com custo por
- * qualificado na meta, religar sem ressuscitar o irmão ruim, simulação sem escrita.
+ * As ferramentas do agente gestor: quem decide é o agente, mas cada teste fixa um limite de
+ * dinheiro que nenhuma decisão dele atravessa — teto máximo, escalar só com custo por
+ * qualificado na meta, passo de verba, religar sem ressuscitar o irmão ruim, simulação sem
+ * escrita — e a vigia sem IA que o acorda.
  */
 class GestorTest extends TestCase
 {
@@ -40,9 +39,6 @@ class GestorTest extends TestCase
     private array $gasto = [];
 
     private string $saldo = 'Saldo disponível (R$5.000,00 BRL)';
-
-    /** @var array<string, mixed> resposta da IA */
-    private array $decisao = ['analise' => 'ok', 'teto' => null, 'acoes' => []];
 
     protected function setUp(): void
     {
@@ -124,13 +120,11 @@ class GestorTest extends TestCase
             'target_cpq' => 30, 'max_new_per_day' => 0, 'alert_phone' => '5541999990000'])->fresh();
     }
 
-    private function revisar(MarketingAutopilot $cfg, bool $simular = false): array
+    private function gestor(MarketingAutopilot $cfg, bool $simular = false): Gestor
     {
-        Process::fake(['*' => Process::result(output: json_encode($this->decisao + ['copys' => [], 'pecas' => []]))]);
         $fb = FacebookAds::make();
-        $gestor = new Gestor($cfg, $fb, new Autopilot($cfg, $fb, new AutopilotBrain, $simular), new GestorBrain, new Avisos($cfg, $simular), $simular);
 
-        return $gestor->revisar();
+        return new Gestor($cfg, $fb, new Autopilot($cfg, $fb, new AutopilotBrain, $simular), new Avisos($cfg, $simular), $simular);
     }
 
     /** @return list<string> ids que receberam POST status=X, na ordem */
@@ -140,73 +134,69 @@ class GestorTest extends TestCase
             ->map(fn ($p) => basename(parse_url($p[0]->url(), PHP_URL_PATH)))->values()->all();
     }
 
-    public function test_teto_maximo_estourado_corta_o_pior_custo_por_qualificado_sem_esperar_a_ia(): void
-    {
-        $this->anuncio('ruim', 150);
-        $this->anuncio('bom', 100);
-        $this->gasto['last_7d'] = ['ruim' => 300, 'bom' => 120];
-        $this->leads('bom', [true, true, true, true]);
-
-        $this->revisar($this->cfg());
-
-        // R$ 250 comprometidos com máximo de R$ 200: sai o que não qualificou, e só ele.
-        $this->assertSame(['ruim'], $this->comStatus('PAUSED'));
-        Http::assertSent(fn (Request $r) => str_contains($r->url(), '/message/sendText') && str_contains($r['text'], 'teto máximo'));
-    }
-
-    public function test_verba_respeita_o_passo_maximo_e_a_trava_de_24h(): void
-    {
-        $this->anuncio('a', 100);
-        $this->decisao['acoes'] = [['acao' => 'verba', 'orcamento' => 'conj-a', 'valor' => 300, 'motivo' => 'escalar']];
-        $cfg = $this->cfg(['daily_cap' => 400, 'max_cap' => 400]);
-
-        $this->revisar($cfg);
-        Http::assertSent(fn (Request $r) => str_ends_with(parse_url($r->url(), PHP_URL_PATH), '/conj-a') && (int) $r['daily_budget'] === 15000);
-
-        // Mesma ordem uma hora depois: o conjunto ainda está travado.
-        $this->revisar($cfg);
-        $this->assertSame(1, collect(Http::recorded(fn (Request $r) => isset($r->data()['daily_budget'])))->count());
-        $this->assertDatabaseHas('marketing_autopilot_events', ['kind' => 'recusou']);
-    }
-
     public function test_so_escala_o_teto_acima_do_normal_com_custo_por_qualificado_na_meta(): void
     {
         $this->anuncio('a', 50);
         $this->gasto['last_3d'] = ['a' => 150];
         $this->leads('a', [true, false, false]); // R$ 150 por 1 qualificado: fora da meta de R$ 30
-        $this->decisao['teto'] = 180;
-
         $cfg = $this->cfg();
-        $this->revisar($cfg);
-        $this->assertNull($cfg->fresh()->current_cap);
+
+        $r = $this->gestor($cfg)->teto(180, 'escalar');
+        $this->assertStringStartsWith('RECUSADO', $r);
         $this->assertSame(100.0, $cfg->fresh()->tetoVigente());
 
         $this->leads('a', [true, true, true, true, true, true, true]); // 8 qualificados → R$ 18,75
-        $this->revisar($cfg);
+        $this->gestor($cfg)->teto(180, 'escalar');
         $this->assertSame(180.0, $cfg->fresh()->tetoVigente());
     }
 
-    public function test_teto_nunca_passa_do_maximo_mesmo_se_a_ia_pedir(): void
+    public function test_teto_nunca_passa_do_maximo_e_baixar_e_livre(): void
     {
         $this->anuncio('a', 50);
         $this->leads('a', array_fill(0, 10, true));
-        $this->decisao['teto'] = 5000;
-
         $cfg = $this->cfg();
-        $this->revisar($cfg);
 
+        $this->gestor($cfg)->teto(5000, 'x');
         $this->assertSame(200.0, $cfg->fresh()->tetoVigente());
+
+        $this->gestor($cfg)->teto(40, 'nada qualifica');
+        $this->assertSame(40.0, $cfg->fresh()->tetoVigente());
+    }
+
+    public function test_verba_respeita_o_passo_maximo_e_repetir_em_24h_exige_forcar(): void
+    {
+        $this->anuncio('a', 100);
+        $cfg = $this->cfg(['daily_cap' => 400, 'max_cap' => 400]);
+
+        $r = $this->gestor($cfg)->verba('conj-a', 300, 'escalar');
+        $this->assertStringContainsString('limitei', $r);
+        Http::assertSent(fn (Request $r) => str_ends_with(parse_url($r->url(), PHP_URL_PATH), '/conj-a') && (int) $r['daily_budget'] === 15000);
+
+        $r = $this->gestor($cfg)->verba('conj-a', 120, 'de novo');
+        $this->assertStringStartsWith('ATENÇÃO', $r);
+        $this->assertSame(1, collect(Http::recorded(fn (Request $r) => isset($r->data()['daily_budget'])))->count());
+
+        $this->gestor($cfg)->verba('conj-a', 120, 'de novo', forcar: true);
+        $this->assertSame(2, collect(Http::recorded(fn (Request $r) => isset($r->data()['daily_budget'])))->count());
+    }
+
+    public function test_verba_que_passaria_do_teto_e_recusada(): void
+    {
+        $this->anuncio('a', 90);
+        $r = $this->gestor($this->cfg())->verba('conj-a', 130, 'x');
+
+        $this->assertStringStartsWith('RECUSADO', $r);
+        Http::assertNotSent(fn (Request $r) => isset($r->data()['daily_budget']));
     }
 
     public function test_religar_nao_ressuscita_o_irmao_que_estava_na_mesma_campanha(): void
     {
         $this->anuncio('bom', 25, 'CAMPAIGN_PAUSED', 'camp-x');
         $this->anuncio('irmao', 25, 'CAMPAIGN_PAUSED', 'camp-x');
-        $this->gasto['last_30d'] = ['bom' => 80, 'irmao' => 80];
-        $this->decisao['acoes'] = [['acao' => 'religar', 'anuncio' => 'bom', 'motivo' => 'qualificava a R$ 9']];
 
-        $this->revisar($this->cfg());
+        $r = $this->gestor($this->cfg())->religar('bom', 'qualificava a R$ 9');
 
+        $this->assertStringContainsString('Anúncio irmao', $r);
         $this->assertSame(['irmao'], $this->comStatus('PAUSED'));
         $this->assertSame(['bom', 'camp-x'], $this->comStatus('ACTIVE'));
         // O irmão é pausado ANTES da campanha ligar — nunca há um minuto com ele entregando.
@@ -218,34 +208,74 @@ class GestorTest extends TestCase
     {
         $this->anuncio('ligado', 90);
         $this->anuncio('parado', 25, 'PAUSED', '', 'PAUSED');
-        $this->gasto['last_30d'] = ['parado' => 50];
-        $this->decisao['acoes'] = [['acao' => 'religar', 'anuncio' => 'parado', 'motivo' => 'x']];
 
-        $this->revisar($this->cfg());
+        $r = $this->gestor($this->cfg())->religar('parado', 'x');
 
+        $this->assertStringStartsWith('RECUSADO', $r);
         $this->assertSame([], $this->comStatus('ACTIVE'));
-        $this->assertDatabaseHas('marketing_autopilot_events', ['kind' => 'recusou']);
     }
 
-    public function test_simulacao_nao_escreve_na_meta_nem_manda_whatsapp(): void
+    public function test_publicar_que_passaria_do_teto_e_recusado(): void
     {
-        $this->anuncio('a', 300);
-        $this->decisao['acoes'] = [['acao' => 'pausar', 'anuncio' => 'a', 'motivo' => 'teste']];
+        $this->anuncio('ligado', 90);
+        MarketingCreative::create(['name' => 'Criativo 5', 'number' => 5, 'path' => 'x.png', 'status' => 'testando']);
 
-        $this->revisar($this->cfg(), simular: true);
+        $r = $this->gestor($this->cfg())->publicar(5, 'Fale com a gente', null, null, null, 'testar');
 
+        $this->assertStringStartsWith('RECUSADO', $r);
         Http::assertNotSent(fn (Request $r) => $r->method() === 'POST');
-        $this->assertTrue(MarketingAutopilotEvent::where('kind', 'acao')->where('simulated', true)->exists());
     }
 
-    public function test_aviso_de_saldo_baixo_chega_uma_vez_e_nao_a_cada_hora(): void
+    public function test_simulacao_nao_escreve_na_meta(): void
+    {
+        $this->anuncio('a', 50);
+
+        $r = $this->gestor($this->cfg(), simular: true)->pausar('a', 'teste');
+
+        $this->assertStringStartsWith('[SIMULAÇÃO', $r);
+        Http::assertNotSent(fn (Request $r) => $r->method() === 'POST');
+    }
+
+    public function test_limitado_aos_proprios_anuncios_nao_toca_na_campanha_manual(): void
+    {
+        $this->anuncio('manual', 50);
+
+        $r = $this->gestor($this->cfg(['manage_whole_account' => false]))->pausar('manual', 'x');
+
+        $this->assertStringStartsWith('RECUSADO', $r);
+        $this->assertSame([], $this->comStatus('PAUSED'));
+    }
+
+    public function test_vigia_acorda_o_agente_quando_passa_do_teto_maximo_sem_cortar_nada_sozinha(): void
+    {
+        $this->anuncio('a', 150);
+        $this->anuncio('b', 100);
+
+        $acordar = $this->gestor($this->cfg())->vigiar();
+
+        $this->assertStringContainsString('acima do teto máximo', $acordar);
+        Http::assertNotSent(fn (Request $r) => $r->method() === 'POST' && ! str_contains($r->url(), 'sendText'));
+    }
+
+    public function test_vigia_acorda_o_agente_quando_a_conta_e_recarregada(): void
+    {
+        $this->anuncio('a', 50);
+        $cfg = $this->cfg();
+        $this->saldo = 'Saldo disponível (R$0,00 BRL)';
+        $this->assertNull($this->gestor($cfg)->vigiar());
+
+        $this->saldo = 'Saldo disponível (R$300,00 BRL)';
+        $this->assertStringContainsString('recarregada', (string) $this->gestor($cfg)->vigiar());
+    }
+
+    public function test_aviso_de_saldo_baixo_chega_uma_vez_e_nao_a_cada_vigia(): void
     {
         $this->anuncio('a', 80);
         $this->saldo = 'Saldo disponível (R$100,00 BRL)';
         $cfg = $this->cfg();
 
-        $this->revisar($cfg);
-        $this->revisar($cfg);
+        $this->gestor($cfg)->vigiar();
+        $this->gestor($cfg)->vigiar();
 
         $envios = Http::recorded(fn (Request $r) => str_contains($r->url(), '/message/sendText'))->values();
         $this->assertCount(1, $envios);
@@ -253,30 +283,20 @@ class GestorTest extends TestCase
         $this->assertStringContainsString('evo-aviso', $envios[0][0]->url());
     }
 
-    public function test_limitado_aos_proprios_anuncios_nao_toca_na_campanha_manual(): void
+    public function test_ferramenta_do_agente_exige_motivo_e_empresa_do_ambiente(): void
     {
-        $this->anuncio('manual', 50);
-        $this->decisao['acoes'] = [['acao' => 'pausar', 'anuncio' => 'manual', 'motivo' => 'x']];
+        $this->anuncio('a', 50);
+        $this->cfg();
 
-        $this->revisar($this->cfg(['manage_whole_account' => false]));
+        $this->artisan('gestor', ['acao' => 'conta'])->assertFailed();
 
-        $this->assertSame([], $this->comStatus('PAUSED'));
-    }
-
-    public function test_corte_do_teto_usa_30_dias_quando_a_semana_esta_vazia(): void
-    {
-        // Conta parada a semana toda (pré-paga zerada): só o mês diz quem presta.
-        $this->anuncio('bom', 150);
-        $this->anuncio('ruim', 100);
-        $this->gasto['last_30d'] = ['bom' => 100, 'ruim' => 150];
-        DB::table('conversations')->insert(collect(range(1, 5))->map(fn ($i) => [
-            'company_id' => $this->co->id, 'name' => "L{$i}", 'slug' => 'wa-55'.Str::random(9), 'initials' => 'L', 'color' => '#888',
-            'stage' => 'novo', 'qualified' => true, 'custom_fields' => json_encode(['anuncio' => ['id' => 'bom']]),
-            'created_at' => now()->subDays(20), 'updated_at' => now(),
-        ])->all());
-
-        $this->revisar($this->cfg());
-
-        $this->assertSame(['ruim'], $this->comStatus('PAUSED'));
+        putenv('GESTOR_EMPRESA='.$this->co->id);
+        try {
+            $this->artisan('gestor', ['acao' => 'pausar', 'alvo' => 'a'])->expectsOutputToContain('Falta --motivo')->assertFailed();
+            $this->artisan('gestor', ['acao' => 'pausar', 'alvo' => 'a', '--motivo' => 'R$ 80 sem qualificado'])->expectsOutputToContain('Pausado')->assertSuccessful();
+        } finally {
+            putenv('GESTOR_EMPRESA');
+        }
+        $this->assertSame(['a'], $this->comStatus('PAUSED'));
     }
 }

@@ -155,6 +155,7 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
         Route::post('/marketing/autopiloto/testar-imagem', [MarketingAutopilotController::class, 'testarImagem']);
         Route::post('/marketing/autopiloto/testar-aviso', [MarketingAutopilotController::class, 'testarAviso']);
         Route::post('/marketing/autopiloto/rodar', [MarketingAutopilotController::class, 'rodar']);
+        Route::get('/marketing/autopiloto/sessoes/{id}', [MarketingAutopilotController::class, 'sessao'])->whereNumber('id');
         Route::patch('/marketing/campanhas/{id}', [MarketingController::class, 'atualizarCampanha']);
         Route::post('/marketing/campanhas/{id}/duplicar', [MarketingController::class, 'duplicarCampanha']);
         // Memória de marketing: aprendizado sobre os anúncios, separado da memória da IA de vendas.

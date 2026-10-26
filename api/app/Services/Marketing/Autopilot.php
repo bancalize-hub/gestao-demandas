@@ -120,7 +120,7 @@ class Autopilot
 
         $desde = $ativos->min('launched_at') ?? now()->subDays(30);
         $gastos = $this->fb->gastoPorAnuncio('maximum', $desde->toDateString(), now()->toDateString());
-        $crm = $this->qualificacaoPorAnuncio($ativos->pluck('ad_id')->all(), $desde);
+        $crm = QualificacaoCrm::porAnuncio((int) $this->cfg->company_id, $ativos->pluck('ad_id')->all(), $desde);
 
         $liberado = 0.0;
         foreach ($ativos as $ad) {
@@ -189,7 +189,7 @@ class Autopilot
         }
 
         $comprometido = $this->fb->orcamentoComprometido()['total'] - ($this->simular ? $liberado : 0);
-        $folga = $this->cfg->daily_cap - $comprometido;
+        $folga = $this->cfg->tetoVigente() - $comprometido;
         $criadosHoje = MarketingAutoAd::where('launched_at', '>=', now()->startOfDay())->count();
         $vagas = min(
             (int) floor($folga / max(1, $this->cfg->budget_per_ad)),
@@ -197,7 +197,7 @@ class Autopilot
         );
 
         $txt = sprintf('Conta comprometida com R$ %s/dia de um teto de R$ %s.',
-            number_format($comprometido, 2, ',', '.'), number_format($this->cfg->daily_cap, 2, ',', '.'));
+            number_format($comprometido, 2, ',', '.'), number_format($this->cfg->tetoVigente(), 2, ',', '.'));
         if ($vagas <= 0) {
             $porque = $folga < $this->cfg->budget_per_ad
                 ? ' Sem folga para mais um criativo de R$ '.number_format($this->cfg->budget_per_ad, 2, ',', '.').'.'
@@ -262,7 +262,7 @@ class Autopilot
     }
 
     /** @param array<string, mixed> $peca */
-    private function gerarCriativo(array $peca): ?MarketingCreative
+    public function gerarCriativo(array $peca): ?MarketingCreative
     {
         try {
             $gerador = ImageGen::make($this->cfg);
@@ -313,8 +313,11 @@ class Autopilot
         return null;
     }
 
-    /** @param array{mensagem: string, titulo?: ?string} $copy */
-    private function publicar(MarketingCreative $c, array $copy, string $origem): void
+    /**
+     * @param  array{mensagem: string, titulo?: ?string}  $copy
+     * @param  array<string, mixed>|null  $publico  público diferente do padrão (teste do gestor)
+     */
+    public function publicar(MarketingCreative $c, array $copy, string $origem, ?array $publico = null, ?float $verba = null): ?MarketingAutoAd
     {
         $wa = WaAccount::primary();
         $fone = preg_replace('/\D/', '', (string) $wa?->phone);
@@ -322,24 +325,24 @@ class Autopilot
         if ($fone === '' || $pagina === '') {
             $this->registrar('erro', 'Falta o número principal do WhatsApp ou a página do Facebook — não dá para montar o anúncio.');
 
-            return;
+            return null;
         }
 
-        $verba = $this->cfg->budget_per_ad;
+        $verba ??= $this->cfg->budget_per_ad;
         if ($this->simular) {
             $this->registrar('publicaria', "Publicaria o {$c->name} ({$origem}) com R$ ".number_format($verba, 2, ',', '.').'/dia: "'
                 .Str::limit($copy['mensagem'], 120).'"', ['criativo' => $c->number, 'copy' => $copy]);
 
-            return;
+            return null;
         }
 
         // Teto conferido de novo logo antes de ligar: entre o começo da rodada e aqui a
         // conta pode ter ganhado campanha (gente mexendo no Gerenciador ao mesmo tempo).
         $comprometido = $this->fb->orcamentoComprometido()['total'];
-        if ($comprometido + $verba > $this->cfg->daily_cap) {
+        if ($comprometido + $verba > $this->cfg->tetoVigente()) {
             $this->registrar('teto', "Não publiquei o {$c->name}: R$ {$comprometido}/dia + R$ {$verba} passaria do teto.");
 
-            return;
+            return null;
         }
 
         // O prefill "Criativo N" é o que o LeadsDeAnuncio casa para saber de qual anúncio
@@ -352,7 +355,7 @@ class Autopilot
             $camp = $this->fb->criarCampanha("AUTO · {$c->name} · {$rotulo}", 'OUTCOME_ENGAGEMENT');
             $conj = $this->fb->criarConjunto(
                 $camp['id'], "AUTO · {$c->name} · R$ ".number_format($verba, 0), $verba, 'CONVERSATIONS',
-                $this->cfg->publico(), 'IMPRESSIONS', 'WHATSAPP',
+                $publico ?? $this->cfg->publico(), 'IMPRESSIONS', 'WHATSAPP',
                 ['page_id' => $pagina, 'whatsapp_phone_number' => $fone],
             );
             $ad = $this->fb->criarAnuncio($conj['id'], $c->name, $c, $copy['mensagem'], $copy['titulo'] ?? null, $link, null, 'WHATSAPP_MESSAGE');
@@ -381,37 +384,14 @@ class Autopilot
         } catch (\Throwable $e) {
             $this->registrar('erro', "Falha ao publicar o {$c->name}: ".$e->getMessage()
                 .($auto ? ' — o que foi criado ficou PAUSADO.' : ''));
+
+            return null;
         }
+
+        return $auto;
     }
 
     // ── dados ─────────────────────────────────────────────────────────────────────
-
-    /**
-     * Leads, triados e qualificados por anúncio, direto do CRM: o ad_id que veio no
-     * referral do clique (custom_fields.anuncio.id).
-     *
-     * @param  list<string>  $adIds
-     * @return array<string, array{leads: int, triados: int, qualificados: int}>
-     */
-    private function qualificacaoPorAnuncio(array $adIds, \DateTimeInterface $desde): array
-    {
-        if (! $adIds) {
-            return [];
-        }
-
-        return DB::table('conversations')
-            ->selectRaw("JSON_UNQUOTE(JSON_EXTRACT(custom_fields,'$.anuncio.id')) ad_id,
-                COUNT(*) leads, SUM(qualified IS NOT NULL) triados, SUM(qualified = 1) qualificados")
-            ->where('company_id', $this->cfg->company_id)
-            ->where('created_at', '>=', $desde)
-            ->whereIn(DB::raw("JSON_UNQUOTE(JSON_EXTRACT(custom_fields,'$.anuncio.id'))"), $adIds)
-            ->groupBy('ad_id')
-            ->get()
-            ->mapWithKeys(fn ($l) => [(string) $l->ad_id => [
-                'leads' => (int) $l->leads, 'triados' => (int) $l->triados, 'qualificados' => (int) $l->qualificados,
-            ]])
-            ->all();
-    }
 
     /**
      * Desempenho dos últimos 30 dias por criativo — é o que a IA lê para decidir o que
@@ -419,7 +399,7 @@ class Autopilot
      *
      * @return list<array<string, mixed>>
      */
-    private function desempenho(): array
+    public function desempenho(): array
     {
         try {
             $porImagem = $this->fb->anunciosPorImagem();
@@ -430,7 +410,7 @@ class Autopilot
         }
 
         $adIds = collect($porImagem)->flatten(1)->pluck('id')->all();
-        $crm = $this->qualificacaoPorAnuncio($adIds, now()->subDays(30));
+        $crm = QualificacaoCrm::porAnuncio((int) $this->cfg->company_id, $adIds, now()->subDays(30));
 
         $linhas = [];
         foreach (MarketingCreative::orderBy('number')->get() as $c) {

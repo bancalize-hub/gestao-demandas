@@ -22,6 +22,11 @@ class MarketingAutopilot extends Model
         'enabled' => 'boolean',
         'use_stock' => 'boolean',
         'daily_cap' => 'float',
+        'max_cap' => 'float',
+        'current_cap' => 'float',
+        'target_cpq' => 'float',
+        'manage_whole_account' => 'boolean',
+        'alert_wa_account_id' => 'integer',
         'budget_per_ad' => 'float',
         'max_spend_no_qualified' => 'float',
         'max_new_per_day' => 'integer',
@@ -32,6 +37,8 @@ class MarketingAutopilot extends Model
         'targeting' => 'array',
         'run_requested_at' => 'datetime',
         'last_run_at' => 'datetime',
+        'last_report_at' => 'datetime',
+        'last_review_at' => 'datetime',
     ];
 
     /** A chave da API de imagem nunca volta para a tela — só se está preenchida. */
@@ -67,6 +74,19 @@ class MarketingAutopilot extends Model
         // Recém-criado, o model não conhece os padrões do banco (teto, vida útil, corte):
         // sem recarregar, a primeira rodada leria tudo null e não pausaria nada.
         return $cfg->wasRecentlyCreated ? $cfg->fresh() : $cfg;
+    }
+
+    /**
+     * O teto que vale agora: o que o gestor escolheu, nunca acima do máximo. Pode ficar
+     * ABAIXO do normal — quando nada qualifica, gastar o teto inteiro é só queimar saldo.
+     * O clamp mora aqui (e não só em quem grava) porque o dono pode baixar o máximo pelo
+     * painel depois que o gestor subiu — e o teto em vigor tem que obedecer na hora.
+     */
+    public function tetoVigente(): float
+    {
+        $max = max($this->daily_cap, $this->max_cap);
+
+        return min($max, max(0.0, (float) ($this->current_cap ?? $this->daily_cap)));
     }
 
     public function publico(): array

@@ -502,7 +502,7 @@ const rodapeSemAtrib = computed(() => semAtribuicao.value
         <NuxtLink to="/marketing/memoria" class="r-tap" style="text-decoration:none;background:var(--c-surface-2);color:var(--c-text-secondary);font-size:12.5px;font-weight:700;padding:8px 13px;border-radius:9px;">🧠 Memória</NuxtLink>
         <NuxtLink to="/marketing/criativos" class="r-tap" style="text-decoration:none;background:var(--c-surface-2);color:var(--c-text-secondary);font-size:12.5px;font-weight:700;padding:8px 13px;border-radius:9px;">🖼️ Criativos</NuxtLink>
         <NuxtLink to="/marketing/otimizacao" class="r-tap" style="text-decoration:none;background:var(--c-surface-2);color:var(--c-text-secondary);font-size:12.5px;font-weight:700;padding:8px 13px;border-radius:9px;">🎯 Otimização</NuxtLink>
-        <NuxtLink to="/marketing/autopiloto" class="r-tap" style="text-decoration:none;background:var(--c-surface-2);color:var(--c-text-secondary);font-size:12.5px;font-weight:700;padding:8px 13px;border-radius:9px;">🤖 Piloto automático</NuxtLink>
+        <NuxtLink to="/marketing/autopiloto" class="r-tap" style="text-decoration:none;background:var(--c-surface-2);color:var(--c-text-secondary);font-size:12.5px;font-weight:700;padding:8px 13px;border-radius:9px;">🤖 Gestor de tráfego</NuxtLink>
       </div>
     </div>
 

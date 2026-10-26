@@ -194,6 +194,60 @@ class FacebookAds
         return $this->call('POST', '/'.$objetoId, ['status' => $status]);
     }
 
+    /**
+     * Todos os anúncios que importam para o gestor — no ar ou parados há pouco — com o
+     * status PRÓPRIO e o efetivo de cada nível, orçamento e público do conjunto.
+     *
+     * Os dois status são necessários para religar sem susto: anúncio com status próprio
+     * ACTIVE e efetivo CAMPAIGN_PAUSED volta junto quando a campanha liga, mesmo sem ninguém
+     * ter pedido por ele.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function anunciosDaConta(): array
+    {
+        $r = $this->call('GET', '/'.$this->conta().'/ads', [
+            'fields' => 'id,name,status,effective_status,created_time,'
+                .'adset{id,name,status,daily_budget,targeting},campaign{id,name,status,daily_budget,objective}',
+            'filtering' => json_encode([['field' => 'effective_status', 'operator' => 'IN',
+                'value' => ['ACTIVE', 'PAUSED', 'CAMPAIGN_PAUSED', 'ADSET_PAUSED', 'DISAPPROVED', 'WITH_ISSUES', 'PENDING_REVIEW']]]),
+            'limit' => 500,
+        ]);
+
+        return $r['data'] ?? [];
+    }
+
+    /**
+     * Gasto de cada anúncio dia a dia (só os que gastaram).
+     *
+     * @return array<string, array<string, float>> ad_id => Y-m-d => gasto
+     */
+    public function gastoDiarioPorAnuncio(int $dias = 7): array
+    {
+        $r = $this->call('GET', '/'.$this->conta().'/insights', [
+            'level' => 'ad',
+            'fields' => 'ad_id,spend',
+            'time_increment' => 1,
+            'time_range' => json_encode(['since' => now()->subDays($dias)->toDateString(), 'until' => now()->toDateString()]),
+            'limit' => 2000,
+        ]);
+
+        $out = [];
+        foreach ($r['data'] ?? [] as $l) {
+            if (! empty($l['ad_id']) && (float) ($l['spend'] ?? 0) > 0) {
+                $out[(string) $l['ad_id']][(string) $l['date_start']] = (float) $l['spend'];
+            }
+        }
+
+        return $out;
+    }
+
+    /** Grava o orçamento diário direto no objeto onde ele mora (campanha CBO ou conjunto ABO). */
+    public function definirOrcamento(string $objetoId, float $reais): array
+    {
+        return $this->call('POST', '/'.$objetoId, ['daily_budget' => (int) round($reais * 100)]);
+    }
+
     public function listarCampanhas(int $limite = 25): array
     {
         $r = $this->call('GET', '/'.$this->conta().'/campaigns', [
@@ -588,6 +642,15 @@ class FacebookAds
                 }
             }
 
+            // Purchase é o lead QUALIFICADO que o CRM devolve pela CAPI — é o único jeito de
+            // ver qualificação por idade/gênero/posicionamento, que o CRM não sabe.
+            $compras = 0;
+            foreach ($l['actions'] ?? [] as $a) {
+                if (in_array($a['action_type'] ?? '', ['purchase', 'onsite_conversion.purchase', 'offsite_conversion.fb_pixel_purchase'], true)) {
+                    $compras = max($compras, (int) ($a['value'] ?? 0));
+                }
+            }
+
             $gasto = (float) ($l['spend'] ?? 0);
             $linhas[] = [
                 'valor' => $rotulo,
@@ -598,6 +661,8 @@ class FacebookAds
                 'cpm' => round((float) ($l['cpm'] ?? 0), 2),
                 'conversas' => $conversas,
                 'custo_conversa' => $conversas > 0 && $gasto > 0 ? round($gasto / $conversas, 2) : null,
+                'qualificados_capi' => $compras,
+                'custo_qualificado' => $compras > 0 && $gasto > 0 ? round($gasto / $compras, 2) : null,
             ];
         }
 

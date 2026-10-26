@@ -1,7 +1,8 @@
 <script setup lang="ts">
-// Piloto automático de anúncios: gera criativo com IA, publica dentro do teto e otimiza
-// pela qualificação do CRM. A tela é o contrato do que o robô pode fazer com dinheiro —
-// e o diário de tudo que ele fez, para cada real gasto ter um motivo escrito.
+// Gestor de tráfego automático: revisa a conta inteira de hora em hora, gera criativo com
+// IA, publica dentro do teto, otimiza pela qualificação do CRM e avisa no WhatsApp. A tela é
+// o contrato do que o robô pode fazer com dinheiro — e o diário de tudo que ele fez, para
+// cada real gasto ter um motivo escrito.
 const api = useApi()
 const apiOrigin = useRuntimeConfig().public.apiOrigin as string
 
@@ -12,6 +13,9 @@ interface Config {
   tem_chave_imagem: boolean; targeting: Record<string, any> | null; instructions: string | null
   run_requested_at: string | null; run_requested_mode: string | null
   last_run_at: string | null; last_result: string | null
+  max_cap: number; current_cap: number | null; target_cpq: number; manage_whole_account: boolean
+  alert_phone: string | null; alert_wa_account_id: number | null; report_hour: string | null
+  last_review_at: string | null; last_report_at: string | null; last_analysis: string | null
 }
 interface AutoAd {
   id: number; status: string; daily_budget: number; ad_id: string; campaign_id: string
@@ -27,6 +31,8 @@ interface Resposta {
   conta: { saldo: number | null, comprometido: number | null, itens: { id: string, nome: string, diario: number }[], erro: string | null }
   anuncios: AutoAd[]
   eventos: Evento[]
+  teto_vigente: number
+  numeros_aviso: { id: number, name: string, phone: string, avatars_only: boolean }[]
 }
 
 const dados = ref<Resposta | null>(null)
@@ -87,7 +93,10 @@ async function salvar(extra: Partial<Config> = {}) {
         max_spend_no_qualified: Number(f.max_spend_no_qualified), use_stock: f.use_stock,
         image_provider: f.image_provider || null, image_model: f.image_model || null,
         image_api_key: f.image_api_key || null, instructions: f.instructions || null,
-        targeting: montarPublico(), ...extra,
+        targeting: montarPublico(),
+        max_cap: Number(f.max_cap), target_cpq: Number(f.target_cpq), manage_whole_account: f.manage_whole_account,
+        alert_phone: f.alert_phone || null, alert_wa_account_id: f.alert_wa_account_id || null,
+        report_hour: f.report_hour || null, ...extra,
       },
     })
     aviso.value = 'Salvo.'
@@ -99,7 +108,11 @@ async function salvar(extra: Partial<Config> = {}) {
 
 async function alternar() {
   const ligar = !form.value.enabled
-  if (ligar && !confirm(`Ligar o piloto automático?\n\nEle vai criar, ligar e pausar anúncios sozinho, mantendo a conta inteira em até ${dinheiro(Number(form.value.daily_cap))}/dia.`)) return
+  const f = form.value
+  const alcance = f.manage_whole_account
+    ? 'Ele gerencia a CONTA INTEIRA: pode pausar, religar e mudar verba inclusive das campanhas feitas à mão.'
+    : 'Ele só mexe nos anúncios que ele mesmo criar.'
+  if (ligar && !confirm(`Ligar o gestor de tráfego?\n\n${alcance}\n\nRevisa de hora em hora, trabalha num teto de ${dinheiro(Number(f.daily_cap))}/dia e só sobe até ${dinheiro(Number(f.max_cap))}/dia quando o custo por qualificado estiver dentro de ${dinheiro(Number(f.target_cpq))}. Se a conta já estiver acima do máximo, ele corta as piores campanhas na primeira revisão.`)) return
   form.value.enabled = ligar
   await salvar({ enabled: ligar })
 }
@@ -107,6 +120,12 @@ async function alternar() {
 async function testarImagem() {
   await salvar()
   const r = await api<{ ok: boolean, mensagem: string }>('/api/marketing/autopiloto/testar-imagem', { method: 'POST' })
+  aviso.value = (r.ok ? '✓ ' : '✗ ') + r.mensagem
+}
+
+async function testarAviso() {
+  await salvar()
+  const r = await api<{ ok: boolean, mensagem: string }>('/api/marketing/autopiloto/testar-aviso', { method: 'POST' })
   aviso.value = (r.ok ? '✓ ' : '✗ ') + r.mensagem
 }
 
@@ -128,13 +147,14 @@ const diasNoAr = (a: AutoAd) => a.launched_at ? Math.floor((Date.now() - new Dat
 /** Folga do teto — o número que decide se entra criativo novo. */
 const folga = computed(() => {
   const c = dados.value?.conta.comprometido
-  return c == null ? null : Number(form.value.daily_cap || 0) - c
+  return c == null || !dados.value ? null : dados.value.teto_vigente - c
 })
 const vagas = computed(() => folga.value == null ? null : Math.max(0, Math.floor(folga.value / Math.max(1, Number(form.value.budget_per_ad || 25)))))
 
 const corEvento: Record<string, string> = {
   publicou: 'var(--c-teal)', publicaria: 'var(--c-teal)', pausou: 'var(--c-warn-hi)',
   erro: 'var(--c-danger-soft)', sem_saldo: 'var(--c-danger-soft)', descartou: 'var(--c-warn-hi)',
+  acao: 'var(--accent)', recusou: 'var(--c-text-faint)', alerta: 'var(--c-warn-hi)', analise: 'var(--c-text)',
 }
 
 const cartao = 'background:var(--c-bg-deepest);border:1px solid var(--c-surface-1);border-radius:12px;padding:14px 16px;'
@@ -150,8 +170,8 @@ const td = 'font-size:12px;padding:7px 10px;border-top:1px solid var(--c-surface
     <div class="r-wrap r-pad" style="padding-block:16px;border-bottom:1px solid var(--c-surface-1);display:flex;align-items:center;gap:12px;flex-shrink:0;">
       <div style="width:34px;height:34px;border-radius:10px;background:var(--accent);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:17px;">🤖</div>
       <div style="min-width:0;">
-        <div style="font-weight:800;font-size:15px;">Piloto automático</div>
-        <div style="font-size:12px;color:var(--c-text-muted);">Gera, publica e otimiza anúncios sozinho, dentro do teto</div>
+        <div style="font-weight:800;font-size:15px;">Gestor de tráfego</div>
+        <div style="font-size:12px;color:var(--c-text-muted);">Revisa a conta de hora em hora, decide sozinho dentro do teto e te avisa no WhatsApp</div>
       </div>
       <div class="r-break-line" style="flex:1;" />
       <NuxtLink to="/marketing" class="r-tap" style="text-decoration:none;background:var(--c-surface-2);color:var(--c-text-secondary);font-size:12.5px;font-weight:700;padding:8px 13px;border-radius:9px;">← Gerenciador</NuxtLink>
@@ -169,8 +189,8 @@ const td = 'font-size:12px;padding:7px 10px;border-top:1px solid var(--c-surface
             :style="{ background: form.enabled ? 'var(--c-teal)' : 'var(--c-surface-2)', color: form.enabled ? '#fff' : 'var(--c-text-secondary)', border: 'none', fontFamily: 'inherit', fontSize: '13px', fontWeight: 800, padding: '10px 16px', borderRadius: '10px', cursor: 'pointer' }"
           >{{ form.enabled ? '● LIGADO' : '○ DESLIGADO' }}</button>
           <div style="font-size:12px;color:var(--c-text-secondary);line-height:1.6;flex:1;min-width:220px;">
-            <template v-if="form.enabled">Roda todo dia depois das 09:30. Última rodada: {{ quando(form.last_run_at ?? null) }}.</template>
-            <template v-else>Nada acontece com o piloto desligado. Use <strong>Simular agora</strong> para ver o que ele faria.</template>
+            <template v-if="form.enabled">Revisa a conta de hora em hora. Última revisão: {{ quando(form.last_review_at ?? null) }}.</template>
+            <template v-else>Nada acontece com o gestor desligado. Use <strong>Simular agora</strong> para ver o que ele faria (a IA decide de verdade, mas nada é executado).</template>
             <div v-if="form.run_requested_at" style="color:var(--c-warn-hi);">Rodada pedida ({{ form.run_requested_mode }}) — começa em até 10 min.</div>
           </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;">
@@ -194,6 +214,11 @@ const td = 'font-size:12px;padding:7px 10px;border-top:1px solid var(--c-surface
             <div style="font-size:10.5px;color:var(--c-text-faint);">conta inteira · {{ verItens ? 'ocultar' : 'ver de onde vem' }}</div>
           </div>
           <div :style="cartao">
+            <div :style="rotulo">Teto em vigor</div>
+            <div style="font-size:20px;font-weight:800;">{{ dinheiro(dados.teto_vigente) }}</div>
+            <div style="font-size:10.5px;color:var(--c-text-faint);">normal {{ dinheiro(Number(form.daily_cap)) }} · máx. {{ dinheiro(Number(form.max_cap)) }}</div>
+          </div>
+          <div :style="cartao">
             <div :style="rotulo">Folga no teto</div>
             <div :style="{ fontSize: '20px', fontWeight: 800, color: (folga ?? 0) < 0 ? 'var(--c-danger-soft)' : 'inherit' }">{{ dinheiro(folga) }}</div>
             <div style="font-size:10.5px;color:var(--c-text-faint);">{{ vagas === null ? '' : `${vagas} vaga(s) de ${dinheiro(Number(form.budget_per_ad))}` }}</div>
@@ -204,7 +229,8 @@ const td = 'font-size:12px;padding:7px 10px;border-top:1px solid var(--c-surface
         <div v-if="verItens" :style="cartao + 'margin-bottom:14px;font-size:12px;'">
           <div style="color:var(--c-text-muted);margin-bottom:8px;line-height:1.55;">
             O teto vale para a <strong>conta inteira</strong>: estas campanhas, inclusive as que o piloto não criou, já ocupam o orçamento.
-            O piloto não mexe nelas — se a soma passa do teto, ele só deixa de criar. Pause pelo Gerenciador as que não quer mais.
+            <template v-if="form.manage_whole_account">O gestor mexe nelas também: acima do teto máximo ele corta as de pior custo por qualificado na hora.</template>
+            <template v-else>O gestor não mexe nelas — se a soma passa do teto, ele só deixa de criar. Pause pelo Gerenciador as que não quer mais.</template>
           </div>
           <div v-for="i in dados.conta.itens" :key="i.id" style="display:flex;gap:10px;padding:4px 0;border-top:1px solid var(--c-surface-1);">
             <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ i.nome }}</span>
@@ -212,11 +238,57 @@ const td = 'font-size:12px;padding:7px 10px;border-top:1px solid var(--c-surface
           </div>
         </div>
 
+        <!-- Leitura da última revisão -->
+        <div v-if="form.last_analysis" :style="cartao + 'margin-bottom:14px;'">
+          <div :style="rotulo">Leitura do gestor</div>
+          <div style="font-size:12.5px;line-height:1.6;white-space:pre-line;color:var(--c-text-secondary);">{{ form.last_analysis }}</div>
+        </div>
+
+        <!-- Autonomia do gestor -->
+        <div :style="cartao + 'margin-bottom:14px;'">
+          <div style="font-weight:800;font-size:13.5px;margin-bottom:12px;">Autonomia do gestor</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(170px,100%),1fr));gap:12px;">
+            <label><span :style="rotulo">Teto normal (R$/dia)</span><input v-model="form.daily_cap" type="number" min="0" :style="campo"></label>
+            <label><span :style="rotulo">Teto máximo (R$/dia)</span><input v-model="form.max_cap" type="number" min="0" :style="campo"></label>
+            <label><span :style="rotulo">Meta custo/qualificado (R$)</span><input v-model="form.target_cpq" type="number" min="1" :style="campo"></label>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-top:12px;">
+            <input v-model="form.manage_whole_account" type="checkbox"> Gerenciar a conta inteira (inclusive campanhas feitas à mão)
+          </label>
+          <div style="font-size:11px;color:var(--c-text-faint);margin-top:10px;line-height:1.55;">
+            Ele pausa, religa, ajusta verba (no máximo ±50% por vez, cada coisa no máximo 1× a cada 24h), testa público (1 por dia)
+            e escolhe o teto em vigor. Acima do normal, só com custo por qualificado ≤ meta e ao menos 3 qualificados em 3 dias; o máximo ele nunca passa.
+            Recarregar saldo ele não pode — avisa antes de acabar.
+          </div>
+        </div>
+
+        <!-- Avisos -->
+        <div :style="cartao + 'margin-bottom:14px;'">
+          <div style="font-weight:800;font-size:13.5px;margin-bottom:12px;">Avisos no WhatsApp</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(190px,100%),1fr));gap:12px;">
+            <label><span :style="rotulo">Seu WhatsApp (com DDI e DDD)</span><input v-model="form.alert_phone" inputmode="tel" placeholder="5541999999999" :style="campo"></label>
+            <label><span :style="rotulo">Enviar pelo número</span>
+              <select v-model="form.alert_wa_account_id" :style="campo">
+                <option :value="null">automático (1º da Evolution)</option>
+                <option v-for="n in dados.numeros_aviso" :key="n.id" :value="n.id">{{ n.name }} · {{ n.phone }}{{ n.avatars_only ? ' (só fotos)' : '' }}</option>
+              </select>
+            </label>
+            <label><span :style="rotulo">Resumo do dia às</span><input v-model="form.report_hour" type="time" :style="campo"></label>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:12px;flex-wrap:wrap;align-items:center;">
+            <button class="r-tap" :style="botao" :disabled="!form.alert_phone" @click="testarAviso">Salvar e mandar teste</button>
+            <span style="font-size:11px;color:var(--c-text-faint);">Último resumo: {{ quando(form.last_report_at ?? null) }}</span>
+          </div>
+          <div style="font-size:11px;color:var(--c-text-faint);margin-top:10px;line-height:1.55;">
+            Avisa de saldo acabando, conta sem saldo, anúncio reprovado pela Meta, teto máximo estourado e falha repetida — cada aviso no máximo a cada 12h.
+            Sai pela Evolution porque a API oficial só manda mensagem fora da janela de 24h com template aprovado.
+          </div>
+        </div>
+
         <!-- Regras de dinheiro -->
         <div :style="cartao + 'margin-bottom:14px;'">
-          <div style="font-weight:800;font-size:13.5px;margin-bottom:12px;">Regras</div>
+          <div style="font-weight:800;font-size:13.5px;margin-bottom:12px;">Regras fixas dos anúncios que ele cria</div>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(170px,100%),1fr));gap:12px;">
-            <label><span :style="rotulo">Teto da conta (R$/dia)</span><input v-model="form.daily_cap" type="number" min="0" :style="campo"></label>
             <label><span :style="rotulo">Verba por criativo (R$/dia)</span><input v-model="form.budget_per_ad" type="number" min="6" :style="campo"></label>
             <label><span :style="rotulo">Criativos novos por dia</span><input v-model="form.max_new_per_day" type="number" min="0" :style="campo"></label>
             <label><span :style="rotulo">Vida útil (dias)</span><input v-model="form.lifetime_days" type="number" min="2" :style="campo"></label>

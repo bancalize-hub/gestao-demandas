@@ -11,6 +11,7 @@ use App\Models\MarketingMemory;
 use App\Support\FacebookAds;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
 /**
@@ -470,11 +471,15 @@ class Gestor
      *
      * @param  array<string, mixed>|null  $publico
      */
-    public function publicar(int $numero, string $mensagem, ?string $titulo, ?array $publico, ?float $verba, string $motivo): string
+    public function publicar(int $numero, string $mensagem, ?string $titulo, ?array $publico, ?float $verba, string $motivo, bool $peloDono = false): string
     {
         $c = MarketingCreative::where('number', $numero)->first();
         if (! $c) {
             return $this->recusar("Publicar: não existe Criativo {$numero} na biblioteca.");
+        }
+        // O dono pediu a peça para ver antes: só ele libera (respondendo "pode subir").
+        if (! empty($c->brief['aguardando_dono']) && ! $peloDono) {
+            return $this->recusar("RECUSADO: o Criativo {$numero} foi feito a pedido do dono e está esperando ele aprovar no WhatsApp.");
         }
         if (trim($mensagem) === '') {
             return $this->recusar('Publicar: falta o texto do anúncio (--mensagem).');
@@ -502,25 +507,42 @@ class Gestor
 
             return 'FALHOU ao publicar: '.($erro ?? 'veja o diário');
         }
+        if (! empty($c->brief['aguardando_dono'])) {
+            $c->update(['brief' => ['aguardando_dono' => false] + $c->brief]);
+        }
 
         return $this->acao('publicar', (string) $ad->ad_id, "Publiquei o {$c->name} em {$resumo} com R$ {$this->rs($verba)}/dia (anúncio {$ad->ad_id}). {$motivo}");
     }
 
-    /** @param list<int> $referencias  @param list<int> $evitar */
-    public function pedirCriativo(string $brief, array $referencias, array $evitar, int $quantidade, string $motivo): string
+    /**
+     * @param  list<int>  $referencias
+     * @param  list<int>  $evitar
+     * @param  list<string>  $imagens  caminhos (relativos ao storage) de exemplos que o dono mandou
+     * @param  bool  $paraDono  pedido feito na conversa com o dono: as peças voltam para ele ver antes de ir ao ar
+     */
+    public function pedirCriativo(string $brief, array $referencias, array $evitar, int $quantidade, string $motivo,
+        array $imagens = [], ?int $ajustar = null, bool $paraDono = false): string
     {
-        if (mb_strlen(trim($brief)) < 40) {
-            return $this->recusar('Pedido ao designer: o briefing precisa dizer o que a peça comunica, para quem, o registro visual e o porquê (mín. ~40 caracteres).');
+        if (mb_strlen(trim($brief)) < ($ajustar ? 8 : 40)) {
+            return $this->recusar($ajustar ? 'Ajuste: diga o que mudar no criativo.'
+                : 'Pedido ao designer: o briefing precisa dizer o que a peça comunica, para quem, o registro visual e o porquê (mín. ~40 caracteres).');
         }
-        $quantidade = max(1, min(4, $quantidade));
+        if ($ajustar && ! MarketingCreative::where('number', $ajustar)->exists()) {
+            return $this->recusar("Ajuste: não existe Criativo {$ajustar}.");
+        }
+        $imagens = array_values(array_filter($imagens, fn ($i) => str_starts_with($i, 'marketing/') && Storage::exists($i)));
+        $quantidade = $ajustar ? 1 : max(1, min(4, $quantidade));
         if ($this->simular) {
             return $this->acao('pedir_criativo', 'designer', "Pediria {$quantidade} criativo(s) ao designer: ".Str::limit($brief, 200));
         }
         $r = MarketingCreativeRequest::create(['brief' => $brief, 'referencias' => $referencias, 'evitar' => $evitar,
+            'imagens' => $imagens, 'ajustar_criativo' => $ajustar, 'para_dono' => $paraDono,
             'quantidade' => $quantidade, 'motivo' => $motivo, 'status' => MarketingCreativeRequest::PENDENTE]);
 
-        return $this->acao('pedir_criativo', 'pedido-'.$r->id, "Pedi {$quantidade} criativo(s) ao designer (pedido #{$r->id}): ".Str::limit($brief, 200))
-            .' Quando ficarem prontos, aparecem em `gestor criativos --novos` e em `gestor pedidos`.';
+        return $this->acao('pedir_criativo', 'pedido-'.$r->id, ($ajustar ? "Pedi ao designer o ajuste do Criativo {$ajustar}" : "Pedi {$quantidade} criativo(s) ao designer")
+            ." (pedido #{$r->id}): ".Str::limit($brief, 200))
+            .($paraDono ? ' O designer começa assim que esta conversa terminar e manda as peças direto no WhatsApp do dono (leva alguns minutos).'
+                : ' Quando ficarem prontos, aparecem em `gestor criativos --novos` e em `gestor pedidos`.');
     }
 
     public function anotar(string $categoria, string $titulo, string $conteudo, string $confianca): string

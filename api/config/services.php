@@ -37,6 +37,11 @@ return [
 
     // Claude Code via assinatura (mesmo token longevo do Paperclip/Hermes).
     // O CLI roda como subprocesso; sem ANTHROPIC_API_KEY => sem custo de API.
+    // Navegador headless que o designer usa para transformar a peça em HTML em PNG.
+    'chrome' => [
+        'bin' => env('CHROME_BIN', '/opt/chrome-headless/chrome-headless-shell'),
+    ],
+
     'claude' => [
         'oauth_token' => env('CLAUDE_CODE_OAUTH_TOKEN'),
         'bin' => env('CLAUDE_BIN', '/usr/local/bin/claude'),

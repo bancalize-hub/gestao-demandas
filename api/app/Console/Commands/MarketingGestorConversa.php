@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\MarketingAutopilot;
+use App\Services\Marketing\DesignerAgente;
 use App\Services\Marketing\GestorAgente;
 use App\Support\Tenancy;
 use Illuminate\Console\Command;
@@ -44,6 +45,14 @@ class MarketingGestorConversa extends Command
         } finally {
             $lock->release();
         }
+
+        // Pediu criativo na conversa? O designer começa já (e manda as peças no WhatsApp dele),
+        // sem esperar a próxima volta do agendador.
+        $tenancy->run($empresa, function () {
+            foreach (DesignerAgente::atenderFila(MarketingAutopilot::atual(), 3, soDoDono: true) as $s) {
+                $this->line("designer #{$s->id} {$s->status}");
+            }
+        });
 
         return self::SUCCESS;
     }

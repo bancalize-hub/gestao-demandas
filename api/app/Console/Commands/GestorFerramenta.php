@@ -51,6 +51,8 @@ class GestorFerramenta extends Command
         {--referencias= : pedir-criativo: números de criativo de base, ex. 96,97}
         {--evitar= : pedir-criativo: números de criativo cujo caminho não repetir}
         {--quantidade=1 : pedir-criativo}
+        {--ajustar= : pedir-criativo: número do criativo a ajustar (o --brief diz o que mudar)}
+        {--imagens= : pedir-criativo: caminhos das imagens de exemplo que o dono mandou, separados por vírgula}
         {--categoria=aprendizado : anotar}
         {--titulo-memoria= : anotar}
         {--conteudo= : anotar}
@@ -104,9 +106,10 @@ class GestorFerramenta extends Command
                     'verba' => $this->g->verba((string) $this->argument('alvo'), (float) str_replace(',', '.', (string) $this->argument('valor')), $this->motivo(), (bool) $this->option('forcar')),
                     'teto' => $this->g->teto((float) str_replace(',', '.', (string) $this->argument('alvo')), $this->motivo()),
                     'publicar' => $this->g->publicar((int) $this->argument('alvo'), (string) $this->option('mensagem'), $this->option('titulo'),
-                        $this->publico(), $this->option('verba') ? (float) $this->option('verba') : null, $this->motivo()),
+                        $this->publico(), $this->option('verba') ? (float) $this->option('verba') : null, $this->motivo(), getenv('GESTOR_DONO') === '1'),
                     'pedir-criativo' => $this->g->pedirCriativo((string) $this->option('brief'), $this->numeros('referencias'), $this->numeros('evitar'),
-                        (int) $this->option('quantidade'), $this->motivo()),
+                        (int) $this->option('quantidade'), $this->motivo(), $this->imagens(), $this->option('ajustar') ? (int) $this->option('ajustar') : null,
+                        getenv('GESTOR_DONO') === '1'),
                     'anotar' => $this->g->anotar((string) $this->option('categoria'), (string) $this->option('titulo-memoria'), (string) $this->option('conteudo'), (string) $this->option('confianca')),
                     'avisar' => $this->g->avisar((string) $this->option('texto')),
                     'ordens' => $this->g->ordens(),
@@ -280,6 +283,15 @@ class GestorFerramenta extends Command
     }
 
     /** @return list<int> */
+    /** @return list<string> caminhos relativos ao storage (o agente vê os absolutos) */
+    private function imagens(): array
+    {
+        $base = rtrim(Storage::path(''), '/').'/';
+
+        return array_values(array_filter(array_map(fn ($i) => str_starts_with(trim($i), $base) ? substr(trim($i), strlen($base)) : trim($i),
+            explode(',', (string) $this->option('imagens')))));
+    }
+
     private function numeros(string $opcao): array
     {
         return array_values(array_filter(array_map('intval', preg_split('/\D+/', (string) $this->option($opcao)) ?: [])));
@@ -291,7 +303,7 @@ class GestorFerramenta extends Command
             .'recortes <idade|genero|posicionamento|regiao|hora|dispositivo> [--dias=30] | criativos [--novos] | pedidos | diario | memoria | '
             .'pausar <ad_id> --motivo= | religar <ad_id> --motivo= [--forcar] | verba <orcamento_id> <R$> --motivo= [--forcar] | teto <R$> --motivo= | '
             .'publicar <nº criativo> --mensagem= [--titulo=] [--idade=25-44 --genero=1 --plataformas=instagram --posicoes=reels] [--verba=] --motivo= | '
-            .'pedir-criativo --brief= [--referencias=96,97] [--evitar=8] [--quantidade=1] --motivo= | anotar --titulo-memoria= --conteudo= [--categoria=] [--confianca=] | '
+            .'pedir-criativo --brief= [--referencias=96,97] [--evitar=8] [--quantidade=1] [--ajustar=N] [--imagens=caminho,…] --motivo= | anotar --titulo-memoria= --conteudo= [--categoria=] [--confianca=] | '
             .'avisar --texto= | ordens | ordem --texto= (instrução do dono que vale sempre) | revogar-ordem <n> | '
             .'teto-maximo <R$> --motivo= (só quando o dono pede) | voltar-em <minutos> --motivo=';
     }

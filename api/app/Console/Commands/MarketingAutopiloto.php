@@ -4,7 +4,6 @@ namespace App\Console\Commands;
 
 use App\Models\MarketingAutopilot;
 use App\Models\MarketingAutopilotEvent;
-use App\Models\MarketingCreativeRequest;
 use App\Services\Marketing\Autopilot;
 use App\Services\Marketing\AutopilotBrain;
 use App\Services\Marketing\Avisos;
@@ -156,13 +155,9 @@ class MarketingAutopiloto extends Command
 
     private function designer(MarketingAutopilot $cfg): void
     {
-        $pedido = MarketingCreativeRequest::where('status', MarketingCreativeRequest::PENDENTE)->orderBy('id')->first();
-        if (! $pedido) {
-            return;
+        foreach (DesignerAgente::atenderFila($cfg) as $s) {
+            $this->line("Designer: sessão #{$s->id} {$s->status}: ".($s->resumo ?? $s->erro));
         }
-        $this->info("Designer atendendo o pedido #{$pedido->id}");
-        $s = (new DesignerAgente($cfg))->atender($pedido);
-        $this->line("  sessão #{$s->id} {$s->status}: ".($s->resumo ?? $s->erro));
     }
 
     private function relatorio(MarketingAutopilot $cfg, Gestor $gestor): void

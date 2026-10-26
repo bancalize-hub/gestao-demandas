@@ -9,6 +9,7 @@ use App\Support\Evolution;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * O dono conversando com o gestor pelo WhatsApp.
@@ -53,15 +54,22 @@ class GestorWhatsApp
         $msg = self::desembrulhar($m['message'] ?? []);
         $texto = trim((string) ($msg['conversation'] ?? $msg['extendedTextMessage']['text'] ?? $msg['imageMessage']['caption'] ?? ''));
         $audio = isset($msg['audioMessage']);
-        if ($texto === '' && ! $audio) {
+        $imagem = isset($msg['imageMessage']);
+        if ($texto === '' && ! $audio && ! $imagem) {
             return true; // figurinha, reação etc.: não é instrução
+        }
+        // Respondeu a uma mensagem (ex.: a imagem de um criativo)? Guarda qual.
+        $citada = '';
+        foreach (['extendedTextMessage', 'imageMessage', 'audioMessage'] as $tipo) {
+            $citada = $citada ?: (string) ($msg[$tipo]['contextInfo']['stanzaId'] ?? '');
         }
 
         MarketingAutopilotEvent::create([
             'company_id' => $conta->company_id,
             'kind' => 'dono',
-            'message' => $texto !== '' ? $texto : '[áudio — transcrevendo]',
-            'data' => ['wa_id' => $waId, 'audio' => $audio, 'instancia' => $conta->instance, 'lido' => false],
+            'message' => $texto !== '' ? $texto : ($audio ? '[áudio — transcrevendo]' : '[imagem]'),
+            'data' => ['wa_id' => $waId, 'audio' => $audio, 'imagem' => $imagem, 'responde_a' => $citada ?: null,
+                'instancia' => $conta->instance, 'lido' => false],
         ]);
 
         self::acordar((int) $conta->company_id);
@@ -84,6 +92,30 @@ class GestorWhatsApp
         };
 
         return $norm($a) === $norm($b);
+    }
+
+    /**
+     * Baixa a imagem que o dono mandou (exemplo de criativo, print) para a pasta que o gestor
+     * e o designer conseguem olhar.
+     *
+     * @return string|null caminho relativo ao storage
+     */
+    public static function baixarImagem(MarketingAutopilotEvent $e): ?string
+    {
+        $base64 = Evolution::mediaBase64((string) ($e->data['wa_id'] ?? ''), $e->data['instancia'] ?? null);
+        $bytes = $base64 ? base64_decode($base64, true) : false;
+        if (! $bytes) {
+            return null;
+        }
+        $ext = match (true) {
+            str_starts_with($bytes, "\x89PNG") => 'png',
+            str_starts_with($bytes, 'RIFF') => 'webp',
+            default => 'jpg',
+        };
+        $path = 'marketing/dono/'.now()->format('Ymd-His').'-'.$e->id.'.'.$ext;
+        Storage::put($path, $bytes);
+
+        return $path;
     }
 
     /** Transcreve o áudio do dono (Groq Whisper, o mesmo do atendimento). */

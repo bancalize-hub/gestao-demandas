@@ -20,5 +20,5 @@ class MarketingCreativeRequest extends Model
 
     protected $guarded = [];
 
-    protected $casts = ['referencias' => 'array', 'evitar' => 'array', 'creative_ids' => 'array'];
+    protected $casts = ['referencias' => 'array', 'evitar' => 'array', 'creative_ids' => 'array', 'imagens' => 'array', 'para_dono' => 'boolean'];
 }

@@ -4,6 +4,7 @@ namespace App\Services\Marketing;
 
 use App\Models\MarketingAutopilot;
 use App\Models\MarketingAutopilotEvent;
+use App\Models\MarketingCreative;
 use App\Models\MarketingGestorSession;
 use App\Models\MarketingMemory;
 use App\Support\Claude;
@@ -37,7 +38,7 @@ class GestorAgente
         // Mensagem do dono que chegou enquanto outro turno rodava entra neste — e a resposta
         // vai para ele no WhatsApp, como se fosse a conversa.
         $doDono = $this->simular ? [] : $this->mensagensDoDono();
-        $pedido = $this->pedido($urgente).($doDono ? "\n\n".$this->blocoDoDono($doDono) : '');
+        $pedido = $this->pedido($urgente).($doDono ? "\n\n".$this->blocoDoDono($doDono)."\n\n".$this->blocoDeCriativos() : '');
 
         $s = self::turno('gestor', $this->cfg, $this->simular, $this->sistema(), $pedido,
             ['Bash(php artisan gestor *)', 'Bash(php artisan gestor:*)', self::leituraDeImagens()],
@@ -75,6 +76,7 @@ class GestorAgente
             .'e aja se for o caso), e só o que ele pediu. Se for uma instrução que deve valer daqui em diante, registre com '
             .'`php artisan gestor ordem --texto="…"`. Se ele mandar mudar o teto máximo, use `gestor teto-maximo`. '
             .'Se faltar algo para entender o que ele quer, pergunte. Não mexa no horário da próxima revisão a menos que faça sentido.'
+            ."\n\n".$this->blocoDeCriativos()
             ."\n\nSua resposta final vai DIRETO para o WhatsApp dele: curta (até ~10 linhas), em português, tom de "
             .'conversa de trabalho, com números quando ajudarem. Sem títulos markdown nem tabelas — WhatsApp só tem *negrito*.';
 
@@ -96,12 +98,46 @@ class GestorAgente
                 $txt = GestorWhatsApp::transcrever($e);
                 $e->message = $txt !== '' ? "[áudio] {$txt}" : '[áudio que não consegui transcrever]';
             }
+            if (! empty($dados['imagem']) && empty($dados['arquivo'])) {
+                $dados['arquivo'] = GestorWhatsApp::baixarImagem($e);
+                $e->message = trim(($e->message === '[imagem]' ? '' : $e->message).' '.($dados['arquivo']
+                    ? '[mandou uma imagem: '.Storage::path($dados['arquivo']).' — olhe com Read]' : '[mandou uma imagem que não consegui baixar]'));
+            }
+            if (! empty($dados['responde_a'])) {
+                $criativo = MarketingAutopilotEvent::where('kind', 'enviado_dono')->where('data->wa_id', $dados['responde_a'])->value('data');
+                if ($criativo) {
+                    $e->message = "(respondendo à imagem do Criativo {$criativo['criativo']}) ".$e->message;
+                }
+            }
             $dados['lido'] = true;
             $e->data = $dados;
             $e->save();
         }
 
         return $msgs;
+    }
+
+    /**
+     * Criativos pela conversa: o dono pede peça, manda exemplo, pede ajuste e aprova — tudo no
+     * WhatsApp. O designer roda logo depois desta conversa e manda as imagens direto para ele.
+     */
+    private function blocoDeCriativos(): string
+    {
+        $mostrados = MarketingAutopilotEvent::where('kind', 'enviado_dono')->where('created_at', '>=', now()->subDays(7))
+            ->latest('id')->limit(8)->get()
+            ->map(fn ($e) => '- Criativo '.$e->data['criativo'].' (pedido #'.$e->data['pedido'].', '.$e->created_at->format('d/m H:i').')'
+                .(($c = MarketingCreative::where('number', $e->data['criativo'])->first()) && ! empty($c->brief['aguardando_dono']) ? ' — esperando ele aprovar' : ' — aprovado/publicado'))
+            ->implode("\n");
+
+        return "CRIATIVOS PELO WHATSAPP:\n"
+            .'- Ele pediu um criativo → `php artisan gestor pedir-criativo --brief="…" --motivo="pedido do dono"` com um briefing completo '
+            .'(o que comunica, para quem, registro visual, o que ele falou). Use o que você sabe da conta (o que qualifica, o que falha) para enriquecer o briefing, sem contrariar o pedido dele.'."\n"
+            .'- Ele mandou imagem de exemplo → olhe com Read e passe o caminho em `--imagens=` (o designer vai seguir o estilo).'."\n"
+            .'- Ele pediu mudança num criativo (ou respondeu à imagem dele) → `--ajustar=<número> --brief="o que mudar, exatamente como ele disse"`.'."\n"
+            .'- O designer começa assim que você terminar e manda as imagens direto no WhatsApp dele (leva alguns minutos): diga isso a ele, não mande imagem você mesmo.'."\n"
+            .'- Ele aprovou ("pode subir", "manda pro ar") → `gestor publicar <número> --mensagem="…"` (use o texto do anúncio do criativo, `gestor criativos --novos` mostra), respeitando o teto. '
+            .'Criativo feito a pedido dele NÃO vai ao ar sem essa aprovação.'
+            .($mostrados ? "\nÚltimos criativos que ele recebeu:\n".$mostrados : '');
     }
 
     /** @param list<MarketingAutopilotEvent> $msgs */

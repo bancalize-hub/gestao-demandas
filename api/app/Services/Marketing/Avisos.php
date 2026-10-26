@@ -61,6 +61,23 @@ class Avisos
     }
 
     /**
+     * Manda uma imagem ao dono (o criativo que o designer fez para ele ver).
+     *
+     * @return string|null o id da mensagem no WhatsApp — é como a resposta dele à imagem é ligada ao criativo
+     */
+    public function enviarImagem(string $arquivo, string $legenda, string $nome): ?string
+    {
+        $fone = preg_replace('/\D/', '', (string) $this->cfg->alert_phone);
+        $conta = $this->conta();
+        if ($this->simular || $fone === '' || ! $conta || ! is_file($arquivo)) {
+            return null;
+        }
+        $mime = mime_content_type($arquivo) ?: 'image/png';
+
+        return Evolution::sendMedia($fone, base64_encode((string) file_get_contents($arquivo)), $mime, $nome, $legenda, 'image', $conta->instance) ?: null;
+    }
+
+    /**
      * O número escolhido no painel, ou o primeiro da Evolution — preferindo um que atende,
      * mas aceitando o "só fotos": ele segue conectado, e mandar 1–2 avisos por dia ao dono
      * não é o tráfego de mensagem que essa marcação existe para evitar.

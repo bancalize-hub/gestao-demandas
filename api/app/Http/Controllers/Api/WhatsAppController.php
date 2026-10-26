@@ -723,6 +723,19 @@ class WhatsAppController extends Controller
             return response()->json(['ok' => true, 'ignored' => 'unknown-instance']);
         }
 
+        // O dono falando com o gestor de tráfego: sai daqui antes de tudo (inclusive do
+        // "só fotos", que é justamente o número por onde os avisos dele saem).
+        if ($event === 'messages.upsert') {
+            $data = $request->input('data', []);
+            $doDono = false;
+            foreach (isset($data['key']) ? [$data] : ($data['messages'] ?? []) as $m) {
+                $doDono = is_array($m) && \App\Services\Marketing\GestorWhatsApp::receber($m, $account) || $doDono;
+            }
+            if ($doDono) {
+                return response()->json(['ok' => true, 'handled' => 'gestor']);
+            }
+        }
+
         // Número mantido só como fonte de foto: nada de mensagem entra por ele. `connection.*`
         // continua passando de propósito — é o que mantém `state` em dia, e sem `state=open`
         // o `wa:avatars` considera a empresa sem fonte de foto e para de buscar.

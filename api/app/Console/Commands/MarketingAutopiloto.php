@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\MarketingAutopilot;
+use App\Models\MarketingAutopilotEvent;
 use App\Models\MarketingCreativeRequest;
 use App\Services\Marketing\Autopilot;
 use App\Services\Marketing\AutopilotBrain;
@@ -14,6 +15,7 @@ use App\Support\Evolution;
 use App\Support\FacebookAds;
 use App\Support\Tenancy;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Cache;
 
 /**
  * O expediente do gestor de tráfego e do designer, chamado pelo agendador a cada 10 min.
@@ -106,22 +108,50 @@ class MarketingAutopiloto extends Command
         // Acordar cedo tem limite: um alerta que se repete não pode virar turno de 10 em 10 min.
         $podeAcordar = $urgente && (! $cfg->last_review_at || $cfg->last_review_at->lte(now()->subMinutes(30)));
 
-        if ($manual || $modo === 'simular' || $modo === 'real' || ($cfg->enabled && ($hora || $podeAcordar))) {
-            if (! $simular) {
-                // Marca antes de começar: o turno leva minutos e o agendador não pode abrir outro.
-                $cfg->update(['last_review_at' => now(), 'next_review_at' => now()->addMinutes(GestorAgente::PADRAO_INTERVALO)]);
+        // Um turno por vez por empresa: a conversa com o dono (aberta pelo webhook) e a revisão
+        // mexem na mesma conta e não podem decidir em paralelo.
+        $lock = Cache::lock("gestor-turno:{$cfg->company_id}", 2400);
+        $querTurno = $manual || $modo === 'simular' || $modo === 'real' || ($cfg->enabled && ($hora || $podeAcordar));
+        $temDono = MarketingAutopilotEvent::where('kind', 'dono')->where('data->lido', false)->exists();
+        if (($querTurno || $temDono) && ! $lock->get()) {
+            $this->line('Outro turno do gestor está rodando — fica para a próxima chamada.');
+
+            return;
+        }
+
+        try {
+            if ($querTurno) {
+                $this->turno($cfg, $simular, $podeAcordar || $manual ? $urgente : null);
             }
-            $this->info('Turno do gestor'.($simular ? ' (simulação)' : '').($urgente ? " — urgente: {$urgente}" : ''));
-            $s = (new GestorAgente($cfg->fresh(), $simular))->rodar($podeAcordar || $manual ? $urgente : null);
-            $this->line("  sessão #{$s->id} {$s->status}, {$s->ferramentas_usadas} ferramenta(s)");
-            $this->line((string) ($s->resumo ?? $s->erro));
-            $cfg->update(['last_result' => ($simular ? 'Simulação: ' : '').($s->resumo ?? 'Falhou: '.$s->erro)]);
+            // Mensagem do dono que chegou durante o turno (ou com a trava ocupada) não fica sem resposta.
+            if ($cfg->enabled && ! $simular) {
+                while ((new GestorAgente($cfg->fresh()))->conversar()) {
+                    // responde até esvaziar
+                }
+            }
+        } finally {
+            if ($querTurno || $temDono) {
+                $lock->release();
+            }
         }
 
         if ($cfg->enabled && ! $manual) {
             $this->designer($cfg);
             $this->relatorio($cfg, $gestor);
         }
+    }
+
+    private function turno(MarketingAutopilot $cfg, bool $simular, ?string $urgente): void
+    {
+        if (! $simular) {
+            // Marca antes de começar: o turno leva minutos e o agendador não pode abrir outro.
+            $cfg->update(['last_review_at' => now(), 'next_review_at' => now()->addMinutes(GestorAgente::PADRAO_INTERVALO)]);
+        }
+        $this->info('Turno do gestor'.($simular ? ' (simulação)' : '').($urgente ? " — urgente: {$urgente}" : ''));
+        $s = (new GestorAgente($cfg->fresh(), $simular))->rodar($urgente);
+        $this->line("  sessão #{$s->id} {$s->status}, {$s->ferramentas_usadas} ferramenta(s)");
+        $this->line((string) ($s->resumo ?? $s->erro));
+        $cfg->update(['last_result' => ($simular ? 'Simulação: ' : '').($s->resumo ?? 'Falhou: '.$s->erro)]);
     }
 
     private function designer(MarketingAutopilot $cfg): void

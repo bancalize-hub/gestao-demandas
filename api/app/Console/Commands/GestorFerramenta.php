@@ -30,7 +30,7 @@ use Illuminate\Support\Str;
 class GestorFerramenta extends Command
 {
     protected $signature = 'gestor
-        {acao? : conta | anuncios | anuncio | conversas | recortes | criativos | pedidos | diario | memoria | pausar | religar | verba | teto | publicar | pedir-criativo | anotar | avisar | voltar-em}
+        {acao? : conta | anuncios | anuncio | conversas | recortes | criativos | pedidos | diario | memoria | ordens | pausar | religar | verba | teto | teto-maximo | publicar | pedir-criativo | anotar | avisar | ordem | revogar-ordem | voltar-em}
         {alvo? : id do anúncio / orçamento, número do criativo, valor ou minutos}
         {valor? : valor em R$ (verba)}
         {--motivo= : por que (obrigatório nas ações)}
@@ -55,7 +55,7 @@ class GestorFerramenta extends Command
         {--titulo-memoria= : anotar}
         {--conteudo= : anotar}
         {--confianca=hipotese : anotar: medido | hipotese}
-        {--texto= : avisar}';
+        {--texto= : avisar / ordem}';
 
     protected $description = 'Ferramentas do agente gestor de tráfego (consultar e agir na conta de anúncios)';
 
@@ -109,6 +109,10 @@ class GestorFerramenta extends Command
                         (int) $this->option('quantidade'), $this->motivo()),
                     'anotar' => $this->g->anotar((string) $this->option('categoria'), (string) $this->option('titulo-memoria'), (string) $this->option('conteudo'), (string) $this->option('confianca')),
                     'avisar' => $this->g->avisar((string) $this->option('texto')),
+                    'ordens' => $this->g->ordens(),
+                    'ordem' => $this->g->ordem((string) $this->option('texto')),
+                    'revogar-ordem' => $this->g->revogarOrdem((int) $this->argument('alvo')),
+                    'teto-maximo' => $this->g->tetoMaximo((float) str_replace(',', '.', (string) $this->argument('alvo')), (string) $this->option('motivo'), getenv('GESTOR_DONO') === '1'),
                     'voltar-em' => $this->g->voltarEm((int) $this->argument('alvo'), (string) ($this->option('motivo') ?: 'sem motivo')),
                     default => $this->ajuda(),
                 };
@@ -288,6 +292,7 @@ class GestorFerramenta extends Command
             .'pausar <ad_id> --motivo= | religar <ad_id> --motivo= [--forcar] | verba <orcamento_id> <R$> --motivo= [--forcar] | teto <R$> --motivo= | '
             .'publicar <nº criativo> --mensagem= [--titulo=] [--idade=25-44 --genero=1 --plataformas=instagram --posicoes=reels] [--verba=] --motivo= | '
             .'pedir-criativo --brief= [--referencias=96,97] [--evitar=8] [--quantidade=1] --motivo= | anotar --titulo-memoria= --conteudo= [--categoria=] [--confianca=] | '
-            .'avisar --texto= | voltar-em <minutos> --motivo=';
+            .'avisar --texto= | ordens | ordem --texto= (instrução do dono que vale sempre) | revogar-ordem <n> | '
+            .'teto-maximo <R$> --motivo= (só quando o dono pede) | voltar-em <minutos> --motivo=';
     }
 }

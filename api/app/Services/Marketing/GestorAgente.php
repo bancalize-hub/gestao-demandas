@@ -34,7 +34,12 @@ class GestorAgente
 
     public function rodar(?string $urgente = null): MarketingGestorSession
     {
-        return self::turno('gestor', $this->cfg, $this->simular, $this->sistema(), $this->pedido($urgente),
+        // Mensagem do dono que chegou enquanto outro turno rodava entra neste — e a resposta
+        // vai para ele no WhatsApp, como se fosse a conversa.
+        $doDono = $this->simular ? [] : $this->mensagensDoDono();
+        $pedido = $this->pedido($urgente).($doDono ? "\n\n".$this->blocoDoDono($doDono) : '');
+
+        $s = self::turno('gestor', $this->cfg, $this->simular, $this->sistema(), $pedido,
             ['Bash(php artisan gestor *)', 'Bash(php artisan gestor:*)', self::leituraDeImagens()],
             function (MarketingGestorSession $s) {
                 if ($this->simular) {
@@ -45,7 +50,76 @@ class GestorAgente
                 $marcou = MarketingAutopilotEvent::where('session_id', $s->id)->where('kind', 'agenda')->exists();
                 $this->cfg->update(['last_review_at' => now(), 'last_run_at' => now(), 'last_analysis' => $s->resumo]
                     + ($marcou ? [] : ['next_review_at' => now()->addMinutes(self::PADRAO_INTERVALO)]));
-            });
+            }, $doDono ? ['GESTOR_DONO' => '1'] : []);
+
+        if ($doDono) {
+            $this->responder($s);
+        }
+
+        return $s;
+    }
+
+    /**
+     * O dono mandou mensagem no WhatsApp: turno curto, focado no que ele pediu, com a
+     * resposta voltando por lá. Devolve null se não havia nada para ler.
+     */
+    public function conversar(): ?MarketingGestorSession
+    {
+        $msgs = $this->mensagensDoDono();
+        if (! $msgs) {
+            return null;
+        }
+
+        $pedido = 'Agora: '.now()->format('d/m/Y H:i (l)').".\n\n".$this->blocoDoDono($msgs)."\n\n"
+            .'Isto é uma CONVERSA, não o seu turno completo de revisão: faça o que ele pediu (investigue o necessário '
+            .'e aja se for o caso), e só o que ele pediu. Se for uma instrução que deve valer daqui em diante, registre com '
+            .'`php artisan gestor ordem --texto="…"`. Se ele mandar mudar o teto máximo, use `gestor teto-maximo`. '
+            .'Se faltar algo para entender o que ele quer, pergunte. Não mexa no horário da próxima revisão a menos que faça sentido.'
+            ."\n\nSua resposta final vai DIRETO para o WhatsApp dele: curta (até ~10 linhas), em português, tom de "
+            .'conversa de trabalho, com números quando ajudarem. Sem títulos markdown nem tabelas — WhatsApp só tem *negrito*.';
+
+        $s = self::turno('conversa', $this->cfg, false, $this->sistema(), $pedido,
+            ['Bash(php artisan gestor *)', 'Bash(php artisan gestor:*)', self::leituraDeImagens()],
+            null, ['GESTOR_DONO' => '1']);
+        $this->responder($s);
+
+        return $s;
+    }
+
+    /** @return list<MarketingAutopilotEvent> mensagens do dono ainda não lidas (já marcadas como lidas) */
+    private function mensagensDoDono(): array
+    {
+        $msgs = MarketingAutopilotEvent::where('kind', 'dono')->where('data->lido', false)->orderBy('id')->get()->all();
+        foreach ($msgs as $e) {
+            $dados = $e->data;
+            if (! empty($dados['audio'])) {
+                $txt = GestorWhatsApp::transcrever($e);
+                $e->message = $txt !== '' ? "[áudio] {$txt}" : '[áudio que não consegui transcrever]';
+            }
+            $dados['lido'] = true;
+            $e->data = $dados;
+            $e->save();
+        }
+
+        return $msgs;
+    }
+
+    /** @param list<MarketingAutopilotEvent> $msgs */
+    private function blocoDoDono(array $msgs): string
+    {
+        $linhas = array_map(fn ($e) => '- '.$e->created_at->format('d/m H:i').': '.$e->message, $msgs);
+
+        return "O DONO te mandou pelo WhatsApp (responda a ele — é o seu chefe):\n".implode("\n", $linhas);
+    }
+
+    private function responder(MarketingGestorSession $s): void
+    {
+        $texto = trim((string) ($s->resumo ?: ''));
+        if ($texto === '') {
+            $texto = 'Recebi sua mensagem, mas não consegui terminar agora ('.($s->erro ?: 'erro desconhecido').'). Tento de novo no próximo turno.';
+        }
+        // Resposta é resposta: sem a trava anti-repetição dos alertas.
+        (new Avisos($this->cfg))->enviar('resposta-'.$s->id, $texto, 0);
     }
 
     /**
@@ -129,6 +203,7 @@ class GestorAgente
         $c = $this->cfg;
         $instrucoes = trim((string) $c->instructions) ?: '(nenhuma)';
         $memoria = MarketingMemory::contexto(60) ?: '(vazia)';
+        $ordens = collect($c->owner_orders ?? [])->values()->map(fn ($o, $i) => ($i + 1).'. ['.($o['quando'] ?? '?').'] '.($o['texto'] ?? ''))->implode("\n") ?: '(nenhuma)';
         $alcance = $c->manage_whole_account
             ? 'Você cuida da CONTA INTEIRA, inclusive das campanhas que o dono criou à mão.'
             : 'Você só pode mexer nos anúncios criados por você (os outros aparecem só para você saber quanto do teto está tomado).';
@@ -186,6 +261,11 @@ Ajuda completa: `php artisan gestor`.
   Você escolhe o teto em vigor (`gestor teto`); acima do normal, só com o custo dos últimos
   3 dias dentro da meta. Se a conta estiver acima do máximo, reduza (pausar/verba) já.
 - Verba muda no máximo ±50% por vez. Repetir mexida em menos de 24h exige --forcar.
+
+## Ordens do dono (dadas por WhatsApp — PRIORIDADE MÁXIMA, acima de tudo abaixo)
+{$ordens}
+O dono fala com você pelo WhatsApp e lê os seus avisos por lá. Para falar com ele fora de
+um pedido dele, use `gestor avisar` — com parcimônia: só quando ele precisa saber ou agir.
 
 ## Instruções da empresa (prioridade sobre o resto; valem também para o que você pede ao designer)
 {$instrucoes}

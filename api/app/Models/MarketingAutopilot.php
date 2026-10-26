@@ -35,6 +35,7 @@ class MarketingAutopilot extends Model
         'kill_rate' => 'integer',
         'image_api_key' => 'encrypted',
         'targeting' => 'array',
+        'owner_orders' => 'array',
         'run_requested_at' => 'datetime',
         'last_run_at' => 'datetime',
         'last_report_at' => 'datetime',

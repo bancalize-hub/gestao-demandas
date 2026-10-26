@@ -377,7 +377,7 @@ const td = 'font-size:12px;padding:7px 10px;border-top:1px solid var(--c-surface
           <div v-if="!dados.sessoes.length" style="padding:14px 16px;font-size:12px;color:var(--c-text-faint);">Nenhum turno ainda.</div>
           <div v-for="t in dados.sessoes" :key="t.id" style="border-top:1px solid var(--c-surface-1);">
             <div class="r-tap" style="padding:10px 16px;cursor:pointer;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;font-size:12px;" @click="abrirSessao(t)">
-              <strong>{{ t.agente === 'designer' ? '🎨 Designer' : '📊 Gestor' }}</strong>
+              <strong>{{ t.agente === 'designer' ? '🎨 Designer' : t.agente === 'conversa' ? '💬 Conversa no WhatsApp' : '📊 Gestor' }}</strong>
               <span style="color:var(--c-text-faint);">{{ quando(t.started_at) }}{{ t.simulated ? ' · simulação' : '' }}</span>
               <span :style="{ fontWeight: 800, color: t.status === 'ok' ? 'var(--c-teal)' : t.status === 'rodando' ? 'var(--c-warn-hi)' : 'var(--c-danger-soft)' }">{{ t.status }}</span>
               <span style="color:var(--c-text-faint);">{{ t.ferramentas_usadas }} consulta(s)/ação(ões)</span>

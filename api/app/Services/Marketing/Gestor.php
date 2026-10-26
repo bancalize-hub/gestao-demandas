@@ -561,6 +561,62 @@ class Gestor
         return 'Combinado: volto às '.now()->addMinutes($minutos)->format('H:i').'.';
     }
 
+    /** Guarda uma instrução do dono que vale para todos os turnos seguintes. */
+    public function ordem(string $texto): string
+    {
+        $texto = trim($texto);
+        if ($texto === '') {
+            return 'Ordem vazia.';
+        }
+        $ordens = $this->cfg->owner_orders ?? [];
+        $ordens[] = ['texto' => Str::limit($texto, 600, ''), 'quando' => now()->format('d/m/Y H:i')];
+        $this->cfg->update(['owner_orders' => array_values($ordens)]);
+        $this->registrar('ordem', "Ordem do dono registrada: {$texto}");
+
+        return 'Registrada como ordem nº '.count($ordens).'. Vale em todos os turnos daqui em diante.';
+    }
+
+    public function ordens(): string
+    {
+        $ordens = $this->cfg->owner_orders ?? [];
+
+        return $ordens ? collect($ordens)->values()->map(fn ($o, $i) => ($i + 1).". [{$o['quando']}] {$o['texto']}")->implode("\n") : '(nenhuma ordem registrada)';
+    }
+
+    public function revogarOrdem(int $n): string
+    {
+        $ordens = array_values($this->cfg->owner_orders ?? []);
+        if (! isset($ordens[$n - 1])) {
+            return "Não existe ordem nº {$n}.";
+        }
+        $saiu = $ordens[$n - 1]['texto'];
+        array_splice($ordens, $n - 1, 1);
+        $this->cfg->update(['owner_orders' => $ordens]);
+        $this->registrar('ordem', "Ordem revogada: {$saiu}");
+
+        return "Revogada: {$saiu}";
+    }
+
+    /**
+     * O teto máximo é do DONO: só muda quando ele mesmo pede (turno aberto por mensagem
+     * dele no WhatsApp). O teto normal acompanha quando fica acima do novo máximo.
+     */
+    public function tetoMaximo(float $valor, string $motivo, bool $peloDono): string
+    {
+        if (! $peloDono) {
+            return $this->recusar('RECUSADO: o teto máximo é decisão do dono — só muda quando ele pede pelo WhatsApp.');
+        }
+        $valor = round(max(0, $valor), 2);
+        $antes = $this->cfg->max_cap;
+        $dados = ['max_cap' => $valor];
+        if ($this->cfg->daily_cap > $valor) {
+            $dados['daily_cap'] = $valor;
+        }
+        $this->cfg->update($dados);
+
+        return $this->acao('teto_maximo', 'teto', sprintf('Teto máximo: R$ %s → R$ %s/dia (pedido do dono). %s', $this->rs($antes), $this->rs($valor), $motivo));
+    }
+
     /** Custo por qualificado da conta nos últimos 3 dias (com hoje). @return array{cpq_3d: ?float, qualificados_3d: int} */
     private function contaRecente(): array
     {

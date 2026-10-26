@@ -175,7 +175,9 @@ class Claude
         $buffer = '';
         $res = Process::timeout($timeout)
             ->path($cwd)
-            ->env(self::ambiente($token) + $env)
+            // PATH explícito: aberto pelo webhook (PHP-FPM → nohup) o filho herda um PATH sem o
+            // php, e o agente ficava sem conseguir rodar `php artisan gestor` (26/10).
+            ->env(self::ambiente($token) + $env + ['PATH' => PHP_BINDIR.':/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'])
             ->input($prompt)
             ->run($args, function (string $tipo, string $saida) use (&$buffer, &$resultado, $aoEvento) {
                 if ($tipo !== 'out') {

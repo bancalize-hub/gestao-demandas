@@ -84,8 +84,8 @@ class MeetingReminderTick extends Command
             $tenancy->set((int) $meeting->company_id);
 
             try {
-                $parts = $this->messageParts($meeting, $segundo);
-                $text = $this->buildMessage($parts, $segundo);
+                $parts = self::messageParts($meeting, $segundo);
+                $text = self::buildMessage($parts, $segundo);
 
                 $channel = $meeting->conversation ? Wa::forConversation($meeting->conversation) : Wa::primary();
 
@@ -146,7 +146,7 @@ class MeetingReminderTick extends Command
      * São exatamente as 3 variáveis do template da Meta, para o cliente ler a mesma
      * coisa venha o aviso por texto livre ou por template.
      */
-    private function messageParts(Meeting $meeting, bool $segundo = false): array
+    public static function messageParts(Meeting $meeting, bool $segundo = false): array
     {
         $tz = config('app.timezone', 'America/Sao_Paulo');
         $start = Carbon::parse($meeting->starts_at)->setTimezone($tz);
@@ -186,7 +186,7 @@ class MeetingReminderTick extends Command
     }
 
     /** Texto livre (dentro da janela de 24h) — mesmo conteúdo do template. */
-    private function buildMessage(array $parts, bool $segundo = false): string
+    public static function buildMessage(array $parts, bool $segundo = false): string
     {
         if ($segundo) {
             return "Oi, {$parts['nome']}! ⏰ Nossa reunião começa {$parts['quando']}."

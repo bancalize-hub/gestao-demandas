@@ -50,7 +50,7 @@ class MarketingAutopilotController extends Controller
                 ->orderByRaw("status = 'ativo' DESC")->orderByDesc('id')->limit(60)->get(),
             'eventos' => MarketingAutopilotEvent::orderByDesc('id')->limit(80)->get(),
             // Os turnos dos agentes sem os passos (que podem ser grandes): a tela pede um por vez.
-            'sessoes' => MarketingGestorSession::orderByDesc('id')->limit(20)
+            'sessoes' => MarketingGestorSession::where('agente', '!=', 'sdr')->orderByDesc('id')->limit(20)
                 ->get(['id', 'agente', 'simulated', 'started_at', 'ended_at', 'status', 'ferramentas_usadas', 'resumo', 'erro']),
             'pedidos' => MarketingCreativeRequest::orderByDesc('id')->limit(20)->get(),
         ]);

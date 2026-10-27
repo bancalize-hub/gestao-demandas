@@ -152,6 +152,9 @@ onBeforeUnmount(() => {
     <button v-if="user?.is_admin" class="navbtn r-tap-h" :style="nav(route.path.startsWith('/marketing'))" title="Gerenciador de anúncios (Facebook Ads)" @click="navigateTo('/marketing')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11v2a1 1 0 0 0 1 1h2v4h2v-4l10 4.5v-15L8 8H4a1 1 0 0 0-1 1Z" stroke-linecap="round" stroke-linejoin="round" /></svg>
     </button>
+    <button v-if="user?.is_admin" class="navbtn r-tap-h" :style="nav(route.path === '/sdr')" title="Agente SDR (leva o lead até a call)" @click="navigateTo('/sdr')">
+      <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2Z" stroke-linejoin="round" /></svg>
+    </button>
     <button v-if="user?.is_admin" class="navbtn r-tap-h" :style="nav(route.path === '/admin/memoria')" title="Memória da IA" @click="navigateTo('/admin/memoria')">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 3a3 3 0 0 0-3 3 3 3 0 0 0-1 5.8V15a3 3 0 0 0 3 3 2.5 2.5 0 0 0 5 0V5.5A2.5 2.5 0 0 0 9.5 3Z" /><path d="M15 3a3 3 0 0 1 3 3 3 3 0 0 1 1 5.8V15a3 3 0 0 1-3 3" /></svg>
     </button>

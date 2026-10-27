@@ -149,6 +149,14 @@ return [
         ),
     ],
 
+    // Agente SDR: fora da janela de 24h do número oficial, a retomada sai por este template
+    // UTILITY (o mesmo da repescagem de 16/08). O texto é a cópia da frase aprovada — é o que
+    // aparece no chat; :nome e :assunto são {{1}} e {{2}}.
+    'sdr' => [
+        'template_retomada' => env('SDR_TEMPLATE_RETOMADA', 'pendencia_nossa'),
+        'template_retomada_text' => env('SDR_TEMPLATE_RETOMADA_TEXT', 'Oi, :nome! Ficou uma pendência da nossa parte sobre :assunto e eu não quis te deixar sem resposta. Posso te atualizar por aqui?'),
+    ],
+
     'meeting_reminder' => [
         'enabled' => env('MEETING_REMINDER_ENABLED', true),
         'lead_minutes' => (int) env('MEETING_REMINDER_LEAD_MINUTES', 60), // quanto antes lembrar (padrão: 1h)

@@ -187,3 +187,12 @@ Schedule::call(fn () => Cache::put('super.heartbeat', now()->toIso8601String(), 
     ->everyMinute()
     ->name('super-heartbeat')
     ->withoutOverlapping();
+
+// Agente SDR: vigia as conversas e mantém o lead aquecido até ele COMPARECER à call. A cada
+// 5 min roda a vigia sem IA (lead que faltou, retorno vencido); o turno do agente é quando ELE
+// marcou (30 min–4h, padrão 1h30) e só em horário de atendimento. As travas anti-spam
+// (sequência sem resposta, intervalo, teto do dia) estão no código, em App\Services\Sdr\Sdr.
+Schedule::command('agente-sdr:tick')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(60)
+    ->runInBackground();

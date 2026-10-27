@@ -18,6 +18,7 @@ use App\Http\Controllers\Api\GoogleAuthController;
 use App\Http\Controllers\Api\LabelController;
 use App\Http\Controllers\Api\LeadActivityController;
 use App\Http\Controllers\Api\MarketingAutopilotController;
+use App\Http\Controllers\Api\SdrController;
 use App\Http\Controllers\Api\MarketingController;
 use App\Http\Controllers\Api\MaterialController;
 use App\Http\Controllers\Api\MemoryController;
@@ -156,6 +157,10 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
         Route::post('/marketing/autopiloto/testar-aviso', [MarketingAutopilotController::class, 'testarAviso']);
         Route::post('/marketing/autopiloto/rodar', [MarketingAutopilotController::class, 'rodar']);
         Route::get('/marketing/autopiloto/sessoes/{id}', [MarketingAutopilotController::class, 'sessao'])->whereNumber('id');
+        Route::get('/sdr', [SdrController::class, 'show']);
+        Route::put('/sdr', [SdrController::class, 'update']);
+        Route::post('/sdr/rodar', [SdrController::class, 'rodar']);
+        Route::get('/sdr/sessoes/{id}', [SdrController::class, 'sessao'])->whereNumber('id');
         Route::patch('/marketing/campanhas/{id}', [MarketingController::class, 'atualizarCampanha']);
         Route::post('/marketing/campanhas/{id}/duplicar', [MarketingController::class, 'duplicarCampanha']);
         // Memória de marketing: aprendizado sobre os anúncios, separado da memória da IA de vendas.

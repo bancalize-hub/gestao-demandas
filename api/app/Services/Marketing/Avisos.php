@@ -20,7 +20,7 @@ use App\Support\Evolution;
  */
 class Avisos
 {
-    public function __construct(private MarketingAutopilot $cfg, private bool $simular = false) {}
+    public function __construct(private MarketingAutopilot $cfg, private bool $simular = false, private string $quem = 'Gestor de tráfego') {}
 
     /** @return bool se foi enviado (ou, em simulação, se teria sido) */
     public function enviar(string $chave, string $texto, int $horas = 12): bool
@@ -46,7 +46,7 @@ class Avisos
         } elseif (! $conta) {
             $obs = ' (nenhum número da Evolution para enviar — só no painel)';
         } else {
-            $enviado = Evolution::sendText($fone, "🤖 *Gestor de tráfego*\n\n".$texto, instance: $conta->instance) !== null;
+            $enviado = Evolution::sendText($fone, "🤖 *{$this->quem}*\n\n".$texto, instance: $conta->instance) !== null;
             $obs = $enviado ? '' : ' (FALHOU o envio pelo WhatsApp)';
         }
 

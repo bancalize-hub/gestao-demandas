@@ -8,6 +8,7 @@ use App\Models\MarketingCreative;
 use App\Models\MarketingGestorSession;
 use App\Models\MarketingMemory;
 use App\Support\Claude;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
@@ -165,7 +166,7 @@ class GestorAgente
      * @param  list<string>  $ferramentas
      * @param  callable(MarketingGestorSession): void|null  $aoTerminar
      */
-    public static function turno(string $agente, MarketingAutopilot $cfg, bool $simular, string $sistema, string $pedido, array $ferramentas, ?callable $aoTerminar = null, array $envExtra = []): MarketingGestorSession
+    public static function turno(string $agente, Model $cfg, bool $simular, string $sistema, string $pedido, array $ferramentas, ?callable $aoTerminar = null, array $envExtra = []): MarketingGestorSession
     {
         $s = MarketingGestorSession::create(['agente' => $agente, 'simulated' => $simular, 'started_at' => now(), 'status' => 'rodando', 'passos' => []]);
         $passos = [];

@@ -130,6 +130,8 @@ class Conversation extends Model
         'auto_reply_due_at' => 'datetime',
         'nudge_count' => 'integer',
         'nudge_last_at' => 'datetime',
+        'sdr_follow_at' => 'datetime',
+        'sdr_paused_until' => 'datetime',
         'tags' => 'array',
         'interactions' => 'array',
         'custom_fields' => 'array',

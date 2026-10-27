@@ -475,7 +475,8 @@ class Sdr
             $faltou => ['FALTOU à reunião de '.$passada->starts_at->format('d/m H:i'), 0],
             $proxima && $proxima->starts_at->lte(now()->addHours(48)) => ['reunião em breve', 1],
             $c->sdr_follow_at && $c->sdr_follow_at->isPast() => ['retorno que você marcou', 2],
-            $ultima && ! $ultima->is_out => ['lead falou por último', 3],
+            // Só recente: lead que falou há semanas e ficou sem resposta não é urgência, é retomada.
+            $ultima && ! $ultima->is_out && (int) $ultima->ts >= now()->subDays(3)->timestamp => ['lead falou por último', 3],
             (bool) $proxima => ['reunião marcada', 4],
             $c->qualified === true => ['QUALIFICADO sem reunião', 5],
             default => ['em conversa (triagem)', 6],

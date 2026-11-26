@@ -34,7 +34,18 @@ artisan storage:link || true
 # ---- Front (Nuxt) ----
 cd "$APP_DIR/web"
 npm ci
+
+# Guarda os pedaços (_nuxt) da versão que está no ar: o build apaga .output, e quem estava
+# com o CRM aberto pedia um arquivo que não existia mais — a página falhava/recarregava em
+# laço (26/11, 09:15: ~1 min para abrir a agenda no celular no meio de um deploy). Os nomes
+# têm hash, então antigo e novo convivem sem conflito; a próxima publicação descarta.
+ANTIGOS=/tmp/gestao-nuxt-anterior
+rm -rf "$ANTIGOS"
+[ -d .output/public/_nuxt ] && cp -a .output/public/_nuxt "$ANTIGOS"
+
 npm run build
+
+[ -d "$ANTIGOS" ] && cp -an "$ANTIGOS"/. .output/public/_nuxt/ && rm -rf "$ANTIGOS"
 
 # Reinicia o servidor Node do Nuxt (porta 3000)
 pm2 reload gestao-web 2>/dev/null || pm2 start .output/server/index.mjs --name gestao-web

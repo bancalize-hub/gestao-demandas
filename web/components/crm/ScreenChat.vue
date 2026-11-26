@@ -1248,7 +1248,10 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
           <div v-if="!paneViews[pi].list.length" style="padding:30px 14px;text-align:center;color:var(--c-text-muted);font-size:13px;">Nenhuma conversa encontrada</div>
           <div v-for="c in paneViews[pi].list" :key="c.id" :style="c.rowStyle" class="convrow" :class="{ activerow: c.id === crm.activeId, cvrow: menuFor !== pi + ':' + c.id && stageFor !== pi + ':' + c.id }" @click="openConv(c)">
             <div :style="[c.avatarStyle, broken.has(c.id) ? {} : semFundo]">
-              <img v-if="!broken.has(c.id)" :src="avatarSrc(c.id)" title="Ver foto ampliada" style="width:100%;height:100%;border-radius:50%;object-fit:cover;cursor:zoom-in;" @click.stop="lightbox = avatarSrc(c.id)" @error="broken.add(c.id)">
+              <!-- loading="lazy": a lista desenha TODAS as conversas (~1.250); sem isto o navegador pedia
+                   todas as fotos de uma vez, estourava o limite da API e as outras telas ficavam presas
+                   no 429 até o minuto virar (26/11: ~1.000 recusas por abertura). Agora só as visíveis. -->
+              <img v-if="!broken.has(c.id)" :src="avatarSrc(c.id)" loading="lazy" decoding="async" title="Ver foto ampliada" style="width:100%;height:100%;border-radius:50%;object-fit:cover;cursor:zoom-in;" @click.stop="lightbox = avatarSrc(c.id)" @error="broken.add(c.id)">
               <template v-else>{{ c.initials }}</template>
               <span v-if="c.online" :style="c.dotStyle" />
             </div>

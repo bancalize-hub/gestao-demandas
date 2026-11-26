@@ -79,5 +79,12 @@ class AppServiceProvider extends ServiceProvider
         // raspador de dados não.
         RateLimiter::for('api', fn (Request $r) => Limit::perMinute(600)
             ->by($r->user()?->id ? 'u:'.$r->user()->id : 'ip:'.$r->ip()));
+
+        // Foto de contato tem balde PRÓPRIO: a lista de conversas pede uma por contato (~1.250) e,
+        // no balde geral, estourava os 600/min — o 429 então travava memória, materiais, IA etc.
+        // até o minuto virar (26/11: ~1.000 recusas por abertura do CRM). O arquivo é estático no
+        // disco e o navegador guarda; o teto aqui só segura raspagem.
+        RateLimiter::for('avatar', fn (Request $r) => Limit::perMinute(3000)
+            ->by($r->user()?->id ? 'u:'.$r->user()->id : 'ip:'.$r->ip()));
     }
 }

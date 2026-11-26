@@ -81,7 +81,9 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
     // CRM
     Route::get('/conversations', [ConversationController::class, 'index']);
     Route::get('/conversations/{conversation}', [ConversationController::class, 'show']);
-    Route::get('/conversations/{conversation}/avatar', [ConversationController::class, 'avatar']);
+    // Fora do balde geral (throttle:api) e com o balde próprio 'avatar' — ver AppServiceProvider.
+    Route::get('/conversations/{conversation}/avatar', [ConversationController::class, 'avatar'])
+        ->withoutMiddleware('throttle:api')->middleware('throttle:avatar');
     Route::patch('/conversations/{conversation}', [ConversationController::class, 'update']);
     // "Excluir" = esconder (nada é apagado); restore é o Desfazer do aviso na tela.
     Route::delete('/conversations/{conversation}', [ConversationController::class, 'destroy']);

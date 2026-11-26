@@ -79,7 +79,9 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
     Route::post('/users', [AuthController::class, 'store']);
 
     // CRM
-    Route::get('/conversations', [ConversationController::class, 'index']);
+    // ETag nas listas grandes: lista igual à que o navegador já tem volta como 304, sem os
+    // ~280 KB (conversas) de novo a cada reabertura e a cada atualização de minuto (26/11).
+    Route::get('/conversations', [ConversationController::class, 'index'])->middleware('cache.headers:private;no_cache;etag');
     Route::get('/conversations/{conversation}', [ConversationController::class, 'show']);
     // Fora do balde geral (throttle:api) e com o balde próprio 'avatar' — ver AppServiceProvider.
     Route::get('/conversations/{conversation}/avatar', [ConversationController::class, 'avatar'])
@@ -187,12 +189,12 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
     Route::post('/stage-automations/steps/{step}/asset', [StageAutomationController::class, 'uploadAsset']);
     Route::delete('/stage-automations/{stageAutomation}', [StageAutomationController::class, 'destroy']);
 
-    Route::get('/deals', [DealController::class, 'index']);
+    Route::get('/deals', [DealController::class, 'index'])->middleware('cache.headers:private;no_cache;etag');
     Route::post('/deals', [DealController::class, 'store']);
     Route::patch('/deals/{deal}', [DealController::class, 'update']);
     Route::delete('/deals/{deal}', [DealController::class, 'destroy']);
 
-    Route::get('/tasks', [TaskController::class, 'index']);
+    Route::get('/tasks', [TaskController::class, 'index'])->middleware('cache.headers:private;no_cache;etag');
     Route::post('/tasks', [TaskController::class, 'store']);
     Route::patch('/tasks/{task}', [TaskController::class, 'update']);
     Route::delete('/tasks/{task}', [TaskController::class, 'destroy']);
@@ -247,7 +249,7 @@ Route::middleware(['auth:sanctum', 'set.tenant'])->group(function () {
     Route::delete('/quick-replies/{quickReply}', [QuickReplyController::class, 'destroy']);
 
     // Contatos (sincronizados com o Google Contatos, 2 vias).
-    Route::get('/contacts', [ContactController::class, 'index']);
+    Route::get('/contacts', [ContactController::class, 'index'])->middleware('cache.headers:private;no_cache;etag');
     Route::post('/contacts', [ContactController::class, 'store']);
     Route::patch('/contacts/{contact}', [ContactController::class, 'update']);
     Route::delete('/contacts/{contact}', [ContactController::class, 'destroy']);

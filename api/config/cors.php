@@ -16,7 +16,10 @@ return [
 
     'exposed_headers' => [],
 
-    'max_age' => 0,
+    // Toda chamada do CRM manda X-Socket-ID, então o navegador faz a consulta de permissão
+    // (OPTIONS) antes. Com 0 ele repetia a consulta em TODA chamada — o dobro de idas e voltas,
+    // caro no celular (26/11). 7200 s = o máximo que o Chrome respeita.
+    'max_age' => 7200,
 
     // Necessário para o fluxo de cookie/sessão do Sanctum (SPA).
     'supports_credentials' => true,

@@ -3,6 +3,16 @@ import { leadTemperature, sinceLabel, useCrmStore } from '~/stores/crm'
 
 const crm = useCrmStore()
 
+// Cada etapa desenha só os primeiros cartões (era o funil inteiro de uma vez: ~18 mil
+// elementos e travadas de 0,3–0,5 s no PC, segundos no celular — medido em 26/11).
+// Contagem e soma da etapa continuam sobre todos; "Mostrar mais" libera o próximo lote.
+const LOTE_ETAPA = 40
+const limiteEtapa = ref<Record<string, number>>({})
+const limiteDe = (id: string | number) => limiteEtapa.value[String(id)] ?? LOTE_ETAPA
+function mostrarMais(id: string | number) {
+  limiteEtapa.value = { ...limiteEtapa.value, [String(id)]: limiteDe(id) + LOTE_ETAPA }
+}
+
 // Filtro "esfriando": mostra só os leads morno+frio (fila de follow-up).
 const coolingOnly = ref(false)
 
@@ -313,7 +323,7 @@ const cols = computed(() => crm.stages.map((st) => {
             @drop.prevent="crm.dropTo('pipeline', col.id)"
           >
             <div
-              v-for="card in col.cards" :key="card.kind + ':' + card.id"
+              v-for="card in col.cards.slice(0, limiteDe(col.id))" :key="card.kind + ':' + card.id"
               draggable="true" :style="card.cardStyle" class="card"
               @dragstart="crm.setDrag('pipeline', col.id, card.id, card.kind)"
               @dragend="crm.setDragOver(null)"
@@ -343,6 +353,13 @@ const cols = computed(() => crm.stages.map((st) => {
                 <span :style="card.tagStyle">{{ card.tag }}</span>
               </div>
             </div>
+            <button
+              v-if="col.cards.length > limiteDe(col.id)"
+              style="width:100%;margin-top:4px;padding:9px;border:1px dashed var(--c-surface-3);border-radius:10px;background:transparent;color:var(--c-text-muted);font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer;"
+              @click="mostrarMais(col.id)"
+            >
+              Mostrar mais ({{ col.cards.length - limiteDe(col.id) }})
+            </button>
           </div>
         </div>
       </div>

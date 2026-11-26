@@ -11,7 +11,8 @@ onMounted(async () => {
   await crm.init()
   // Só rede de segurança: o tempo real de verdade chega pelo WebSocket com payload
   // (message.new/message.patch). 30s de polling dobrava a carga à toa.
-  poll = setInterval(() => crm.refreshBoards(), 60000)
+  // Aba escondida / celular bloqueado não baixa a lista inteira a cada minuto à toa.
+  poll = setInterval(() => { if (!document.hidden) crm.refreshBoards() }, 60000)
 })
 onBeforeUnmount(() => { if (poll) clearInterval(poll) })
 </script>

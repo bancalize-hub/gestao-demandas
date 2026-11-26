@@ -602,6 +602,20 @@ function mapRow(c: any) {
   }
 }
 
+// A lista desenha em LOTES: eram ~1.250 conversas de uma vez (~21 mil elementos na tela,
+// travadas de 0,2–0,5 s no PC e de segundos no celular, medido em 26/11). Filtro, busca
+// e contadores continuam sobre a lista inteira — só o DESENHO para no lote e cresce
+// quando a rolagem chega perto do fim.
+const LOTE_LISTA = 60
+const limiteLista = ref<Record<number, number>>({})
+function maisConversas(e: Event, pi: number) {
+  const el = e.target as HTMLElement
+  if (el.scrollTop + el.clientHeight < el.scrollHeight - 800) return
+  const atual = limiteLista.value[pi] ?? LOTE_LISTA
+  if (atual < (paneViews.value[pi]?.list.length ?? 0))
+    limiteLista.value = { ...limiteLista.value, [pi]: atual + LOTE_LISTA }
+}
+
 // Uma visão por PAINEL: lista filtrada + contadores derivados da tab daquele painel.
 // Os contadores de status (Tudo/Não lidas/Arquivadas) saem da mesma base da lista,
 // senão o número da pill discorda do que aparece embaixo.
@@ -1199,10 +1213,10 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
 </script>
 
 <template>
-  <div style="flex:1;display:flex;min-width:0;">
+  <div style="flex:1;display:flex;min-width:0;min-height:0;">
     <!-- lista de conversas -->
     <template v-for="(pane, pi) in panes" :key="pi">
-      <div :style="{ width: isMobile ? '100%' : '340px', flexShrink: 0, background: 'var(--c-bg)', borderRight: '1px solid var(--c-surface-1)', flexDirection: 'column', display: (isMobile && crm.chatOpen) ? 'none' : 'flex' }">
+      <div :style="{ width: isMobile ? '100%' : '340px', flexShrink: 0, minHeight: 0, background: 'var(--c-bg)', borderRight: '1px solid var(--c-surface-1)', flexDirection: 'column', display: (isMobile && crm.chatOpen) ? 'none' : 'flex' }">
         <div style="padding:18px 18px 12px;">
           <div class="r-xs-wrap" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
             <div style="font-size:19px;font-weight:800;letter-spacing:-.2px;">{{ chats > 1 ? `Conversas · ${instancia}` : 'Conversas' }}</div>
@@ -1232,7 +1246,9 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
           </div>
         </div>
 
-      <div style="flex:1;overflow-y:auto;padding:0 8px;">
+      <!-- min-height:0: sem ele, no celular (coluna) a caixa esticava até o tamanho da lista
+           inteira, nada rolava aqui dentro e o navegador achava todas as fotos "na tela". -->
+      <div style="flex:1;min-height:0;overflow-y:auto;padding:0 8px;" @scroll="maisConversas($event, pi)">
         <!-- skeleton -->
         <template v-if="crm.loading">
           <div v-for="i in 5" :key="i" style="display:flex;gap:12px;padding:11px 12px;align-items:center;">
@@ -1246,7 +1262,7 @@ watch(() => thread.value.length, async () => { await nextTick(); if (atBottom.va
 
         <template v-else>
           <div v-if="!paneViews[pi].list.length" style="padding:30px 14px;text-align:center;color:var(--c-text-muted);font-size:13px;">Nenhuma conversa encontrada</div>
-          <div v-for="c in paneViews[pi].list" :key="c.id" :style="c.rowStyle" class="convrow" :class="{ activerow: c.id === crm.activeId, cvrow: menuFor !== pi + ':' + c.id && stageFor !== pi + ':' + c.id }" @click="openConv(c)">
+          <div v-for="c in paneViews[pi].list.slice(0, limiteLista[pi] ?? LOTE_LISTA)" :key="c.id" :style="c.rowStyle" class="convrow" :class="{ activerow: c.id === crm.activeId, cvrow: menuFor !== pi + ':' + c.id && stageFor !== pi + ':' + c.id }" @click="openConv(c)">
             <div :style="[c.avatarStyle, broken.has(c.id) ? {} : semFundo]">
               <!-- loading="lazy": a lista desenha TODAS as conversas (~1.250); sem isto o navegador pedia
                    todas as fotos de uma vez, estourava o limite da API e as outras telas ficavam presas

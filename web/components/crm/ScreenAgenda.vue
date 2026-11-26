@@ -57,10 +57,14 @@ function sameDay(a: Date, b: Date) {
 }
 
 // ----- Carga -----
-async function loadWeek() {
+function weekRange() {
   const from = new Date(weekDays.value[0]); from.setHours(0, 0, 0, 0)
   const to = new Date(weekDays.value[6]); to.setHours(23, 59, 59, 999)
-  await crm.fetchEvents(from.toISOString(), to.toISOString())
+  return [from.toISOString(), to.toISOString()] as const
+}
+async function loadWeek(semChecar = false) {
+  const [from, to] = weekRange()
+  await crm.fetchEvents(from, to, { semChecar })
 }
 function shiftWeek(delta: number) {
   const d = new Date(weekStart.value)
@@ -76,6 +80,10 @@ function goToday() {
 const banner = ref<{ type: 'ok' | 'erro', text: string } | null>(null)
 
 onMounted(async () => {
+  // Pinta na hora o que este navegador já viu desta semana e, AO MESMO TEMPO, pede o status
+  // das agendas e os eventos — antes era em fila (status → eventos), ~3 s para aparecer.
+  crm.restoreAgendaCache(...weekRange())
+  const semana = loadWeek(true)
   await crm.loadGoogleStatus()
   // Feedback do retorno do OAuth (?google=conectado|erro).
   const g = route.query.google
@@ -93,7 +101,9 @@ onMounted(async () => {
     banner.value = { type: 'erro', text: 'Essa conta do Google é de outro e-mail. Conecte a agenda da MESMA conta com que você entra no CRM — na tela do Google, escolha (ou troque para) esse e-mail.' }
   }
   if (g) router.replace({ query: {} })
-  if (crm.hasCalendars) await loadWeek()
+  await semana
+  // Acabou de conectar o Google: a 1ª leitura pode ter saído antes da conexão valer.
+  if (g === 'conectado' && crm.hasCalendars) await loadWeek()
 })
 
 // ----- Posicionamento dos eventos na grade -----

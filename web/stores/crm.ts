@@ -1418,6 +1418,8 @@ export const useCrmStore = defineStore('crm', {
         this.googleConnected = s.connected
         this.googleEmail = s.email
         this.calendars = s.calendars ?? []
+        try { localStorage.setItem('crm-agenda-status-v1', JSON.stringify({ connected: s.connected, email: s.email, calendars: this.calendars })) }
+        catch { /* sem espaço: segue sem cache */ }
         // Agenda que deixou de existir (usuário saiu / desconectou) não fica escondida p/ sempre.
         this.hiddenCalendars = this.hiddenCalendars.filter(id => this.calendars.some(c => c.user_id === id))
       }
@@ -1455,13 +1457,36 @@ export const useCrmStore = defineStore('crm', {
       // A empresa pode ter OUTRAS agendas conectadas: relê o status em vez de zerar tudo.
       await this.loadGoogleStatus()
     },
-    async fetchEvents(fromISO: string, toISO: string) {
-      if (!this.hasCalendars) return
+    // Agenda instantânea: a última resposta de cada intervalo (e o status das agendas) fica
+    // guardada NESTE navegador e aparece na hora; a resposta nova do servidor substitui em
+    // seguida. Antes a tela esperava o status do Google e só então pedia os eventos (~3 s, 26/11).
+    restoreAgendaCache(fromISO: string, toISO: string) {
+      if (!import.meta.client) return
+      try {
+        const s = JSON.parse(localStorage.getItem('crm-agenda-status-v1') || 'null')
+        if (s && !this.calendars.length) {
+          this.calendars = s.calendars ?? []
+          this.googleConnected = !!s.connected
+          this.googleEmail = s.email ?? null
+        }
+        const e = JSON.parse(localStorage.getItem(`crm-agenda-ev-v1:${fromISO}|${toISO}`) || 'null')
+        if (Array.isArray(e)) this.events = e
+      }
+      catch { /* cache estragado: só segue para o servidor */ }
+    },
+    // `semChecar`: pede os eventos SEM esperar o status das agendas (a 1ª carga da tela roda
+    // os dois juntos). Sem agenda conectada o servidor responde 409 e a lista fica como está.
+    async fetchEvents(fromISO: string, toISO: string, opts: { semChecar?: boolean } = {}) {
+      if (!opts.semChecar && !this.hasCalendars) return
       this.lastEventsRange = { from: fromISO, to: toISO }
       this.eventsLoading = true
       try {
         const r = await api()<{ events: CalEvent[] }>(`/api/google/events?from=${encodeURIComponent(fromISO)}&to=${encodeURIComponent(toISO)}`)
+        // Navegou para outra semana enquanto esta resposta vinha: não pinta a semana errada.
+        if (this.lastEventsRange?.from !== fromISO || this.lastEventsRange?.to !== toISO) return
         this.events = r.events
+        try { localStorage.setItem(`crm-agenda-ev-v1:${fromISO}|${toISO}`, JSON.stringify(r.events)) }
+        catch { /* sem espaço: segue sem cache */ }
       }
       catch { /* silencioso */ }
       finally { this.eventsLoading = false }

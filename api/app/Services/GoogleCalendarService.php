@@ -13,6 +13,7 @@ use Google\Service\Calendar\CreateConferenceRequest;
 use Google\Service\Calendar\Event as GoogleEvent;
 use Google\Service\Calendar\EventAttendee;
 use Google\Service\Calendar\EventDateTime;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use RuntimeException;
@@ -467,18 +468,30 @@ class GoogleCalendarService
      */
     public function listEvents(User $user, Carbon $from, Carbon $to): array
     {
-        $events = $this->calendar($user)->events->listEvents($this->calendarId($user), [
-            'timeMin' => $from->toRfc3339String(),
-            'timeMax' => $to->toRfc3339String(),
-            'singleEvents' => true,
-            'orderBy' => 'startTime',
-            'maxResults' => 250,
-        ]);
+        // Só a parte que vem do GOOGLE fica guardada, por 1 minuto: cada abertura da agenda
+        // consultava o Google de novo para cada agenda conectada, uma depois da outra
+        // (~0,2 s cada; a agenda levava ~3 s para aparecer, medido em 26/11). O que vem do
+        // CRM (presença, resumo, lembrete, cliente) é enriquecido abaixo, SEMPRE fresco.
+        // Criar/editar/apagar por este serviço sobe a versão do dono e invalida na hora;
+        // evento mexido direto no Google aparece em até 1 minuto.
+        $chave = sprintf('gcal-eventos:%d:v%d:%s:%s', $user->id, (int) Cache::get("gcal-versao:{$user->id}", 0),
+            $from->copy()->utc()->format('YmdHis'), $to->copy()->utc()->format('YmdHis'));
+        $out = Cache::remember($chave, 60, function () use ($user, $from, $to) {
+            $events = $this->calendar($user)->events->listEvents($this->calendarId($user), [
+                'timeMin' => $from->toRfc3339String(),
+                'timeMax' => $to->toRfc3339String(),
+                'singleEvents' => true,
+                'orderBy' => 'startTime',
+                'maxResults' => 250,
+            ]);
 
-        $out = [];
-        foreach ($events->getItems() as $e) {
-            $out[] = $this->normalize($e);
-        }
+            $lista = [];
+            foreach ($events->getItems() as $e) {
+                $lista[] = $this->normalize($e);
+            }
+
+            return $lista;
+        });
 
         // Enriquece com dados da reunião do CRM: presença confirmada (destaque na agenda) e
         // o cliente vinculado (p/ abrir a ficha ao clicar no card).
@@ -872,12 +885,20 @@ class GoogleCalendarService
         $event = $this->fillEvent(new GoogleEvent, $data);
         $created = $this->calendar($user)->events->insert($this->calendarId($user), $event, $this->writeParams());
 
+        $this->agendaMudou($user);
+
         // Meet novo nasce já com gravação automática ligada (best-effort).
         if (! empty($data['add_meet'])) {
             $this->enableAutoRecording($user, $created->getHangoutLink());
         }
 
         return $this->normalize($created);
+    }
+
+    /** Invalida os eventos guardados deste dono (ver `listEvents`): a próxima leitura vai ao Google. */
+    private function agendaMudou(User $user): void
+    {
+        Cache::forever("gcal-versao:{$user->id}", (int) Cache::get("gcal-versao:{$user->id}", 0) + 1);
     }
 
     /** Um evento específico, normalizado (null se não existe mais na agenda). */
@@ -899,6 +920,7 @@ class GoogleCalendarService
         $event = $cal->events->get($this->calendarId($user), $eventId);
         $event = $this->fillEvent($event, $data);
         $updated = $cal->events->update($this->calendarId($user), $eventId, $event, $this->writeParams());
+        $this->agendaMudou($user);
 
         // Se a edição criou o Meet agora, liga a gravação automática nele também.
         if (! empty($data['add_meet'])) {
@@ -917,6 +939,8 @@ class GoogleCalendarService
             if (! in_array($e->getCode(), [404, 410], true)) {
                 throw $e;
             }
+        } finally {
+            $this->agendaMudou($user);
         }
     }
 

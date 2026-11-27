@@ -523,6 +523,25 @@ class FacebookAds
      */
     public function miniaturasPorCampanha(int $limite = 500): array
     {
+        return $this->anunciosPorCampanha($limite)['miniaturas'];
+    }
+
+    /**
+     * Uma chamada só aos anúncios da conta, resumida por campanha: a miniatura (ver
+     * {@see miniaturasPorCampanha()}) e QUANTOS anúncios estão de fato no ar.
+     *
+     * Por que contar: a Meta deixa a campanha `effective_status = ACTIVE` mesmo com todos
+     * os anúncios dela pausados — o status efetivo da campanha não olha para baixo. Como a
+     * pausa aqui é feita no ANÚNCIO (gestor, rotação, scripts), o painel mostrava "Ativa"
+     * em campanha que não gasta nada. `rodando` é o que separa as duas coisas.
+     *
+     * Campanha que não aparece na lista (conta com mais anúncios que o limite) fica FORA de
+     * `rodando`: não saber não é o mesmo que zero, e zero pintaria de pausada uma que roda.
+     *
+     * @return array{miniaturas: array<string, string>, rodando: array<string, int>}
+     */
+    public function anunciosPorCampanha(int $limite = 500): array
+    {
         $r = $this->call('GET', '/'.$this->conta().'/ads', [
             'fields' => 'campaign_id,effective_status,creative{thumbnail_url}',
             'limit' => max(1, min($limite, 500)),
@@ -530,13 +549,20 @@ class FacebookAds
 
         $ativas = [];
         $pausadas = [];
+        $rodando = [];
         foreach ($r['data'] ?? [] as $ad) {
             $camp = (string) ($ad['campaign_id'] ?? '');
-            $url = (string) ($ad['creative']['thumbnail_url'] ?? '');
-            if ($camp === '' || $url === '') {
+            if ($camp === '') {
                 continue;
             }
-            if (($ad['effective_status'] ?? '') === 'ACTIVE') {
+            $noAr = ($ad['effective_status'] ?? '') === 'ACTIVE';
+            $rodando[$camp] = ($rodando[$camp] ?? 0) + ($noAr ? 1 : 0);
+
+            $url = (string) ($ad['creative']['thumbnail_url'] ?? '');
+            if ($url === '') {
+                continue;
+            }
+            if ($noAr) {
                 $ativas[$camp] ??= $url;
             } else {
                 $pausadas[$camp] ??= $url;
@@ -544,7 +570,7 @@ class FacebookAds
         }
 
         // Ativa ganha da pausada quando a campanha tem das duas.
-        return array_replace($pausadas, $ativas);
+        return ['miniaturas' => array_replace($pausadas, $ativas), 'rodando' => $rodando];
     }
 
     /**

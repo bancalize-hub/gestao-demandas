@@ -17,6 +17,8 @@ interface Campanha {
   orcamento_diario: number | null
   orcamento_nivel: 'campanha' | 'conjunto' | null
   orcamento_conjuntos: number
+  /** Anúncios no ar dentro da campanha; null quando a API não soube dizer. */
+  anuncios_rodando?: number | null
 }
 interface Metrica {
   campaign_id?: string; impressions?: string; clicks?: string
@@ -189,11 +191,23 @@ function taxa(de: number | null | undefined, para: number | null | undefined): s
   return `${Math.round((para / de) * 100)}%`
 }
 
-function isAtiva(c: Campanha) { return c.effective_status === 'ACTIVE' }
-function statusCor(c: Campanha) { return c.effective_status === 'ACTIVE' ? 'var(--c-ai)' : c.effective_status === 'PAUSED' ? 'var(--c-warn)' : 'var(--c-text-muted)' }
+/**
+ * A Meta deixa a CAMPANHA "ACTIVE" mesmo com todos os anúncios dela pausados — e aqui a
+ * pausa é feita no anúncio (gestor, rotação, scripts). Sem olhar `anuncios_rodando` a tela
+ * dizia "Ativa" em campanha que não gasta nada. `null` = não deu para saber: vale a campanha.
+ */
+function campanhaLigada(c: Campanha) { return c.effective_status === 'ACTIVE' }
+function semAnuncioNoAr(c: Campanha) { return campanhaLigada(c) && c.anuncios_rodando === 0 }
+function isAtiva(c: Campanha) { return campanhaLigada(c) && !semAnuncioNoAr(c) }
+function statusCor(c: Campanha) { return isAtiva(c) ? 'var(--c-ai)' : (semAnuncioNoAr(c) || c.effective_status === 'PAUSED') ? 'var(--c-warn)' : 'var(--c-text-muted)' }
 function statusTxt(c: Campanha) {
+  if (semAnuncioNoAr(c)) return 'Anúncio pausado'
   const m: Record<string, string> = { ACTIVE: 'Ativa', PAUSED: 'Pausada', DELETED: 'Excluída', ARCHIVED: 'Arquivada', IN_PROCESS: 'Processando', WITH_ISSUES: 'Com problemas' }
   return m[c.effective_status] || c.effective_status
+}
+function statusDica(c: Campanha) {
+  if (semAnuncioNoAr(c)) return 'A campanha está ligada, mas nenhum anúncio dela está no ar — não gasta nada. Clique para pausar a campanha também.'
+  return isAtiva(c) ? 'Clique para pausar' : 'Clique para ativar'
 }
 function objTxt(o: string | null) {
   const m: Record<string, string> = { OUTCOME_TRAFFIC: 'Tráfego', OUTCOME_LEADS: 'Leads', OUTCOME_SALES: 'Vendas', OUTCOME_ENGAGEMENT: 'Engajamento', MESSAGES: 'Mensagens', LINK_CLICKS: 'Cliques', CONVERSIONS: 'Conversões' }
@@ -413,7 +427,7 @@ async function toggleSts(c: Campanha) {
   if (salvandoSts.value[c.id]) return
   salvandoSts.value[c.id] = true
   try {
-    const r = await api<{ ok: boolean, erro?: string }>(`/api/marketing/campanhas/${c.id}`, { method: 'PATCH', body: { status: isAtiva(c) ? 'PAUSED' : 'ACTIVE' } })
+    const r = await api<{ ok: boolean, erro?: string }>(`/api/marketing/campanhas/${c.id}`, { method: 'PATCH', body: { status: campanhaLigada(c) ? 'PAUSED' : 'ACTIVE' } })
     if (!r.ok) throw new Error(r.erro)
     await carregarPainel()
   }
@@ -693,7 +707,7 @@ const rodapeSemAtrib = computed(() => semAtribuicao.value
                 <button
                   :disabled="salvandoSts[c.id]"
                   class="r-tap"
-                  :title="isAtiva(c) ? 'Clique para pausar' : 'Clique para ativar'"
+                  :title="statusDica(c)"
                   :style="{ background: 'transparent', border: '1px solid ' + statusCor(c), color: statusCor(c), fontFamily: 'inherit', fontSize: '10.5px', fontWeight: 700, padding: '3px 9px', borderRadius: '6px', cursor: salvandoSts[c.id] ? 'default' : 'pointer', opacity: salvandoSts[c.id] ? .5 : 1 }"
                   @click="toggleSts(c)"
                 >{{ salvandoSts[c.id] ? '…' : statusTxt(c) }}</button>

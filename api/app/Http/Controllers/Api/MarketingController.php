@@ -295,10 +295,10 @@ class MarketingController extends Controller
         $r = self::ultimoBom('campanhas', function () use ($limite) {
             $fb = FacebookAds::make();
             $campanhas = $fb->listarCampanhas($limite);
-            $minis = $fb->miniaturasPorCampanha();
+            ['miniaturas' => $minis, 'rodando' => $rodando] = $fb->anunciosPorCampanha();
             $orcs = $fb->orcamentosDeConjunto();
 
-            return array_map(function (array $c) use ($minis, $orcs) {
+            return array_map(function (array $c) use ($minis, $rodando, $orcs) {
                 $id = (string) ($c['id'] ?? '');
                 $doConjunto = $orcs[$id] ?? null;
 
@@ -309,6 +309,9 @@ class MarketingController extends Controller
 
                 return $c + [
                     'miniatura' => $minis[$id] ?? null,
+                    // Anúncios no ar dentro da campanha. A Meta diz "ACTIVE" na campanha
+                    // mesmo com todos eles pausados; null = não deu para saber.
+                    'anuncios_rodando' => $rodando[$id] ?? null,
                     'orcamento_diario' => $naCampanha ?: ($doConjunto['diario'] ?? 0) ?: null,
                     'orcamento_nivel' => $naCampanha ? 'campanha' : ($doConjunto ? 'conjunto' : null),
                     // Quantos conjuntos disputam esse orçamento — 1 dá para editar daqui.

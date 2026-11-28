@@ -279,7 +279,7 @@ class WaRepescagem extends Command
         // Primeira palavra que não identifica ninguém — nome de empresa, cargo ou
         // devoção. "Oi, Filha!" e "Oi, Grupo!" soam pior que não personalizar.
         $generico = ['grupo', 'empresa', 'comercial', 'financeiro', 'atendimento', 'contato',
-            'filha', 'filho', 'casa', 'loja', 'adm', 'dr', 'dra', 'sr', 'sra', 'me', 'meu', 'minha'];
+            'filha', 'filho', 'casa', 'loja', 'adm', 'dr', 'dra', 'sr', 'sra', 'me', 'meu', 'minha', 'sempre'];
 
         if ($temDigito || mb_strlen($limpo) < 3 || in_array(mb_strtolower($limpo), $generico, true)) {
             return 'tudo bem';

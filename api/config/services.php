@@ -191,6 +191,9 @@ return [
             'trim',
             explode(',', (string) env('CRM_TEAM_DISPLAY_NAMES', 'Guilherme Rodrigues,Maysa Lima,Bancalize'))
         ))),
+        // Quem recebe o alarme da sala (meetings:noshow-tick), além do "WhatsApp de aviso" da
+        // empresa (marketing_autopilots.alert_phone): "empresa:fone,empresa:fone".
+        'alerta_sala_fones' => (string) env('CRM_ALERTA_SALA_FONES', ''),
     ],
 
 ];

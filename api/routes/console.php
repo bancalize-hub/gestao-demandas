@@ -109,11 +109,13 @@ Schedule::command('automations:tick')
     ->everyMinute()
     ->withoutOverlapping();
 
-// Cliente sozinho na sala: avisa a equipe ENQUANTO a reunião acontece, não depois. A cada
-// 5 min a reunião em curso é checada entre o 4º e o 20º minuto — 3 a 4 checagens por
-// reunião, o suficiente para salvar a call sem martelar a API do Meet.
+// Alarme da sala no WhatsApp da equipe ENQUANTO a reunião acontece: lead que escreve
+// "pedi para entrar", ninguém nosso na sala do 2º ao 30º minuto (com ou sem o lead dentro:
+// a sala de espera do Meet não aparece na API) e anfitrião sem Google. A cada minuto, porque
+// o lead desiste em poucos minutos; o alarme repete no máximo 3 vezes por reunião (trava em
+// AlarmeDaSala) e a API do Meet deixa de ser chamada assim que alguém nosso entra.
 Schedule::command('meetings:noshow-tick')
-    ->everyFiveMinutes()
+    ->everyMinute()
     ->withoutOverlapping();
 
 // Watchdog dos negócios quentes: cobra dono, proposta e silêncio (cria tarefa no quadro,

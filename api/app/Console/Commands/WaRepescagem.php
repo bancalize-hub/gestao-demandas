@@ -36,6 +36,7 @@ class WaRepescagem extends Command
         {--intervalo=90 : segundos entre um envio e outro}
         {--pular= : ids de conversa a ignorar, separados por vírgula}
         {--so= : roda SÓ nestes ids de conversa (separados por vírgula)}
+        {--assunto= : texto do {{2}} para todas (padrão: pela etapa do funil)}
         {--limite=0 : para depois de N envios (0 = sem limite)}
         {--enviar : envia de verdade (sem esta flag é simulação)}';
 
@@ -249,6 +250,13 @@ class WaRepescagem extends Command
 
     private function assunto(Conversation $conv): string
     {
+        // Assunto fixo: a repescagem de 28/11 (leads que esperaram na sala e ninguém atendeu)
+        // não tem nada a ver com a etapa — "a proposta que conversamos" seria mentira para
+        // quem nunca chegou a ter a reunião.
+        if (($fixo = trim((string) $this->option('assunto'))) !== '') {
+            return $fixo;
+        }
+
         return in_array((string) $conv->stage, self::ETAPAS_QUENTES, true)
             ? self::ASSUNTO_QUENTE
             : self::ASSUNTO_PADRAO;
